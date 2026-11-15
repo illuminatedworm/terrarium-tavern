@@ -40,19 +40,16 @@ async def sessions(root, checks):
             )
             imported.raise_for_status()
             card_id = imported.json()["id"]
-            for mode in ("half_agent", "full_agent"):
-                start = time.perf_counter()
-                created = await client.post(
-                    "/api/sessions", json={"card_id": card_id, "agent_mode": mode, "persona": "自检玩家"}
-                )
-                created.raise_for_status()
-                session = created.json()
-                assert session["snapshot"]["state"]["stat_data"]["hp"] == 7
-                reopened = await client.get("/api/sessions/" + session["id"])
-                reopened.raise_for_status()
-                assert reopened.json()["snapshot"]["state"] == session["snapshot"]["state"]
-                checks.append({"name": mode + "_session", "seconds": round(time.perf_counter() - start, 3)})
-                print("PASS: " + mode + "_session", flush=True)
+            start = time.perf_counter()
+            created = await client.post("/api/sessions", json={"card_id": card_id, "persona": "自检玩家"})
+            created.raise_for_status()
+            session = created.json()
+            assert session["snapshot"]["state"]["stat_data"]["hp"] == 7
+            reopened = await client.get("/api/sessions/" + session["id"])
+            reopened.raise_for_status()
+            assert reopened.json()["snapshot"]["state"] == session["snapshot"]["state"]
+            checks.append({"name": "story_session", "seconds": round(time.perf_counter() - start, 3)})
+            print("PASS: story_session", flush=True)
 
 
 async def timed(checks, name, probe):

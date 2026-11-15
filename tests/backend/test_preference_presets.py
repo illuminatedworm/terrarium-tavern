@@ -21,13 +21,12 @@ def test_existing_settings_default_to_empty_and_runtime_saves_keep_presets():
         {"id": "slow", "name": "放缓节奏", "content": "  多用对白。\n保留行动空间。\n"}
     ]
     migrated = SettingsDocument.model_validate(current)
-    for mode in ("full_agent", "half_agent"):
-        runtime = migrated.runtime(mode)
-        assert runtime.preference_presets == migrated.shared.preference_presets
-        runtime.temperature = 0.7
-        assert from_runtime(runtime).shared.preference_presets == migrated.shared.preference_presets
-        runtime.preference_presets[0].content = "不同内容"
-        assert migrated.shared.preference_presets[0].content == "  多用对白。\n保留行动空间。\n"
+    runtime = migrated.runtime()
+    assert runtime.preference_presets == migrated.shared.preference_presets
+    runtime.temperature = 0.7
+    assert from_runtime(runtime).shared.preference_presets == migrated.shared.preference_presets
+    runtime.preference_presets[0].content = "不同内容"
+    assert migrated.shared.preference_presets[0].content == "  多用对白。\n保留行动空间。\n"
 
 
 async def test_shared_presets_crud_revisions_persistence_and_page_undo(tmp_path):
@@ -54,8 +53,7 @@ async def test_shared_presets_crud_revisions_persistence_and_page_undo(tmp_path)
         assert added.status_code == 200, added.text
         saved = added.json()
         assert saved["shared"]["preference_presets"] == presets
-        assert saved["full_agent"] == original["full_agent"]
-        assert saved["half_agent"] == original["half_agent"]
+        assert saved["story"] == original["story"]
         assert saved["revisions"]["shared"] == original["revisions"]["shared"] + 1
         assert (
             Store(tmp_path).settings_document().shared.preference_presets[0].content == presets[0]["content"]

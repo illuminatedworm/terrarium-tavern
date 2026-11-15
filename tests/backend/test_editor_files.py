@@ -20,7 +20,7 @@ from tavern.storage.store import Store
 from tests.backend.test_card_author import ToolLLM, import_fixture
 from tests.backend.test_card_author_alignment import Editor
 from tests.backend.test_card_authoring import run
-from tests.backend.test_half_agent_alignment import blocks
+from tests.support.model_transport import blocks
 
 
 def make_docx(path):

@@ -3,7 +3,7 @@
 import json
 import os
 from dataclasses import dataclass, field
-from uuid import UUID, uuid5
+from uuid import UUID
 
 from tavern.core.cache_policy import endpoint, fingerprint, shares_editor_cloud_prefix
 from tavern.scripting.sent_breakpoints import SentBreakpoints
@@ -141,28 +141,6 @@ def identity_headers(headers):
     return {key.lower(): value for key, value in headers.items() if key.lower() in allowed}
 
 
-class OperationContexts:
-    """Stable story/purpose identities, with routing scoped to one actual operation."""
-
-    def __init__(self, store, session_id, turn_id):
-        self.store, self.session_id, self.turn_id = store, session_id, turn_id
-        self.counts = {}
-
-    def new(self, purpose="narrative"):
-        number = self.counts.get(purpose, 0)
-        self.counts[purpose] = number + 1
-        sid = UUID(self.session_id)
-        if purpose != "narrative":
-            sid = uuid5(sid, "half_agent:" + purpose)
-        return ProviderRequestContext(
-            str(sid),
-            f"{self.turn_id}:{purpose}:{number}",
-            "",
-            self.store.device_id(),
-            sent_breakpoints=self.store.cache_breakpoint_history(self.session_id, purpose),
-        )
-
-
 def configure_operation(provider, context, event, purpose):
     """Also used for injected providers, so test and production lifecycles agree."""
     provider.request_context = context
@@ -171,4 +149,3 @@ def configure_operation(provider, context, event, purpose):
         context.bind(response_origin(provider.settings, provider.key))
     provider.response_capture = lambda record: event("provider_response", {"purpose": purpose, **record})
     provider.failed_usage_capture = lambda payload: event("usage", {"purpose": purpose, **payload})
-    provider.auxiliary_capture = lambda items: event("kemini_auxiliary", {"purpose": purpose, "items": items})

@@ -105,7 +105,6 @@ async def evaluate(args):
                     {
                         "ref": c["ref"],
                         "document": c["document"],
-                        "target_mode": c.get("target_mode"),
                         "brief": c.get("brief"),
                     }
                     for c in current["cards"]
@@ -213,21 +212,11 @@ async def evaluate(args):
                 variable = await attached()
                 variable = await run(
                     variable,
-                    "请直接给 C1 增加好感度变量：初始为0，帮助店主时增加1，上限10。采用两种模式共用的变量契约，不限定目标模式，不增加脚本，并进行本地初始化验证。",
-                    "shared_variables",
+                    "请直接给 C1 增加好感度变量，初始值为 0，帮助店主时增加 1，上限为 10。用世界书条目写变量规则，并做本地初始化验证。",
+                    "variable_rules",
                 )
-                variable_document = copy.deepcopy(variable["cards"][0]["document"])
-                results[-1]["objective_pass"] = not variable["cards"][0]["target_mode"] and bool(
-                    lore_entries(variable_document, "tracker_mvu")
-                )
-                variable = await run(
-                    variable,
-                    "这张卡将用于 Full Agent。请记录兼容性目标并检查；文档保持原样，不迁移或重复变量规则。",
-                    "full_agent_compatibility",
-                )
-                results[-1]["objective_pass"] = (
-                    variable["cards"][0]["target_mode"] == "full_agent"
-                    and variable["cards"][0]["document"] == variable_document
+                results[-1]["objective_pass"] = bool(
+                    lore_entries(variable["cards"][0]["document"], "mvu_rules")
                 )
                 broken = copy.deepcopy(document)
                 broken["data"]["extensions"]["tavern_helper"] = {
@@ -236,7 +225,7 @@ async def evaluate(args):
                 repair = await attached(doc=broken)
                 await run(
                     repair,
-                    "C1 在 Half Agent 中启动时报 STARTUP_BUG。请读取脚本，修复这个故意抛错的测试逻辑，其他资料保留，并进行本地验证。",
+                    "C1 开场初始化时报 STARTUP_BUG。请读取脚本，修复这个故意抛错的测试逻辑，其他资料保留，并进行本地验证。",
                     "sandbox_repair",
                 )
                 history = await attached()

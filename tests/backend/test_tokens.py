@@ -2,8 +2,7 @@
 
 import json
 
-from tavern.conversation.context import compile_context
-from tavern.core.models import ContextRecipe, Settings
+from tavern.core.models import Settings
 from tavern.core.tokens import count_text, counting_info, encoding, request_tokens
 
 
@@ -23,25 +22,14 @@ def test_bpe_counts_english_chinese_and_literal_special_markers_offline(monkeypa
 
 def test_unknown_model_is_explicit_reference_estimate_and_roles_are_independent():
     cfg = Settings(
-        foreground={"model": "gemini-example"}, background={"model": "custom", "tokenizer": "cl100k_base"}
+        story={"model": "gemini-example"}, card_author={"model": "custom", "tokenizer": "cl100k_base"}
     )
-    foreground, background = cfg.for_role("foreground"), cfg.for_role("background")
-    assert counting_info(foreground)["source"] == "reference_fallback"
-    assert counting_info(background)["source"] == "configured"
-    assert counting_info(background)["tokenizer"] == "cl100k_base"
-    assert count_text("你好，世界！", foreground) != count_text("你好，世界！", background)
+    story, author = cfg.for_role("story"), cfg.for_role("card_author")
+    assert counting_info(story)["source"] == "reference_fallback"
+    assert counting_info(author)["source"] == "configured"
+    assert counting_info(author)["tokenizer"] == "cl100k_base"
+    assert count_text("你好，世界！", story) != count_text("你好，世界！", author)
     assert counting_info(Settings(model="gpt-4o"))["source"] == "model_mapping"
-
-
-def test_recipe_token_warning_counts_expanded_macros_without_omission():
-    recipe = ContextRecipe().model_dump()
-    recipe["blocks"].append({"id": "bounded", "source": "custom", "content": "{{user}}", "budget": 20})
-    session = {"id": "s", "persona": "界" * 100, "recipe": recipe}
-    context = compile_context(
-        {}, session, [], {}, "继续", Settings(), "t", retrieval={"ids": [], "query": "", "diagnostics": []}
-    )
-    assert any(item["source"] == "bounded" and item["content"] == "界" * 100 for item in context["trace"])
-    assert any(item["id"] == "bounded" and "仍完整注入" in item["reason"] for item in context["diagnostics"])
 
 
 def test_tool_definition_and_native_continuation_costs_are_included():

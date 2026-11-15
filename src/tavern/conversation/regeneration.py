@@ -37,7 +37,7 @@ def turn_start(session: dict, request: TurnRequest) -> TurnStart:
             text = request.replacement_text
     if not text.strip() and not ooc:
         raise ValueError("请输入消息")
-    # A user snapshot is captured before scripts and Tracker run. Replaying a
+    # A user snapshot is captured before any round processing. Replaying a
     # replacement must never inherit decisions made from the previous input.
     snapshot = copy.deepcopy(user["snapshot"] if user else session["snapshot"])
     reused = copy.deepcopy(user) if user and request.replacement_text is None else None

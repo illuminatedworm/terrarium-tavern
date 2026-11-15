@@ -5,8 +5,8 @@ import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 import LoreFilter from './LoreFilter.vue';
 import WorldbookPicker from './WorldbookPicker.vue';
 import {
-  audiences,
-  entryAudience,
+  purposeLabels,
+  entryPurpose,
   filterLore,
   type LoreFilter as LoreFilterState,
 } from '../../lib/loreFilter';
@@ -22,6 +22,7 @@ import {
   setLoreFlag,
 } from '../../lib/loreBook';
 import { positionPopover } from '../../lib/anchoredPopover';
+import { rawApi } from '../../lib/api';
 import { computed, nextTick, onBeforeUnmount, ref, useId } from 'vue';
 import type { Worldbook } from '../../lib/types';
 
@@ -53,6 +54,8 @@ const importButton = ref<HTMLButtonElement>();
 const importMenu = ref<HTMLElement>();
 const importMenuId = useId();
 const importOpen = ref(false);
+const importingFile = ref(false);
+const importRequests = new AbortController();
 const picking = ref(false);
 const loreDialog = ref<{ mode: 'add' | 'edit'; index: number; entry: any } | null>(null);
 const confirmingLoreDelete = ref(false);
@@ -61,20 +64,32 @@ const entries = computed<any[]>(() => {
   return Array.isArray(e) ? e : Object.values(e);
 });
 const filteredLore = computed(() => filterLore(entries.value, props.filter));
-const loreGroups = computed(() => [
-  {
-    id: 'constant',
-    title: '常驻条目',
-    description: '每轮都注入上下文，不依赖触发词。',
-    items: filteredLore.value.filter((x) => !!x.entry.constant),
-  },
-  {
-    id: 'conditional',
-    title: '条件触发条目',
-    description: '通过关键词、概率、递归和扫描深度等条件激活。',
-    items: filteredLore.value.filter((x) => !x.entry.constant),
-  },
-]);
+const loreGroups = computed(() => {
+  const narrative = filteredLore.value.filter(({ entry }) => entryPurpose(entry) === 'narrative');
+  const rules = filteredLore.value.filter(({ entry }) => entryPurpose(entry) === 'mvu_rules');
+  const groups = [
+    {
+      id: 'constant',
+      title: '常驻条目',
+      description: '进入剧情请求的固定资料。',
+      items: narrative.filter(({ entry }) => !!loreField(entry, 'constant')),
+    },
+    {
+      id: 'conditional',
+      title: '条件触发条目',
+      description: '通过关键词、概率、递归和扫描深度等条件参与检索。',
+      items: narrative.filter(({ entry }) => !loreField(entry, 'constant')),
+    },
+  ];
+  if (rules.length)
+    groups.push({
+      id: 'variable-rules',
+      title: 'MVU 变量规则',
+      description: '授权更新变量时，读取启用条目及关闭的 [InitVar] 条目。',
+      items: rules.sort((a, b) => a.index - b.index),
+    });
+  return groups;
+});
 function loreId(item: { index: number; entry: any }) {
   return String(item.entry.id ?? item.entry.uid ?? item.index);
 }
@@ -92,6 +107,7 @@ async function importToggled(event: Event) {
 window.addEventListener('resize', positionImport);
 window.addEventListener('scroll', positionImport, true);
 onBeforeUnmount(() => {
+  importRequests.abort();
   window.removeEventListener('resize', positionImport);
   window.removeEventListener('scroll', positionImport, true);
 });
@@ -107,12 +123,20 @@ async function importLore(e: Event) {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = '';
-  if (!file) return;
+  if (!file || importingFile.value) return;
+  const book = props.book;
+  const data = new FormData();
+  data.append('file', file);
+  importingFile.value = true;
   try {
-    emit('update:book', appendLoreBook(props.book, JSON.parse(await file.text())));
+    const imported = await rawApi('/worldbooks/prepare-import', data, 'POST', importRequests.signal);
+    if (importRequests.signal.aborted || book !== props.book) return;
+    emit('update:book', appendLoreBook(book, imported));
     emit('notice', '世界书条目已添加到草稿，保存后生效。');
   } catch (error: any) {
-    emit('error', error.message);
+    if (!importRequests.signal.aborted) emit('error', error.message);
+  } finally {
+    importingFile.value = false;
   }
 }
 function importLibrary(picked: Worldbook) {
@@ -136,7 +160,7 @@ function addLore() {
       content: '',
       comment: '新条目',
       enabled: true,
-      extensions: { position: 1, terrarium: { audience: 'writer' } },
+      extensions: { position: 1 },
     },
   };
   confirmingLoreDelete.value = false;
@@ -239,8 +263,8 @@ function positionValue(entry: any) {
 function setPosition(entry: any, event: Event) {
   (entry.extensions ||= {}).position = Number((event.target as HTMLInputElement).value);
 }
-function setAudience(entry: any, value: string) {
-  ((entry.extensions ||= {}).terrarium ||= {}).audience = value;
+function setPurpose(entry: any, value: string) {
+  ((entry.extensions ||= {}).terrarium ||= {}).purpose = value;
 }
 function validateJson(text: string) {
   try {
@@ -255,10 +279,7 @@ defineExpose({ close: closeLore });
 
 <template>
   <p class="muted">
-    随对话滚动方案下，非常驻条目统一作为 system
-    紧贴用户消息前注入，首次有开场白时放在开场白前；重复命中不移动。位置、插入深度和角色字段只对常驻与 ST
-    方案生效。持续轮数不再参与运行，原始兼容字段仍保留在 JSON 中。
-    列表尽量按同批注入顺序显示，不改变源数据顺序；实际注入仍受触发条件和上下文方案影响。
+    检索命中的叙事设定靠近触发处，重复命中沿用原位置。MVU 变量规则在用户授权更新变量时按源条目顺序读取。
   </p>
   <div class="toolbar">
     <button @click="addLore"><Icon name="plus" :size="16" />添加条目</button>
@@ -268,10 +289,14 @@ defineExpose({ close: closeLore });
       :popovertarget="importMenuId"
       aria-haspopup="menu"
       :aria-expanded="importOpen"
+      :disabled="importingFile"
     >
-      <Icon name="import" :size="16" />导入世界书<Icon name="chevron-down" :size="14" />
+      <Icon name="import" :size="16" />{{ importingFile ? '正在导入世界书…' : '导入世界书'
+      }}<Icon name="chevron-down" :size="14" />
     </button>
-    <button v-else @click="loreFile?.click()"><Icon name="import" :size="16" />导入世界书 JSON</button>
+    <button v-else :disabled="importingFile" @click="loreFile?.click()">
+      <Icon name="import" :size="16" />{{ importingFile ? '正在导入世界书…' : '导入世界书 JSON' }}
+    </button>
     <input ref="loreFile" type="file" accept=".json" hidden @change="importLore" />
   </div>
   <div
@@ -314,7 +339,7 @@ defineExpose({ close: closeLore });
       >
         <summary>
           {{ loreTitle(item.entry) || '条目 ' + (item.index + 1) }}
-          <small>{{ audiences[entryAudience(item.entry)] }}</small>
+          <small>{{ purposeLabels[entryPurpose(item.entry)] }}</small>
           <small v-if="sources?.[loreId(item)]" class="lore-source-label"
             >来自「{{ sources[loreId(item)] }}」</small
           >
@@ -322,7 +347,7 @@ defineExpose({ close: closeLore });
           <span
             v-if="isInitVar(item.entry)"
             class="mvu-entry-label"
-            title="[InitVar] 无论启停与用途均参与初始化；标记 tracker_mvu 后也向变量任务提供完整正文。"
+            title="[InitVar] 条目均参与初始化。用途为 MVU 变量规则时，剧情模型在用户授权更新变量后也会完整读取条目正文。"
           >
             已识别 MVU 条目
           </span>
@@ -361,10 +386,10 @@ defineExpose({ close: closeLore });
             /></label>
             <label
               >条目用途<select
-                :value="entryAudience(loreDialog.entry)"
-                @change="setAudience(loreDialog.entry, ($event.target as HTMLSelectElement).value)"
+                :value="entryPurpose(loreDialog.entry)"
+                @change="setPurpose(loreDialog.entry, ($event.target as HTMLSelectElement).value)"
               >
-                <option v-for="(label, key) in audiences" :key="key" :value="key">{{ label }}</option>
+                <option v-for="(label, key) in purposeLabels" :key="key" :value="key">{{ label }}</option>
               </select></label
             >
           </div>

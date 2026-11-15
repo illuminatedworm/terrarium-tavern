@@ -161,11 +161,9 @@ class NovelStore:
 
     @staticmethod
     def binding_for_update(db, sid, expected):
-        session = db.execute("SELECT agent_mode FROM sessions WHERE id=?", (sid,)).fetchone()
+        session = db.execute("SELECT 1 FROM sessions WHERE id=?", (sid,)).fetchone()
         if session is None:
             raise NotFound("对话不存在")
-        if session[0] != "full_agent":
-            raise ValueError("原著调查仅限 Full Agent 对话")
         db.execute("INSERT OR IGNORE INTO novel_bindings(session) VALUES (?)", (sid,))
         row = db.execute("SELECT * FROM novel_bindings WHERE session=?", (sid,)).fetchone()
         if row["revision"] != expected:

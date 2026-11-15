@@ -220,8 +220,8 @@ async def test_other_agent_cannot_enable_search_through_request_flag(tmp_path):
 
 
 def test_provider_switch_preserves_portable_source_urls():
-    from tavern.full_agent.story import committed_records
     from tavern.scripting.native_response import portable, prepare_messages
+    from tavern.story.delivery import committed_records
 
     message = {
         "role": "assistant",

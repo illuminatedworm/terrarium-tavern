@@ -12,15 +12,11 @@ from pydantic import BaseModel, Field, ValidationError
 
 from tavern.core.channels import profile_key
 from tavern.core.errors import NotFound
-from tavern.core.prompts import (
-    FULL_AGENT_SYSTEM_PROMPT_DEFINITION,
-    HALF_AGENT_SYSTEM_PROMPT_DEFINITION,
-    PROMPT_DEFINITIONS,
-)
+from tavern.core.prompts import PROMPT_DEFINITIONS, STORY_SYSTEM_PROMPT_DEFINITION
 from tavern.core.settings import SettingsDocument
 from tavern.storage.store import Conflict
 
-Scope = Literal["full_agent", "half_agent", "shared"]
+Scope = Literal["story", "shared"]
 
 
 def get_path(value, path):
@@ -73,84 +69,38 @@ def prompt_catalog():
             "choices": True,
         }
     )
-    for scope in ("full_agent", "half_agent"):
-        defaults = getattr(SettingsDocument(), scope).model_dump()
-        system_prompt = (
-            FULL_AGENT_SYSTEM_PROMPT_DEFINITION
-            if scope == "full_agent"
-            else HALF_AGENT_SYSTEM_PROMPT_DEFINITION
-        )
-        for prompt in (system_prompt, *PROMPT_DEFINITIONS):
-            path = prompt["path"].replace("local_models.", "local_runtime.")
-            if scope == "full_agent" and path in {
-                "tracker_system_prompt",
-                "retrieval.query_prompt",
-                "retrieval.protocol_prompt",
-            }:
-                continue
-            default = get_path(defaults, path)
-            definition = {
-                **prompt,
-                "scope": scope,
-                "path": path,
-                "label": prompt["label"].replace("Reranker", "重排模型"),
-                "default": default,
-            }
-            if isinstance(default, dict):
-                definition.update(choices=True, default=default["options"][0]["text"])
-            result.append(definition)
+    defaults = SettingsDocument().story.model_dump()
+    for prompt in (STORY_SYSTEM_PROMPT_DEFINITION, *PROMPT_DEFINITIONS):
+        path = prompt["path"]
+        default = get_path(defaults, path)
+        definition = {
+            **prompt,
+            "scope": "story",
+            "path": path,
+            "label": prompt["label"].replace("Reranker", "重排模型"),
+            "default": default,
+        }
+        if isinstance(default, dict):
+            definition.update(choices=True, default=default["options"][0]["text"])
+        result.append(definition)
     return result
 
 
 def page_catalog():
     result = []
     prompts = prompt_catalog()
-    for scope in ("full_agent", "half_agent"):
-        fields = getattr(SettingsDocument(), scope).model_dump()
-        prompt_paths = [p["path"] for p in prompts if p["scope"] == scope]
-        retrieval = [f"retrieval.{key}" for key in fields["retrieval"] if not key.endswith("prompt")]
-        retrieval += [f"local_runtime.{key}" for key in ("reranker_enabled", "rerank_fragments")]
-        retrieval += [key for key in fields if key.startswith("lore_")]
-        pages = [
-            (
-                "model",
-                "模型与生成",
-                ["model", "official_model", "default_channel", "policy"]
-                if scope == "full_agent"
-                else [
-                    "foreground",
-                    "background",
-                    "official_foreground",
-                    "official_background",
-                    "default_channel",
-                    "policy",
-                ],
-            ),
-            ("retrieval", "检索与世界书", retrieval),
-            (
-                "memory",
-                "工具与记忆" if scope == "full_agent" else "历史与记忆",
-                ["tools"]
-                if scope == "full_agent"
-                else [
-                    key
-                    for key in fields
-                    if key.startswith(
-                        ("chunk_", "history_", "memory_", "context_pressure_", "daily_", "tracker_")
-                    )
-                    and not key.endswith("prompt")
-                ],
-            ),
-            ("prompts", "提示词", prompt_paths),
-        ]
-        if scope == "half_agent":
-            pages.append(("recipe", "上下文编排", ["context_recipe"]))
-        else:
-            pages.append(("novel", "原著调查", ["novel_research", "model.message_adapter"]))
-        for key, label, paths in pages:
-            result.append(
-                {"id": f"{scope}.{key}", "scope": scope, "key": key, "label": label, "paths": paths}
-            )
+    fields = SettingsDocument().story.model_dump()
+    retrieval = [f"retrieval.{key}" for key in fields["retrieval"]]
+    retrieval += [f"local_runtime.{key}" for key in ("reranker_enabled", "rerank_fragments")]
+    retrieval += [key for key in fields if key.startswith("lore_")]
+    for key, label, paths in [
+        ("model", "模型与生成", ["model", "official_model", "default_channel", "policy"]),
+        ("retrieval", "检索与世界书", retrieval),
+        ("memory", "工具与记忆", ["tools"]),
+        ("prompts", "提示词", [p["path"] for p in prompts if p["scope"] == "story"]),
+        ("novel", "原著调查", ["novel_research", "model.message_adapter"]),
+    ]:
+        result.append({"id": f"story.{key}", "scope": "story", "key": key, "label": label, "paths": paths})
     for key, label, paths in [
         ("providers", "提供商", ["providers"]),
         ("advisor", "参谋 agent", ["advisor"]),
@@ -165,7 +115,7 @@ def page_catalog():
             [
                 "send_shortcut",
                 "debug_failed_requests",
-                "debug_full_agent_prefix",
+                "debug_story_prefix",
                 "kemini",
                 "unicode_story_enabled",
             ],
@@ -212,8 +162,8 @@ def validate_document(raw):
 def invalidate_capabilities(old, new):
     for key in ("model", "official_model"):
         before, after = (
-            getattr(old.full_agent.novel_research, key),
-            getattr(new.full_agent.novel_research, key),
+            getattr(old.story.novel_research, key),
+            getattr(new.story.novel_research, key),
         )
         if after is not None and (
             before is None
@@ -384,7 +334,7 @@ def register_settings_routes(app, store):
                 put_path(raw[scope], path, value)
             new = validate_document(raw)
             invalidate_capabilities(old, new)
-            # A shared connection edit can invalidate probes in either mode.
+            # A shared connection edit can invalidate saved probe results.
             for name in new.revisions:
                 if getattr(new, name) != getattr(old, name):
                     new.revisions[name] += 1
@@ -437,7 +387,7 @@ def save_probe(store, role, result, captured):
                 db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
             )
             key = "official_model" if captured._settings_channel == "chatgpt" else "model"
-            profile = getattr(doc.full_agent.novel_research, key)
+            profile = getattr(doc.story.novel_research, key)
             before = captured.novel_research
             provider = next(
                 (p for p in doc.shared.providers if profile and p.id == profile.provider_id), None
@@ -454,7 +404,7 @@ def save_probe(store, role, result, captured):
             ):
                 raise Conflict("检查期间原著调查模型连接已改变，请重新检查")
             profile.capability, profile.capability_key = result.capability, result.capability_key
-            doc.revisions["full_agent"] += 1
+            doc.revisions["story"] += 1
             db.execute("UPDATE meta SET value=? WHERE key='settings'", (doc.model_dump_json(),))
         return
     if role == "advisor":
@@ -465,7 +415,7 @@ def save_probe(store, role, result, captured):
             )
             key = "official_model" if captured._settings_channel == "chatgpt" else "model"
             profile = getattr(doc.shared.advisor, key)
-            current = doc.runtime("half_agent", captured._settings_channel)
+            current = doc.runtime(captured._settings_channel)
             current.advisor = profile
             from tavern.scripting.request_context import response_origin
 
@@ -477,12 +427,7 @@ def save_probe(store, role, result, captured):
             doc.revisions["shared"] += 1
             db.execute("UPDATE meta SET value=? WHERE key='settings'", (doc.model_dump_json(),))
         return
-    scope, key = {
-        "full_agent": ("full_agent", "model"),
-        "foreground": ("half_agent", "foreground"),
-        "background": ("half_agent", "background"),
-        "card_author": ("shared", "card_author"),
-    }[role]
+    scope = "shared" if role == "card_author" else "story"
     with store.connection() as db:
         db.execute("BEGIN IMMEDIATE")
         doc = SettingsDocument.model_validate_json(
@@ -490,7 +435,7 @@ def save_probe(store, role, result, captured):
         )
         channel = captured._settings_channel
         key = profile_key(role, channel)
-        current = doc.runtime("full_agent" if role == "full_agent" else "half_agent", channel).for_role(role)
+        current = doc.runtime(channel).for_role(role)
         before = captured.for_role(role)
         if (
             current.model,

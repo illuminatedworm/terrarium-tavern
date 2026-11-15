@@ -19,29 +19,28 @@ from tavern.core.kemini_prompts import (
     LEGACY_THINKING_PROMPT,
     migrate_interleaving_prompts,
 )
-from tavern.core.models import ContextRecipe, PreferencePreset, Settings
+from tavern.core.models import PreferencePreset, Settings
 from tavern.core.prompt_choices import PromptChoices
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
-    DEFAULT_MAINTENANCE_PROMPT,
-    DEFAULT_MEMORY_PROMPT,
     DEFAULT_PREFERENCE_PROMPT,
     DEFAULT_PROBE_MARKER_PROMPT,
     DEFAULT_PROBE_PROMPT,
     DEFAULT_REGENERATE_PROMPT,
     DEFAULT_RERANKER_PROMPT,
-    DEFAULT_RETRIEVAL_PROTOCOL,
-    DEFAULT_SYSTEM_PROMPT,
-    DEFAULT_TRACKER_PROMPT,
-    LEGACY_DEFAULT_RETRIEVAL_PROTOCOL,
 )
 from tavern.core.update_policy import Policy
-from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
 from tavern.novel.config import NovelConfig
 from tavern.search.retrieval_config import LocalModel, ModelProfile, Network, Provider, RetrievalSettings
+from tavern.storage.legacy_story import (
+    discard_retired_settings,
+    upgrade_card_author_guide_references,
+    upgrade_settings_keys,
+)
+from tavern.story.config import STORY_PROMPT, StoryConfig
 from tavern.web.config import WebConfig, migrate_web_settings
 
-LEGACY_FULL_AGENT_PROMPT_HASHES = {
+LEGACY_STORY_PROMPT_HASHES = {
     "2ab331d1d01ab9ffeeb9436e27af00b7425f7aed7b1a685e5d38081a84dc7727",
     "74cfaf344bc123d16a6604b6dcecd8ebbfa335ef0e5c62d54ca27fe641111566",
     "d72b35768688226ad359f3fdc8dcb04286633b4da808a8ee6aa70f7f47e8e00b",
@@ -54,18 +53,34 @@ LEGACY_FULL_AGENT_PROMPT_HASHES = {
     "ca82508b4903dfa3411d76b12e6b553ef19e18433dda34bb3232ef106b18f832",
 }
 
-LEGACY_HALF_AGENT_PROMPT_HASHES = {
-    "80e74265bf1a68f979506116b933e16986e416395313a73bb9cd8d24f0bad0c2",
-    "3a27ef0127a54dee3079e8c6270421eb4da2665b9953bf3464a8142ef7a785ec",
-    "53bcac3b9a63532edecb0579d55ce17aade8ac940644d23f8ddcff891f366365",
-}
-
 LEGACY_ADVISOR_PROMPT_HASHES = {
+    "62e33b9d5bc78cdbbe3badf7d94cb4bd8150fc48f7cca1875f00d6decfd303ad",
+    "0693d1b8e704e83a913b7f9e477cc10c27290b9db207d2882ef04193eeb65cab",
     "f7071ba980f49b6cb9889c4652bcf9b9d2392a130e208bed162324ed185c8e44",
     "86617163b364451f012f2e8810d1580433a3db6ab2381c9c6df7a7e4e95e7659",
     "b1224d17c30b83d2b0c8fc9951e38f19b56a8ce3b45c2b9f93a8ea96ed8803ad",
     "7fcffe8be2d2a71e5a631f6a4a7bd2387321e95519d1cc7de455a5c28ec61e05",
     "28a812d6b0a58f07fe62828a35f0ac1f582d86502ad5a179bbaa35d556213b67",
+}
+
+# Previous built-in Card Author prompts replaced by the current rules.
+LEGACY_CARD_AUTHOR_PROMPT_HASHES = {
+    "04ffb4bf795237bc697f7dbf46a4173818a770248f934bc652ba4f837eabcf06",
+    "aa8251e3d7628c8348a285dbc517e5247a83166bc08ccb18c924b1ce18bfc869",
+    "8448879a9facf4ca7f9134e539dc2815021b7c512b65b842c99da161a47b5426",
+    "dd958297acd37514917b3f5e0eca8790db78fa874ff7930b372e11d0e80c3291",
+    "2884032491d685dcaa5b9d51a5249cb242f3d60293bb657b34da9a3b20fe3a90",
+    "13812c7e5d4714e18cb3a7475100203252d1f92be472cbe138f5d58cacc5f4fd",
+    "677e11901c5cb0c5a4e0320eae8ae7aa8ba4eb3bdda4d6d8ce0a193da051fdf3",
+    "3271754a32525f77b7e56175d8cc1be197e79143f352c95776d1e044140cd039",
+    "16efa497a58295743b8c8f1f3ff528d4eaa8cd8b8d4fda189e7288c0a5b26b5b",
+    "b2b062ce5f9af5d8aaeb09fde38c986cf825b8638a7e35ed13af7b925dd15453",
+    "ddc4de9d44a5b4301c62f516cd050786132eed1a3e2a8db0d4df77f684d7c5b3",
+    "7f1b33b5b7c60ac39b73e363af2f972d950501c98593ff5a76adc20f61e55ce8",
+    "2bbdacc371814cff642baf200ded4d645e57aea23ecc35d76ce7899ed59cb221",
+    "f90f0c751b6b5e52de17ade3bdee95ef91d543dfa68ac3b1afaeafd20d910f1a",
+    "cb9f2c79f916a115d5ab85e53ca66cdf70d048dd9326939f3d3671ab93529204",
+    "7be81331ec72819352cd1d7e7d33d4789b5805fdb1537b3671c19948a3c0c850",
 }
 
 
@@ -98,75 +113,20 @@ class AgentSettings(StrictSettings):
     probe_marker_prompt: str = DEFAULT_PROBE_MARKER_PROMPT
 
 
-class FullSettings(AgentSettings):
+class StorySettings(AgentSettings):
     model: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
     official_model: ModelProfile | None = None
-    tools: FullAgentConfig = Field(default_factory=FullAgentConfig)
-    system_prompt: PromptChoices = Field(default_factory=lambda: PromptChoices.from_text(FULL_AGENT_PROMPT))
+    tools: StoryConfig = Field(default_factory=StoryConfig)
+    system_prompt: PromptChoices = Field(default_factory=lambda: PromptChoices.from_text(STORY_PROMPT))
     novel_research: NovelConfig = Field(default_factory=NovelConfig)
 
     @model_validator(mode="before")
     @classmethod
-    def default_writer_cache(cls, value):
+    def default_story_cache(cls, value):
         if isinstance(value, dict) and isinstance(value.get("model"), dict) and "cache" not in value["model"]:
             value = deepcopy(value)
             value["model"]["cache"] = {"mode": "runtime"}
         return value
-
-
-class HalfSettings(AgentSettings):
-    foreground: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
-    background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=8192))
-    official_foreground: ModelProfile | None = None
-    official_background: ModelProfile | None = None
-    system_prompt: PromptChoices = Field(
-        default_factory=lambda: PromptChoices.from_text(DEFAULT_SYSTEM_PROMPT)
-    )
-    tracker_system_prompt: PromptChoices = Field(
-        default_factory=lambda: PromptChoices.from_text(DEFAULT_TRACKER_PROMPT)
-    )
-    tracker_max_steps: int = Field(default=12, ge=2, le=100, strict=True)
-    lore_injection_mode: Literal["conversation", "st_top"] = "conversation"
-    context_recipe: ContextRecipe = Field(default_factory=ContextRecipe)
-    chunk_mode: Literal["messages", "off"] = "messages"
-    chunk_size: int = Field(default=10, ge=2, le=100, strict=True)
-    history_message_cap: int = Field(default=200, ge=8, le=1000, strict=True)
-    memory_interval_turns: int = Field(default=5, ge=1, le=100, strict=True)
-    context_pressure_trigger: float = Field(default=0.85, ge=0.1, le=0.99)
-    daily_context_budget: int = Field(default=98304, ge=2048, le=2000000, strict=True)
-    memory_timeout: int = Field(default=180, ge=5, le=180, strict=True)
-    memory_input_tokens: int = Field(default=65536, ge=2048, le=2000000, strict=True)
-    memory_evidence_tokens: int = Field(default=4096, ge=0, le=32768, strict=True)
-    memory_output_tokens: int = Field(default=16384, ge=256, le=65536, strict=True)
-    memory_capacity_tokens: int = Field(default=16384, ge=512, le=65536, strict=True)
-    memory_current_max_records: int = Field(default=10, ge=1, le=100, strict=True)
-    memory_episode_cooldown_rounds: int = Field(default=20, ge=0, le=10000, strict=True)
-    memory_review_enabled: bool = Field(default=True, strict=True)
-    memory_recall_count: int = Field(default=3, ge=0, le=20, strict=True)
-    memory_recall_filter: bool = Field(default=False, strict=True)
-
-    @model_validator(mode="before")
-    @classmethod
-    def default_writer_cache(cls, value):
-        if (
-            isinstance(value, dict)
-            and isinstance(value.get("foreground"), dict)
-            and "cache" not in value["foreground"]
-        ):
-            value = deepcopy(value)
-            value["foreground"]["cache"] = {"mode": "runtime"}
-        return value
-
-    @model_validator(mode="after")
-    def linked(self):
-        blocks = self.context_recipe.blocks
-        if any(not block.id.strip() or not block.source.strip() for block in blocks):
-            raise ValueError("上下文块标识和来源不能为空")
-        if len({block.id for block in blocks}) != len(blocks):
-            raise ValueError("上下文块标识不能重复")
-        if self.memory_output_tokens + 2048 >= self.background.context_tokens:
-            raise ValueError("记忆输出上限必须为后台模型输入留出安全余量")
-        return self
 
 
 class LocalResources(StrictSettings):
@@ -199,7 +159,7 @@ class SharedSettings(StrictSettings):
     unicode_story_enabled: bool = Field(default=False, strict=True)
     send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "ctrl_enter"
     debug_failed_requests: bool = Field(default=False, strict=True)
-    debug_full_agent_prefix: bool = Field(default=False, strict=True)
+    debug_story_prefix: bool = Field(default=False, strict=True)
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     card_author: ModelProfile = Field(default_factory=ModelProfile)
@@ -222,18 +182,14 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[20] = 20
-    full_agent: FullSettings = Field(default_factory=FullSettings)
-    half_agent: HalfSettings = Field(default_factory=HalfSettings)
+    version: Literal[22] = 22
+    story: StorySettings = Field(default_factory=StorySettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
-    revisions: dict[str, int] = Field(
-        default_factory=lambda: {k: 0 for k in ("full_agent", "half_agent", "shared")}
-    )
+    revisions: dict[str, int] = Field(default_factory=lambda: {"story": 0, "shared": 0})
 
     def profiles(self):
         for scope, keys in (
-            ("full_agent", ("model", "official_model")),
-            ("half_agent", ("foreground", "background", "official_foreground", "official_background")),
+            ("story", ("model", "official_model")),
             ("shared", ("card_author",)),
         ):
             for key in keys:
@@ -266,7 +222,7 @@ class SettingsDocument(StrictSettings):
             if provider_channel(provider) != ("chatgpt" if key == "official_model" else "standard"):
                 raise ValueError("参谋 agent 模型配置与渠道不一致")
         for key in ("model", "official_model"):
-            profile = getattr(self.full_agent.novel_research, key)
+            profile = getattr(self.story.novel_research, key)
             if profile is None:
                 continue
             provider = next((p for p in self.shared.providers if p.id == profile.provider_id), None)
@@ -279,8 +235,8 @@ class SettingsDocument(StrictSettings):
             (
                 self.shared.advisor.model,
                 self.shared.advisor.official_model,
-                self.full_agent.novel_research.model,
-                self.full_agent.novel_research.official_model,
+                self.story.novel_research.model,
+                self.story.novel_research.official_model,
             )
         )
         official_ids = {p.id for p in self.shared.providers if p.auth_mode == "openai_api_key"}
@@ -295,53 +251,33 @@ class SettingsDocument(StrictSettings):
                     raise ValueError("OpenAI 官方 API 固定使用 Responses 和 /v1，请修正模型连接配置")
         return self
 
-    def runtime(self, mode="half_agent", channel=None) -> Settings:
-        """Each projection is a deep operation snapshot, including its role changes."""
-        agent = getattr(self, mode).model_copy(deep=True)
+    def runtime(self, channel=None) -> Settings:
+        """Capture the selected channel and shared resources for this operation."""
+        agent = self.story
         channel = channel or agent.default_channel
         providers = [p.model_copy(deep=True) for p in self.shared.providers]
+        profile = agent.official_model if channel == "chatgpt" else agent.model
+        if profile is None or not profile.provider_id:
+            placeholder = Provider(
+                id="unconfigured-" + channel,
+                name="未配置",
+                auth_mode="chatgpt_subscription" if channel == "chatgpt" else "api_key",
+            )
+            if not any(p.id == placeholder.id for p in providers):
+                providers.append(placeholder)
+            profile = ModelProfile(provider_id=placeholder.id, model="")
 
-        def selected(owner, key):
-            profile = getattr(owner, ("official_" if channel == "chatgpt" else "") + key)
-            if profile is not None and profile.provider_id:
-                return profile.model_copy(deep=True)
-            missing = "unconfigured-" + channel
-            if not any(p.id == missing for p in providers):
-                providers.append(
-                    Provider(
-                        id=missing,
-                        name="未配置",
-                        auth_mode=("chatgpt_subscription" if channel == "chatgpt" else "api_key"),
-                    )
-                )
-            return ModelProfile(provider_id=missing, model="")
-
-        full_profile = selected(self.full_agent, "model")
-        if mode == "full_agent":
-            agent.model = full_profile
-        else:
-            agent.foreground, agent.background = selected(agent, "foreground"), selected(agent, "background")
         data = agent.model_dump(
             exclude={
                 "model",
+                "official_model",
+                "default_channel",
                 "tools",
                 "local_runtime",
-                "official_model",
-                "official_foreground",
-                "official_background",
-                "default_channel",
-                "novel_research",
                 "system_prompt",
-                "tracker_system_prompt",
+                "novel_research",
             }
         )
-        data["runtime_mode"] = mode
-        # Only the selected text enters operation-local settings and request fingerprints.
-        data["system_prompt"] = agent.system_prompt.current
-        if mode == "half_agent":
-            data["tracker_system_prompt"] = agent.tracker_system_prompt.current
-        # The submit_story experiment is selected from the saved document and
-        # conversation at turn entry, outside shared transport and cache settings.
         data.update(
             self.shared.model_dump(
                 exclude={
@@ -352,35 +288,21 @@ class SettingsDocument(StrictSettings):
             )
         )
         data["card_author_config"]["system_prompt"] = self.shared.card_author_config.system_prompt.current
-        # shared.kemini.enabled only permits creating Kemini conversations; the
-        # experiment applies per conversation via Store.session_settings.
+        # Experiments are attached to the saved session after projecting shared settings.
         data["kemini"]["enabled"] = False
-        data.update(providers=providers, channel_origin=channel)
         data["local_models"].update(agent.local_runtime.model_dump())
         data.update(
-            full_agent=full_profile.model_dump(),
-            full_agent_config=self.full_agent.tools.model_dump(),
-            full_agent_system_prompt=self.full_agent.system_prompt.current,
+            **profile.model_dump(exclude={"provider_id", "provider_connections"}),
+            providers=providers,
+            channel_origin=channel,
+            story=profile.model_dump(),
+            story_config=agent.tools.model_dump(),
+            story_system_prompt=agent.system_prompt.current,
         )
-        if mode == "full_agent":
-            # Script adapters use role-shaped access too; they must never reach Half Agent.
-            data.update(
-                foreground=agent.model.model_dump(),
-                background=agent.model.model_dump(),
-                lore_injection_mode="conversation",
-            )
-        profile = agent.model if mode == "full_agent" else agent.foreground
-        data.update(profile.model_dump(exclude={"provider_id", "provider_connections"}))
-        # Runtime-only Half Agent fields are irrelevant to a Full Agent request.
-        if mode == "full_agent":
-            data.update(memory_output_tokens=256, chunk_mode="off")
         value = Settings.model_validate(data)
         value._settings_source = self.model_copy(deep=True)
-        value._settings_mode = mode
         value._settings_channel = channel
-        if mode == "half_agent":
-            value._full_runtime = self.runtime("full_agent", channel)
-        return value.for_role("full_agent" if mode == "full_agent" else "foreground")
+        return value.for_role()
 
 
 def migrate_model_connections(raw):
@@ -392,17 +314,15 @@ def migrate_model_connections(raw):
     changed = set()
     profiles = (
         (
-            ("full_agent", "model"),
-            ("half_agent", "foreground"),
-            ("half_agent", "background"),
+            ("story", "model"),
             ("shared", "card_author"),
         )
         if scoped
-        else ((None, "foreground"), (None, "background"), (None, "full_agent"), (None, "card_author"))
+        else ((None, "story"), (None, "card_author"))
     )
     for scope, name in profiles:
         owner = raw.setdefault(scope, {}) if scope else raw
-        if not scoped and name in ("full_agent", "card_author") and owner.get(name) is None:
+        if not scoped and name in ("story", "card_author") and owner.get(name) is None:
             continue
         profile = owner.setdefault(name, {})
         provider = originals.get(profile.get("provider_id", "default"), {})
@@ -435,31 +355,6 @@ def migrate_model_connections(raw):
     return changed
 
 
-def migrate_tracker_settings(agent):
-    """Fold legacy content policies verbatim into one editable Tracker prompt."""
-    changed = False
-    custom = []
-    for key, title, default in (
-        ("memory_system_prompt", "记忆整理时", DEFAULT_MEMORY_PROMPT),
-        ("maintenance_system_prompt", "设定维护时", DEFAULT_MAINTENANCE_PROMPT),
-    ):
-        if key in agent:
-            old = agent.pop(key)
-            changed = True
-            if isinstance(old, str) and old != default:
-                custom.append(f"## {title}\n{old}")
-    if "tracker_system_prompt" not in agent or custom:
-        agent["tracker_system_prompt"] = "\n\n".join(
-            [agent.get("tracker_system_prompt", DEFAULT_TRACKER_PROMPT), *custom]
-        )
-        changed = True
-    if "tracker_max_steps" not in agent:
-        # Legacy tasks ran with eight calls before this field was persisted.
-        agent["tracker_max_steps"] = 8
-        changed = True
-    return changed
-
-
 def rename_card_author(raw):
     """Settings v3 renamed the Card Editor keys to Card Author; values move verbatim."""
     owner = raw.setdefault("shared", {}) if "version" in raw else raw
@@ -472,20 +367,10 @@ def rename_card_author(raw):
     return False
 
 
-def migrate_context_window_settings(raw):
-    """Migrate saved/legacy configuration, never override a current user edit."""
-    if raw.get("chunk_mode") == "tokens":
-        raw["chunk_mode"] = "messages"
-    raw.pop("chunk_max_tokens", None)
-    raw.pop("context_pressure_target", None)
-
-
 def migrate_prompt_choices(raw):
     shared = raw["shared"]
     for owner, key in (
-        (raw["full_agent"], "system_prompt"),
-        (raw["half_agent"], "system_prompt"),
-        (raw["half_agent"], "tracker_system_prompt"),
+        (raw["story"], "system_prompt"),
         (shared.get("advisor", {}), "system_prompt"),
         (shared.get("card_author_config", {}), "system_prompt"),
     ):
@@ -495,7 +380,13 @@ def migrate_prompt_choices(raw):
 
 def migrate_settings(raw: dict) -> SettingsDocument:
     raw = deepcopy(raw)
+    if "version" not in raw or raw["version"] in range(2, 22):
+        upgrade_settings_keys(raw)
     renamed = rename_card_author(raw)
+    if "version" not in raw:
+        # Restore the effective story and card author profiles from flat settings.
+        raw["story"] = raw.get("story") or raw.get("foreground", {})
+        raw["card_author"] = raw.get("card_author") or raw.get("background", {"reply_tokens": 8192})
     connection_changes = migrate_model_connections(raw)
     if "version" in raw:
         changed_scopes = connection_changes
@@ -503,7 +394,7 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             # The active connection stays verbatim; inactive provider records
             # start empty rather than inventing settings for other providers.
             raw["version"] = 4
-            changed_scopes.update(("full_agent", "half_agent", "shared"))
+            changed_scopes.update(("story", "shared"))
         if raw["version"] == 4:
             raw["version"] = 5
             raw.setdefault("shared", {}).setdefault("kemini", KeminiConfig().model_dump())
@@ -515,9 +406,6 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             for key in (
                 "clear_prompt",
                 "info_prompt",
-                "transport_prompt",
-                "tool_description",
-                "content_description",
             ):
                 kemini.setdefault(key, defaults[key])
             changed_scopes.add("shared")
@@ -538,31 +426,26 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                     kemini[key] = defaults[key]
             changed_scopes.add("shared")
         if raw["version"] == 7:
-            # Archive recall and handoff chapter limits start at their visible defaults.
             raw["version"] = 8
-            half = raw.setdefault("half_agent", {})
-            for key in ("memory_recall_count", "memory_recall_filter"):
-                half.setdefault(key, HalfSettings.model_fields[key].default)
-            tools = raw.setdefault("full_agent", {}).setdefault("tools", {})
+            tools = raw.setdefault("story", {}).setdefault("tools", {})
             for key in ("chapter_tokens", "chapters_total_tokens"):
-                tools.setdefault(key, FullAgentConfig.model_fields[key].default)
-            changed_scopes.update(("full_agent", "half_agent"))
+                tools.setdefault(key, StoryConfig.model_fields[key].default)
+            changed_scopes.add("story")
         if raw["version"] == 8:
             # v9 permits an explicit Android CPU/Q8_0 model configuration. Preserve
             # every saved CUDA setting; selecting the mobile preset is a UI action.
             raw["version"] = 9
         if raw["version"] == 9:
             raw["version"] = 10
-            raw.setdefault("full_agent", {}).setdefault("tools", {}).setdefault(
-                "max_duration_seconds", FullAgentConfig.model_fields["max_duration_seconds"].default
+            raw.setdefault("story", {}).setdefault("tools", {}).setdefault(
+                "max_duration_seconds", StoryConfig.model_fields["max_duration_seconds"].default
             )
-            changed_scopes.add("full_agent")
+            changed_scopes.add("story")
         if raw["version"] == 10:
             # Expose the previous per-entry limit without changing saved query timeouts.
             raw["version"] = 11
-            for scope in ("full_agent", "half_agent"):
-                raw.setdefault(scope, {}).setdefault("retrieval", {}).setdefault("index_timeout", 60)
-            changed_scopes.update(("full_agent", "half_agent"))
+            raw.setdefault("story", {}).setdefault("retrieval", {}).setdefault("index_timeout", 60)
+            changed_scopes.add("story")
         if raw["version"] == 11:
             # New explicit Android devices; preserve every saved CPU/CUDA choice.
             raw["version"] = 12
@@ -572,8 +455,6 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                 changed_scopes.add("shared")
         if raw["version"] == 13:
             raw["version"] = 14
-            migrate_context_window_settings(raw.setdefault("half_agent", {}))
-            changed_scopes.add("half_agent")
         if renamed:
             changed_scopes.add("shared")
         if migrate_web_settings(raw.setdefault("shared", {})):
@@ -588,24 +469,17 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                 provider["name"] = "Sign In With ChatGPT"
                 changed_scopes.add("shared")
         standard = next((p["id"] for p in providers.values() if provider_channel(p) == "standard"), "")
-        for scope, keys in (("full_agent", ("model",)), ("half_agent", ("foreground", "background"))):
-            agent = raw.setdefault(scope, {})
-            if "default_channel" not in agent:
-                agent["default_channel"] = "standard"
-                for key in keys:
-                    profile = agent.get(key, {})
-                    if provider_channel(providers.get(profile.get("provider_id"), {})) == "chatgpt":
-                        agent["official_" + key] = deepcopy(profile)
-                        agent[key] = ModelProfile(provider_id=standard, model="").model_dump()
-                        if key in ("model", "foreground"):
-                            agent["default_channel"] = "chatgpt"
-                changed_scopes.add(scope)
-        if raw["version"] < 19 and migrate_tracker_settings(raw["half_agent"]):
-            changed_scopes.add("half_agent")
+        agent = raw.setdefault("story", {})
+        if "default_channel" not in agent:
+            agent["default_channel"] = "standard"
+            profile = agent.get("model", {})
+            if provider_channel(providers.get(profile.get("provider_id"), {})) == "chatgpt":
+                agent["official_model"] = deepcopy(profile)
+                agent["model"] = ModelProfile(provider_id=standard, model="").model_dump()
+                agent["default_channel"] = "chatgpt"
+            changed_scopes.add("story")
         for scope, key in (
-            ("full_agent", "model"),
-            ("half_agent", "foreground"),
-            ("half_agent", "background"),
+            ("story", "model"),
             ("shared", "card_author"),
         ):
             profile = raw.setdefault(scope, {}).setdefault(key, {})
@@ -617,15 +491,15 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                 if profile.get("prompt_cache_retention", "default") != "default":
                     request["prompt_cache_retention"] = profile["prompt_cache_retention"]
                 profile["cache"] = {
-                    "mode": "runtime" if key in ("model", "foreground") else "cloud",
+                    "mode": "runtime" if key == "model" else "cloud",
                     "request": request,
                 }
             for field in ("prompt_cache_key", "prompt_cache_mode", "prompt_cache_retention"):
                 profile.pop(field, None)
         if raw["version"] == 14:
             raw["version"] = 15
-            raw.setdefault("full_agent", {}).setdefault("novel_research", NovelConfig().model_dump())
-            changed_scopes.add("full_agent")
+            raw.setdefault("story", {}).setdefault("novel_research", NovelConfig().model_dump())
+            changed_scopes.add("story")
         if raw["version"] == 15:
             raw["version"] = 16
         if raw["version"] == 16:
@@ -639,79 +513,74 @@ def migrate_settings(raw: dict) -> SettingsDocument:
         if raw["version"] == 18:
             migrate_prompt_choices(raw)
             raw["version"] = 19
-            changed_scopes.update(("full_agent", "half_agent", "shared"))
+            changed_scopes.update(("story", "shared"))
         if raw["version"] == 19:
             raw["version"] = 20
             raw["shared"]["unicode_story_enabled"] = False
             changed_scopes.add("shared")
+        if raw["version"] == 20:
+            raw["version"] = 21
+            discard_retired_settings(raw)
+            retrieval = raw["story"].get("retrieval", {})
+            for key in ("query_prompt", "protocol_prompt"):
+                retrieval.pop(key, None)
+            kemini = raw["shared"].get("kemini", {})
+            for key in ("transport_prompt", "tool_description", "content_description"):
+                kemini.pop(key, None)
+        if raw["version"] == 21:
+            raw["version"] = 22
         doc = SettingsDocument.model_validate(raw)
-        # Only the first option follows the existing exact-default upgrade rules.
-        for scope, choices, legacy_hashes, default in (
-            ("full_agent", doc.full_agent.system_prompt, LEGACY_FULL_AGENT_PROMPT_HASHES, FULL_AGENT_PROMPT),
+        # Story and Advisor update the bundled default in slot 1.
+        for scope, option, legacy_hashes, default in (
+            ("story", doc.story.system_prompt.options[0], LEGACY_STORY_PROMPT_HASHES, STORY_PROMPT),
             (
-                "half_agent",
-                doc.half_agent.system_prompt,
-                LEGACY_HALF_AGENT_PROMPT_HASHES,
-                DEFAULT_SYSTEM_PROMPT,
+                "shared",
+                doc.shared.advisor.system_prompt.options[0],
+                LEGACY_ADVISOR_PROMPT_HASHES,
+                ADVISOR_PROMPT,
             ),
-            ("shared", doc.shared.advisor.system_prompt, LEGACY_ADVISOR_PROMPT_HASHES, ADVISOR_PROMPT),
         ):
-            first = choices.options[0]
-            if fingerprint(first.text) in legacy_hashes:
-                first.text = default
+            if fingerprint(option.text) in legacy_hashes:
+                option.text = default
                 changed_scopes.add(scope)
+        # Any Card Author slot can be enabled after upgrade. Migrate known
+        # defaults and resource references in storage before the tool reads them.
+        for option in doc.shared.card_author_config.system_prompt.options:
+            text = (
+                CARD_AUTHOR_PROMPT
+                if fingerprint(option.text) in LEGACY_CARD_AUTHOR_PROMPT_HASHES
+                else upgrade_card_author_guide_references(option.text)
+            )
+            if text != option.text:
+                option.text = text
+                changed_scopes.add("shared")
         for scope in changed_scopes:
             doc.revisions[scope] = doc.revisions.get(scope, 0) + 1
         return doc
-    migrate_tracker_settings(raw)
-    migrate_context_window_settings(raw)
     old = Settings.model_validate(raw)
-    if old.retrieval.protocol_prompt == LEGACY_DEFAULT_RETRIEVAL_PROTOCOL:
-        old.retrieval.protocol_prompt = DEFAULT_RETRIEVAL_PROTOCOL
     values = old.model_dump()
-    half = {key: deepcopy(values[key]) for key in HalfSettings.model_fields if key in values}
-    common = {key: deepcopy(values[key]) for key in AgentSettings.model_fields if key in values}
-    local = {key: deepcopy(values["local_models"][key]) for key in RetrievalRuntime.model_fields}
-    half["local_runtime"] = deepcopy(local)
-    full = {
-        **common,
-        "local_runtime": deepcopy(local),
-        "model": (old.full_agent or old.foreground).model_dump(),
-        "tools": old.full_agent_config.model_dump(),
-        "system_prompt": old.full_agent_system_prompt,
+    story = {
+        **{key: values[key] for key in AgentSettings.model_fields if key in values},
+        "local_runtime": {key: values["local_models"][key] for key in RetrievalRuntime.model_fields},
+        "model": old.story.model_dump(),
+        "tools": old.story_config.model_dump(),
+        "system_prompt": old.story_system_prompt,
     }
-    shared = {
-        key: deepcopy(values[key])
-        for key in SharedSettings.model_fields
-        if key in values and key != "advisor"
-    }
-    shared["card_author"] = (old.card_author or old.background).model_dump()
-    shared["local_models"] = {
-        key: deepcopy(values["local_models"][key]) for key in LocalResources.model_fields
-    }
-    scoped = {"full_agent": full, "half_agent": half, "shared": shared}
-    migrate_prompt_choices(scoped)
-    result = SettingsDocument.model_validate(scoped).model_dump()
-    for scope, key, profile in (
-        ("full_agent", "model", old.full_agent or old.foreground),
-        ("half_agent", "foreground", old.foreground),
-        ("half_agent", "background", old.background),
-        ("shared", "card_author", old.card_author or old.background),
+    shared = {key: values[key] for key in SharedSettings.model_fields if key in values and key != "advisor"}
+    shared["local_models"] = {key: values["local_models"][key] for key in LocalResources.model_fields}
+    for original, profile in (
+        (raw["story"], story["model"]),
+        (raw["card_author"], shared["card_author"]),
     ):
-        original = (
-            raw.get("full_agent") or raw.get("foreground", {})
-            if scope == "full_agent"
-            else raw.get("card_author") or raw.get("background", {})
-            if key == "card_author"
-            else raw.get(key, {})
-        )
         if "cache" not in original:
-            result[scope][key].pop("cache", None)
-            result[scope][key].update(
-                prompt_cache_key=profile.prompt_cache_key,
-                prompt_cache_retention=profile.prompt_cache_retention,
+            profile.pop("cache", None)
+            profile.update(
+                prompt_cache_key=original.get("prompt_cache_key"),
+                prompt_cache_retention=original.get("prompt_cache_retention", "default"),
             )
-    return migrate_settings(result)
+    scoped = {"version": 20, "story": story, "shared": shared}
+    migrate_prompt_choices(scoped)
+    return migrate_settings(scoped)
 
 
 def from_runtime(value: Settings) -> SettingsDocument:
@@ -720,47 +589,17 @@ def from_runtime(value: Settings) -> SettingsDocument:
         return migrate_settings(value.model_dump())
     doc = value._settings_source.model_copy(deep=True)
     data = value.model_dump()
-    mode = value._settings_mode
-    doc.full_agent.system_prompt.replace_current(value.full_agent_system_prompt)
-    if mode == "half_agent":
-        doc.half_agent.system_prompt.replace_current(value.system_prompt)
-        doc.half_agent.tracker_system_prompt.replace_current(value.tracker_system_prompt)
+    doc.story.system_prompt.replace_current(value.story_system_prompt)
     doc.shared.card_author_config.system_prompt.replace_current(value.card_author_config.system_prompt)
-    agent = getattr(doc, mode).model_dump()
-    for key in agent:
-        if key in data and key not in {
-            "model",
-            "tools",
-            "local_runtime",
-            "novel_research",
-            "system_prompt",
-            "tracker_system_prompt",
-        }:
-            agent[key] = deepcopy(data[key])
-    agent["local_runtime"] = {
-        key: deepcopy(data["local_models"][key]) for key in RetrievalRuntime.model_fields
-    }
-    if mode == "full_agent":
-        key = "official_model" if value._settings_channel == "chatgpt" else "model"
-        agent.update(
-            {
-                key: data["full_agent"],
-                "tools": data["full_agent_config"],
-            }
-        )
-    else:
-        for role in ("foreground", "background"):
-            key = "official_" + role if value._settings_channel == "chatgpt" else role
-            agent[key] = data[role]
-            if value._settings_channel == "chatgpt":
-                agent[role] = getattr(doc.half_agent, role).model_dump()
-        setattr(
-            doc.full_agent,
-            "official_model" if value._settings_channel == "chatgpt" else "model",
-            value.full_agent.model_copy(deep=True),
-        )
-        doc.full_agent.tools = value.full_agent_config.model_copy(deep=True)
-    setattr(doc, mode, (FullSettings if mode == "full_agent" else HalfSettings).model_validate(agent))
+    agent = doc.story.model_dump()
+    for key in AgentSettings.model_fields:
+        if key in data:
+            agent[key] = data[key]
+    key = "official_model" if value._settings_channel == "chatgpt" else "model"
+    agent[key] = data["story"]
+    agent["tools"] = data["story_config"]
+    agent["local_runtime"] = {key: data["local_models"][key] for key in RetrievalRuntime.model_fields}
+    doc.story = StorySettings.model_validate(agent)
     shared = {
         key: deepcopy(data[key])
         for key in SharedSettings.model_fields

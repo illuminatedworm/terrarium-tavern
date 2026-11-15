@@ -11,6 +11,8 @@ import zlib
 from pathlib import PurePosixPath
 from uuid import uuid4
 
+from tavern.character.lore_purpose import MVU_RULES, lore_purpose, lore_rows, upgrade_lore_purposes
+
 MAX_BYTES = 32 * 1024 * 1024
 PNG = b"\x89PNG\r\n\x1a\n"
 _LORE_FLAG_ALIASES = {
@@ -148,6 +150,10 @@ def normalize(document):
     return copy.deepcopy(card_view(document))
 
 
+def upgrade_card_purposes(document):
+    return upgrade_lore_purposes(card_view(document).get("character_book"))
+
+
 def _lore_flag_values(fields):
     # Keep existing camelCase precedence, including explicit false/null values.
     return {
@@ -173,15 +179,13 @@ def is_initvar(entry):
     return "[initvar]" in lore_title(entry).lower()
 
 
-def lore_entries(document, audience=None):
+def lore_entries(document, purpose=None):
     book = normalize(document).get("character_book", {}) or {}
-    entries = book.get("entries", [])
-    if isinstance(entries, dict):
-        entries = [dict(v, uid=k) for k, v in entries.items()]
+    keyed = isinstance(book.get("entries"), dict)
     result = []
-    for index, original in enumerate(entries):
-        if not isinstance(original, dict) or not isinstance(original.get("extensions", {}), dict):
-            raise ValueError("世界书条目及其扩展必须为对象")
+    for index, (slot, original) in enumerate(lore_rows(book)):
+        if keyed:
+            original = dict(original, uid=slot)
         for fields in (original, original.get("extensions", {})):
             for key in ("id", "uid"):
                 # V2 types ids as numbers, V3 as numbers or strings, and ST's own uid
@@ -193,7 +197,11 @@ def lore_entries(document, audience=None):
         # legacy alias. Drop them per location before merging: an extension null
         # must not hide the top-level value. Preserve zero/false, source JSON and
         # the four flags whose explicit null must override another spelling.
-        e = {**_set_lore_fields(original), **_set_lore_fields(original.get("extensions", {}))}
+        extension_fields = _set_lore_fields(original.get("extensions", {}))
+        # Keep the authored purpose in one location when scripts read or write
+        # the runtime worldbook view.
+        extension_fields.pop("terrarium", None)
+        e = {**_set_lore_fields(original), **extension_fields}
         # ST exports these flags as snake_case extensions. Resolve only the view;
         # the editor and exporter use the same precedence without rewriting storage.
         e.update(_lore_flag_values(e))
@@ -202,15 +210,15 @@ def lore_entries(document, audience=None):
         e["secondary_keys"] = [str(key).strip() for key in e.get("secondary_keys", e.get("keysecondary", []))]
         e["enabled"] = e.get("enabled", not e.get("disable", False))
         e.setdefault("content", "")
-        if audience is None or e.get("terrarium", {}).get("audience", "writer") == audience:
+        if purpose is None or lore_purpose(original) == purpose:
             result.append(e)
     return result
 
 
 def variable_rule_entries(document):
     # InitVar may carry legacy [value, description] rules. Its disabled switch
-    # must not hide those rules once the author explicitly selects Tracker.
-    return [entry for entry in lore_entries(document, "tracker_mvu") if entry["enabled"] or is_initvar(entry)]
+    # must not hide those rules when marked for MVU.
+    return [entry for entry in lore_entries(document, MVU_RULES) if entry["enabled"] or is_initvar(entry)]
 
 
 def append_lorebook(current, imported):

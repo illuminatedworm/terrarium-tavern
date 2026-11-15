@@ -28,33 +28,31 @@ class MessageType:
     configurable: bool = False
     appendable: bool = False
     role: str = "system"
-    scopes: tuple = ("foreground", "full_agent", "background", "card_author", "advisor")
+    scopes: tuple = ("story", "card_author", "advisor")
 
 
 TYPES = {
     item.id: item
     for item in (
         MessageType("root_system", "主系统规则"),
-        MessageType("kemini_filler", "Kemini 填充文本", role="user", scopes=("foreground", "full_agent")),
-        MessageType("kemini_clear", "Kemini CLEAR", scopes=("foreground", "full_agent")),
-        MessageType("kemini_identity", "Kemini 创作身份", role="user", scopes=("foreground", "full_agent")),
-        MessageType("kemini_info", "Kemini 资料起始", scopes=("foreground", "full_agent")),
-        MessageType("kemini_roleplay", "Kemini 角色扮演追加要求", scopes=("foreground", "full_agent")),
-        MessageType(
-            "kemini_acknowledgement", "Kemini 助手确认", role="assistant", scopes=("foreground", "full_agent")
-        ),
+        MessageType("kemini_filler", "Kemini 填充文本", role="user", scopes=("story",)),
+        MessageType("kemini_clear", "Kemini CLEAR", scopes=("story",)),
+        MessageType("kemini_identity", "Kemini 创作身份", role="user", scopes=("story",)),
+        MessageType("kemini_info", "Kemini 资料起始", scopes=("story",)),
+        MessageType("kemini_roleplay", "Kemini 角色扮演追加要求", scopes=("story",)),
+        MessageType("kemini_acknowledgement", "Kemini 助手确认", role="assistant", scopes=("story",)),
         MessageType(
             "kemini_control",
             "Kemini 输出要求",
             appendable=True,
             role="user",
-            scopes=("foreground", "full_agent"),
+            scopes=("story",),
         ),
         MessageType("editor_environment", "对话时间与系统环境", scopes=("card_author",)),
-        MessageType("tool_protocol", "Full Agent 工具协议", scopes=("full_agent",)),
-        MessageType("context_policy", "上下文窗口机制", scopes=("full_agent",)),
-        MessageType("novel_status", "原著参考运行状态", configurable=True, scopes=("full_agent",)),
-        MessageType("novel_research", "原著调查消息", configurable=True, scopes=("full_agent",)),
+        MessageType("tool_protocol", "剧情工具协议", scopes=("story",)),
+        MessageType("context_policy", "上下文窗口机制", scopes=("story",)),
+        MessageType("novel_status", "原著参考运行状态", configurable=True, scopes=("story",)),
+        MessageType("novel_research", "原著调查消息", configurable=True, scopes=("story",)),
         MessageType("user", "用户输入", role="user"),
         MessageType("assistant", "模型回复", role="assistant"),
         MessageType("tool", "工具结果", role="tool"),
@@ -73,28 +71,11 @@ TYPES = {
         MessageType("lore_constant", "常驻世界书", "lorebook", True),
         MessageType("lore_injected", "中途／可变世界书", "lorebook", True, True),
         MessageType("session_preference", "对话创作偏好", "tavern_preference", True),
-        MessageType("retrieval_protocol", "检索输出协议", "tavern_output_protocol", True),
-        MessageType("author_note", "作者注", "author_note", True, True),
         MessageType("post", "角色后置要求", "card_post_history_instructions", True, True),
-        MessageType("memory", "分类记忆", "tavern_memory", True, True),
         MessageType("handoff", "交接笔记", "tavern_memory", True, True),
-        MessageType("note_list", "长期笔记目录", "tavern_note_list", True, scopes=("full_agent",)),
-        MessageType("plot", "剧情规划", "tavern_plot", True, True, scopes=("full_agent",)),
-        MessageType("state", "剧情状态", "tavern_state", True, True),
+        MessageType("note_list", "长期笔记目录", "tavern_note_list", True, scopes=("story",)),
+        MessageType("plot", "剧情规划", "tavern_plot", True, True, scopes=("story",)),
         MessageType("mvu_rules", "MVU 规则快照", "mvu_rules", True, True),
-        MessageType("tracker_mvu_rules", "Tracker MVU 规则", "mvu_rules", scopes=("background",)),
-        MessageType("variable_mvu_rules", "独立变量分析规则", "mvu_rules", scopes=("background",)),
-        MessageType(
-            "tracker_contract", "Tracker 操作契约", "tavern_tracker_contract", scopes=("background",)
-        ),
-        MessageType(
-            "tracker_input",
-            "Tracker 任务资料",
-            "tavern_tracker_input",
-            True,
-            role="user",
-            scopes=("background",),
-        ),
         MessageType("custom", "自定义注入", "tavern_custom_context", True, True),
         MessageType("turn_commit", "回合完成标记", "tavern_turn_completed", True, True),
         *[
@@ -107,8 +88,6 @@ TYPES = {
                 ("context_status", "上下文状态"),
                 ("context_budget", "窗口预算提醒"),
                 ("reply_correction", "回复纠正要求"),
-                ("required_tool_notice", "必要工具提醒"),
-                ("tracker_task_update", "Tracker 任务更新"),
             )
         ],
         *[
@@ -138,7 +117,7 @@ TYPES = {
 }
 SCOPES = {
     **{
-        name: ("foreground", "full_agent")
+        name: ("story",)
         for name in (
             "character",
             "persona",
@@ -155,9 +134,8 @@ SCOPES = {
             "card_mes_example",
         )
     },
-    **{name: ("foreground",) for name in ("retrieval_protocol", "author_note", "memory", "state")},
     **{
-        name: ("full_agent",)
+        name: ("story",)
         for name in (
             "handoff",
             "mvu_rules",
@@ -169,9 +147,7 @@ SCOPES = {
             "context_budget",
         )
     },
-    "reply_correction": ("full_agent", "card_author"),
-    "required_tool_notice": ("background",),
-    "tracker_task_update": ("background",),
+    "reply_correction": ("story", "card_author"),
 }
 TYPES = {name: replace(item, scopes=SCOPES.get(name, item.scopes)) for name, item in TYPES.items()}
 SOURCES = {
@@ -190,7 +166,6 @@ SOURCES = {
     "lore_after": "lore_injected",
     "inject": "custom",
     # Split dynamic frames keep their parent's message type and role mapping.
-    "memory_recall": "memory",
     "handoff_chapters": "handoff",
 }
 
@@ -222,6 +197,20 @@ class AdapterRule(BaseModel):
     wrap: bool
 
 
+# Retired setting keys can occur in saved profiles and imported story adapters.
+RETIRED_MAPPINGS = {
+    "author_note",
+    "call_budget",
+    "last_call_notice",
+    "memory",
+    "required_tool_notice",
+    "retrieval_protocol",
+    "state",
+    "tracker_input",
+    "tracker_task_update",
+}
+
+
 class MessageAdapterConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: Literal[1] = 1
@@ -229,7 +218,7 @@ class MessageAdapterConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def remove_call_notifications(cls, value):
+    def remove_retired_mappings(cls, value):
         if isinstance(value, dict) and isinstance(value.get("mappings"), dict):
             value = copy.deepcopy(value)
             for api, rules in value["mappings"].items():
@@ -238,10 +227,8 @@ class MessageAdapterConfig(BaseModel):
                         name: rule
                         for name, rule in rules.items()
                         if not isinstance(name, str)
-                        or (
-                            name not in ("call_budget", "last_call_notice")
-                            and not name.startswith(("compat:call_budget:", "compat:last_call_notice:"))
-                        )
+                        or (name.split(":")[1] if name.startswith("compat:") else name)
+                        not in RETIRED_MAPPINGS
                     }
         return value
 
@@ -256,34 +243,26 @@ class MessageAdapterConfig(BaseModel):
         return self
 
 
-def default_rule(name, api, lane="foreground"):
+def default_rule(name, api, lane="story"):
     definition = type_definition(name)
     role = definition.role
-    if name == "card_mes_example" and lane == "foreground":
-        role = "assistant"
-    # Explicit conversation/task identities must survive configurable defaults.
-    # Otherwise Tracker's sole user input becomes system-only, leaving relays
-    # with no Responses input / Gemini contents after extracting instructions.
-    task_role = definition.role in ("user", "assistant") and not name.startswith("compat:")
-    if definition.configurable and not task_role:
+    # Keep actual user and assistant messages outside provider instructions.
+    explicit_role = definition.role in ("user", "assistant") and not name.startswith("compat:")
+    if definition.configurable and not explicit_role:
         role = "user" if api == "gemini" else "system"
     elif role == "developer" and api in ("anthropic", "gemini"):
         role = "system"
     base = name.split(":")[1] if name.startswith("compat:") else name
     wrapped = {
-        "author_note",
         "post",
-        "memory",
         "handoff",
         "note_list",
         "plot",
-        "state",
         "mvu_rules",
         "lore_injected",
         "persona",
         "lore_constant",
         "session_preference",
-        "retrieval_protocol",
     }
     wrap = bool(definition.tag) and (
         not definition.configurable
@@ -295,17 +274,15 @@ def default_rule(name, api, lane="foreground"):
     return {"role": role, "wrap": wrap}
 
 
-def rule_for(name, config, api, lane="foreground"):
+def rule_for(name, config, api, lane="story"):
     raw = config.model_dump() if isinstance(config, MessageAdapterConfig) else config or {}
     rule = raw.get("mappings", {}).get(api, {}).get(name)
     return copy.deepcopy(rule) if rule is not None else default_rule(name, api, lane)
 
 
-def catalog(lane="foreground", extra=()):
+def catalog(lane="story", extra=()):
     names = [name for name, item in TYPES.items() if lane in item.scopes]
-    # Runtime sources (worldbook entries and script injections included) can
-    # retain any supported source role. Publish the same finite compatibility
-    # vocabulary accepted by type_definition, rather than only recipe sightings.
+    # Publish the roles accepted for worldbook entries and script injections.
     compatible = [
         f"compat:{name}:{role}"
         for name in names
@@ -326,7 +303,7 @@ def catalog(lane="foreground", extra=()):
     ]
 
 
-def infer_type(message, lane="foreground"):
+def infer_type(message, lane="story"):
     if message.get("message_type"):
         type_definition(message["message_type"])
         return message["message_type"]
@@ -349,7 +326,7 @@ def infer_type(message, lane="foreground"):
         base = "lore_constant" if message.get("lore_region") == "constant" else "lore_injected"
     else:
         base = SOURCES.get(source, source if source in TYPES else "custom")
-    expected = "assistant" if base == "card_mes_example" and lane == "foreground" else TYPES[base].role
+    expected = TYPES[base].role
     role = message.get("role", expected)
     return base if role == expected else f"compat:{base}:{role}"
 
@@ -369,16 +346,11 @@ def canonical_content(message, definition):
         "persona",
         "lore_constant",
         "lore_injected",
-        "author_note",
         "post",
-        "memory",
         "handoff",
         "note_list",
         "plot",
-        "state",
         "mvu_rules",
-        "tracker_mvu_rules",
-        "variable_mvu_rules",
     }
     return (
         unwrapped(message.get("content", ""), definition.tag)
@@ -401,7 +373,7 @@ def wrap_content(content, tag):
     return f"<{tag}>\n{content}\n</{tag}>"
 
 
-def runtime_messages(messages, lane="foreground"):
+def runtime_messages(messages, lane="story"):
     result, header = [], True
     for index, message in enumerate(messages):
         item = copy.deepcopy(message)
@@ -425,7 +397,7 @@ def runtime_messages(messages, lane="foreground"):
 def adapter_snapshot(settings):
     loader = getattr(settings, "_adapter_loader", None)
     if loader:
-        return loader(getattr(settings, "_adapter_lane", "foreground"))
+        return loader(getattr(settings, "_adapter_lane", "story"))
     config = getattr(settings, "message_adapter", MessageAdapterConfig())
     return {"config": config.model_dump() if hasattr(config, "model_dump") else config, "revision": 0}
 
@@ -441,12 +413,10 @@ def bind_adapter(settings, store, owner_kind, owner_id):
 def adapt_messages(messages, settings, snapshot=None, *, managed=None):
     """A pure projection: canonical bodies and native attachments are never rewritten."""
     snapshot = snapshot or adapter_snapshot(settings)
-    lane = getattr(settings, "_adapter_lane", "foreground")
-    if settings.runtime_mode == "full_agent" and lane in ("foreground", "background"):
-        lane = "full_agent"
+    lane = getattr(settings, "_adapter_lane", "story")
     api = settings.api_mode
     config = snapshot["config"]
-    managed = lane != "foreground" or settings.runtime_mode == "full_agent" if managed is None else managed
+    managed = True if managed is None else managed
     pairs, diagnostics = [], []
     for original in messages:
         item = copy.deepcopy(original)
@@ -492,7 +462,7 @@ def adapt_messages(messages, settings, snapshot=None, *, managed=None):
 
     kemini = (
         settings.kemini.enabled
-        and lane in ("foreground", "full_agent")
+        and lane == "story"
         and any(item.get("message_type", "").startswith("kemini_") for _, item in pairs)
     )
     if kemini:
@@ -561,7 +531,7 @@ def project_context(context, settings, *, tools=None, managed=None):
         }
         for row in context.get("runtime_trace", context["trace"])
     ]
-    canonical = runtime_messages(rows, getattr(settings, "_adapter_lane", "foreground"))
+    canonical = runtime_messages(rows, getattr(settings, "_adapter_lane", "story"))
     snapshot = adapter_snapshot(settings)
     adapted, ordered, warnings = adapt_messages(canonical, settings, snapshot, managed=managed)
     context["runtime_trace"] = ordered

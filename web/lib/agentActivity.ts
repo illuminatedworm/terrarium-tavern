@@ -44,7 +44,7 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
     const p = event.payload || {};
     const id = p.activity_id || `event-${event.seq}`;
     const order = p.order ?? event.seq * 10;
-    if (event.kind === 'full_agent_runtime') {
+    if (event.kind === 'story_runtime') {
       items.set(p.id, {
         id: p.id,
         event_seq: event.seq,
@@ -54,7 +54,7 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
         summary: p.summary,
         status: p.status,
       });
-    } else if (event.kind === 'full_agent_assistant') {
+    } else if (event.kind === 'story_assistant') {
       items.set(id, {
         id,
         event_seq: event.seq,
@@ -65,7 +65,7 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
         status: 'returned',
         details: { content: String(p.content) },
       });
-    } else if (['full_agent_tool_started', 'full_agent_tool'].includes(event.kind)) {
+    } else if (['story_tool_started', 'story_tool'].includes(event.kind)) {
       const argumentsText = p.decoded_arguments ?? p.arguments;
       let args: any = argumentsText;
       try {
@@ -81,7 +81,7 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
             : p.name === 'finish_turn'
               ? '申请正文回调与统一校验'
               : ['query', 'key', 'ref', 'path', 'reason', 'content'].map((key) => args?.[key]).find(Boolean);
-      const finished = event.kind === 'full_agent_tool';
+      const finished = event.kind === 'story_tool';
       items.set(id, {
         id,
         event_seq: event.seq,

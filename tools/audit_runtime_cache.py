@@ -47,7 +47,7 @@ def audit(data, session_id):
     path = Path(data) / "tavern.sqlite3"
     with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as db:
         db.row_factory = sqlite3.Row
-        session = db.execute("SELECT id,agent_mode FROM sessions WHERE id=?", (session_id,)).fetchone()
+        session = db.execute("SELECT id FROM sessions WHERE id=?", (session_id,)).fetchone()
         if session is None:
             raise ValueError("Session does not exist")
         turns = db.execute(
@@ -106,7 +106,6 @@ def audit(data, session_id):
                 elif event["kind"] == "usage":
                     usage = payload.get("usage", {})
                     raw = usage.get("raw_usage")
-                    # Half Agent aggregates several provider calls in one event.
                     parts = raw if isinstance(raw, list) else [raw] if isinstance(raw, dict) else []
                     normalized = [
                         normalize_usage(part, last_api.get(purpose, "chat_completions")) for part in parts
@@ -144,7 +143,7 @@ def audit(data, session_id):
                             "renormalized": any(current[k] != usage.get(k) for k in current),
                         }
                     )
-                elif event["kind"] == "full_agent_tool":
+                elif event["kind"] == "story_tool":
                     row["tools"].append(
                         {"name": payload.get("name"), "success": "error" not in payload.get("result", {})}
                     )

@@ -506,27 +506,6 @@
     opacity: 0.6;
   }
 }
-.source-message-highlight {
-  box-shadow: inset 2px 0 var(--accent);
-}
-.source-sentence-highlight,
-.source-excerpt mark {
-  background: var(--accent-soft);
-  color: var(--text-primary);
-  border-radius: var(--radius-2xs);
-}
-.source-excerpt {
-  margin: 12px 0;
-  padding: 12px;
-  border-left: 2px solid var(--accent);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.source-excerpt small {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--text-muted);
-}
 
 /* ---------- Cache breakpoint ---------- */
 .cache-breakpoint-dot {
@@ -1839,7 +1818,7 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* Full Agent frozen graphics: only the drawing scrolls horizontally. */
+/* Frozen graphics: only the drawing scrolls horizontally. */
 .story-visuals,
 .story-visual,
 .visual-interface {

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from tavern.core.channels import require_channel
 from tavern.core.context_usage import bind_meter
+from tavern.core.errors import NotFound
 from tavern.core.model_view import HANDLE
 from tavern.core.provider import make_provider, require_model_connection
 from tavern.novel.source import FILES, directory
@@ -54,17 +55,17 @@ class NovelService:
     def snapshot_config(self, sid, *, main_settings=None):
         with self.store.connection() as db:
             row = db.execute(
-                "SELECT id,agent_mode,channel_origin,context_strategy,compact_auto,model_selection,kemini "
+                "SELECT id,channel_origin,context_strategy,compact_auto,model_selection,kemini "
                 "FROM sessions WHERE id=?",
                 (sid,),
             ).fetchone()
         if row is None:
             raise ValueError("对话不存在")
         session = dict(row)
-        config = self.store.settings_document().full_agent.novel_research
+        config = self.store.settings_document().story.novel_research
         main = main_settings or self.store.session_settings(session)
         override = config.official_model if session["channel_origin"] == "chatgpt" else config.model
-        profile = override or main.full_agent
+        profile = override or main.story
         selected = profile.model_dump()
         if override is None:
             # Follow the actual delegator, including the user's per-turn reasoning
@@ -87,7 +88,7 @@ class NovelService:
 
     def settings(self, job):
         frozen = job["config"]
-        cfg = self.store.settings("full_agent", frozen["channel"])
+        cfg = self.store.settings(frozen["channel"])
         cfg.novel_research = ModelProfile.model_validate(frozen["profile"])
         cfg = cfg.for_role("novel_research")
         require_channel(cfg, frozen["channel"])
@@ -102,12 +103,12 @@ class NovelService:
     def public(self, sid):
         with self.store.connection() as db:
             session = db.execute(
-                "SELECT s.agent_mode,json_extract(a.options,'$.model_selection') AS advisor_model "
+                "SELECT json_extract(a.options,'$.model_selection') AS advisor_model "
                 "FROM sessions s LEFT JOIN advisor_conversations a ON a.session=s.id WHERE s.id=?",
                 (sid,),
             ).fetchone()
-        if session is None or session[0] != "full_agent":
-            raise ValueError("原著调查仅限 Full Agent 对话")
+        if session is None:
+            raise NotFound("对话不存在")
         binding = self.data.binding(sid)
         jobs = self.data.jobs(sid)
         for job in jobs:

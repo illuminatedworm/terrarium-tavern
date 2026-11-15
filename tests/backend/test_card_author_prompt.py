@@ -9,12 +9,14 @@ from httpx import ASGITransport, AsyncClient
 from tavern.application.api import create_app
 from tavern.character.card_author import CardAuthorService
 from tavern.character.editor_config import SYSTEM
+from tavern.core import settings
+from tavern.core.cache_policy import fingerprint
 from tavern.storage.store import Store, dump
 from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
 from tests.backend.test_card_author import ToolLLM, import_fixture
 from tests.backend.test_card_author_alignment import Editor
 from tests.backend.test_card_authoring import Batches, run
-from tests.backend.test_half_agent_alignment import blocks
+from tests.support.model_transport import blocks
 
 
 def strings(value):
@@ -32,8 +34,7 @@ def test_old_configuration_keeps_existing_rules_and_is_backed_up_once(tmp_path):
     store = Store(tmp_path)
     raw = store.settings_document().model_dump()
     raw["version"] = 18
-    raw["full_agent"]["system_prompt"] = "保留完整规则\n  \n"
-    raw["half_agent"].update(system_prompt="", tracker_system_prompt="后台规则")
+    raw["story"]["system_prompt"] = "保留完整规则\n  \n"
     raw["shared"]["advisor"]["system_prompt"] = "咨询规则"
     raw["shared"]["card_author_config"].pop("system_prompt")
     with store.connection() as db:
@@ -41,9 +42,7 @@ def test_old_configuration_keeps_existing_rules_and_is_backed_up_once(tmp_path):
     reopened = Store(tmp_path)
     doc = reopened.settings_document()
     for choices, current in (
-        (doc.full_agent.system_prompt, raw["full_agent"]["system_prompt"]),
-        (doc.half_agent.system_prompt, ""),
-        (doc.half_agent.tracker_system_prompt, "后台规则"),
+        (doc.story.system_prompt, raw["story"]["system_prompt"]),
         (doc.shared.advisor.system_prompt, "咨询规则"),
         (doc.shared.card_author_config.system_prompt, SYSTEM),
     ):
@@ -56,6 +55,36 @@ def test_old_configuration_keeps_existing_rules_and_is_backed_up_once(tmp_path):
         assert json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]) == raw
     Store(tmp_path)
     assert len(list(tmp_path.glob("before-upgrade-*.sqlite3"))) == 1
+
+
+def test_card_author_prompt_migration_updates_defaults_and_guide_references(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    old_default = "先核对开场，再提交草稿。"
+    custom_prefix = old_default + "\n保留用户的叙事偏好。"
+    external = "\n外部参考 https://example.test/full-agent.md、my-half-agent.md、C:full-agent.md。"
+    custom = custom_prefix + "\n先读`full-agent.md`。需要时读half-agent.md。" + external
+    expected = custom_prefix + "\n先读`story.md`。需要时读story.md。" + external
+    monkeypatch.setattr(settings, "LEGACY_CARD_AUTHOR_PROMPT_HASHES", {fingerprint(old_default)})
+    raw = store.settings_document().model_dump()
+    choices = raw["shared"]["card_author_config"]["system_prompt"]
+    choices["active"] = 2
+    choices["options"][0] = {"name": "原规则", "text": old_default}
+    choices["options"][1] = {"name": "用户规则", "text": custom}
+    choices["options"][2] = {"name": "旧规则副本", "text": old_default}
+    with store.connection() as db:
+        db.execute("UPDATE meta SET value=? WHERE key='settings'", (dump(raw),))
+    upgraded = Store(tmp_path).settings_document()
+    actual = upgraded.shared.card_author_config.system_prompt
+    assert [option.text for option in actual.options] == [SYSTEM, expected, SYSTEM, ""]
+    assert [option.name for option in actual.options] == [option["name"] for option in choices["options"]]
+    assert actual.active == 2 and actual.current == expected
+    assert upgraded.revisions["shared"] == raw["revisions"]["shared"] + 1
+    backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
+    assert len(backups) == 1
+    with sqlite3.connect(backups[0]) as db:
+        assert json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]) == raw
+    assert Store(tmp_path).settings_document() == upgraded
+    assert list(tmp_path.glob("before-upgrade-*.sqlite3")) == backups
 
 
 async def test_prompt_save_preview_default_and_page_undo_share_one_field(tmp_path):

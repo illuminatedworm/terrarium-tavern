@@ -13,15 +13,15 @@ export const experimentFields: SettingField[] = [
     path: 'unicode_story_enabled',
     label: '启用局部 Unicode 码点传输',
     type: 'checkbox',
-    help: '允许在 Full Agent 的「工具 → 正文与图形 → 提交正文」单独开启。模型只编码新正文中的情色描写、血腥与重伤细节。本地解码后分段显示，历史以明文回放。',
+    help: '允许在「工具 → 正文与图形 → 提交正文」单独开启。模型只编码新正文中的情色描写、血腥与重伤细节。本地解码后分段显示，历史以明文回放。',
   },
 ];
 export const debugFields: SettingField[] = [
   {
-    path: 'debug_full_agent_prefix',
-    label: 'Full Agent 前缀消息稳定性测试',
+    path: 'debug_story_prefix',
+    label: '剧情请求前缀测试',
     type: 'checkbox',
-    help: '在内存中暂存最近两次 SDK 实际序列化的请求（含工具续答和重试），逐项比较 messages、tools 和其余参数，并在通知中报告公共前缀与首个差异。切换会话或模型不重置比较；关闭后在下一次 Full Agent 操作或退出应用时清除。',
+    help: '在内存中暂存最近两次 SDK 实际序列化的请求（含工具续答和重试），逐项比较 messages、tools 和其余参数，并在通知中报告公共前缀与首个差异。切换会话或模型不重置比较；关闭后在下一次剧情运行或退出应用时清除。',
   },
   {
     path: 'debug_failed_requests',
@@ -35,7 +35,7 @@ export const keminiFields: SettingField[] = [
     path: 'kemini.enabled',
     label: '启用 Kemini 式实验功能',
     type: 'checkbox',
-    help: '允许新建和继续 Kemini 实验对话。实验对话使用创作提示改写与小说填充，Full Agent 每轮通过 submit_story 追加最多三段正文。',
+    help: '允许新建和继续 Kemini 实验对话。实验对话使用创作提示改写与小说填充，每轮通过 submit_story 追加最多三段正文。',
   },
   {
     path: 'kemini.normal_disclaimer_enabled',
@@ -92,24 +92,9 @@ export const keminiTextFields: SettingField[] = [
     help: '保存完整提示，包括 <disclaimer_format> 内的说明、声明示例和格式要求。仅实验主开关和普通免责声明同时开启时使用，不再额外添加包装提示。',
   },
   {
-    path: 'kemini.transport_prompt',
-    label: '正文传输指令',
-    help: '仅用于 Half Agent Writer。保存文本在末尾输出提示前发送，函数为 kemini_emit_story，参数为 content。Full Agent 使用固定的 submit_story 协议。',
-  },
-  {
     path: 'kemini.output_prompt',
     label: '末尾输出提示',
     help: '最后发送，包含首次显式思考与直接开始输出的完整要求。引用前面的 Interleaving 成对示例，不另放孤立开标签；不改变模型实际思考档位。',
-  },
-  {
-    path: 'kemini.tool_description',
-    label: '正文传输工具说明',
-    help: '仅用于 Half Agent Writer。作为 kemini_emit_story 函数定义的 description 发送，可在上下文预览中核对。',
-  },
-  {
-    path: 'kemini.content_description',
-    label: '正文参数说明',
-    help: '仅用于 Half Agent Writer。作为 kemini_emit_story 的必填字符串参数 content 的 description 发送。',
   },
 ];
 export const miscFields: SettingField[] = [
@@ -180,7 +165,7 @@ export const retrievalAdvanced: SettingField[] = [
   },
   number('retrieval.rerank_timeout', '重排超时（秒）', 0.1, 120, 0.1),
 ];
-export const fullFields: SettingField[] = [
+export const storyToolFields: SettingField[] = [
   { path: 'tools.auto_retrieval', label: '每轮自动检索世界书', type: 'checkbox' },
   {
     path: 'tools.parallel_tool_calls',
@@ -200,39 +185,6 @@ export const fullFields: SettingField[] = [
   number('tools.note_tokens', '单条长期笔记上限（tokens）', 128, 16384),
   number('tools.plot_tokens', '剧情规划上限（tokens）', 128, 16384),
 ];
-export const historyFields: SettingField[] = [
-  {
-    path: 'chunk_mode',
-    label: '窗口模式',
-    options: [
-      { value: 'messages', label: '按消息批次' },
-      { value: 'off', label: '关闭，保留全部原文' },
-    ],
-  },
-  number('history_message_cap', '历史消息上限', 8, 1000),
-  number('chunk_size', '每批移除量', 2, 100),
-  number('memory_interval_turns', '记忆整理周期（轮）', 1, 100),
-  number('daily_context_budget', '日常上下文预算（tokens）', 2048, 2000000),
-  number('context_pressure_trigger', '压力触发比例', 0.1, 0.99, 0.01),
-];
-export const memoryFields: SettingField[] = [
-  number('tracker_max_steps', 'Tracker 每次任务模型调用上限', 2, 100),
-  number('memory_input_tokens', '整理输入上限（tokens）', 2048, 2000000),
-  number('memory_output_tokens', '整理输出上限（tokens）', 256, 65536),
-  number('memory_evidence_tokens', '辅助资料（0 关闭，其余不限制长度）', 0, 32768),
-  number('memory_capacity_tokens', '活跃记忆容量（tokens）', 512, 65536),
-  number('memory_current_max_records', '当前进展条数上限', 1, 100),
-  number('memory_episode_cooldown_rounds', '经历冷却轮数', 0, 10000),
-  number('memory_timeout', '每次维护超时（秒）', 5, 180),
-  { path: 'memory_review_enabled', label: '允许一次疑难复核', type: 'checkbox' },
-  number('memory_recall_count', '归档经历召回上限（条，0 关闭）', 0, 20),
-  {
-    path: 'memory_recall_filter',
-    label: '召回后由 Tracker 筛选',
-    type: 'checkbox',
-    help: '召回非空时增加一次后台请求；正文与每次脚本嵌套生成分别筛选，失败时沿用阈值准入结果。',
-  },
-];
 export const requestFields: SettingField[] = [
   {
     path: 'model_request_mode',
@@ -242,7 +194,7 @@ export const requestFields: SettingField[] = [
       { value: 'stream', label: '流式' },
       { value: 'non_stream', label: '非流式' },
     ],
-    help: '作用于普通 API 的正文、后台和制卡请求，从下一次操作生效。OpenAI 官方渠道始终流式。Full Agent 的流式正文先显示为未保存预览，完整校验通过后才保存。',
+    help: '作用于普通 API 的正文、后台和制卡请求，从下一次操作生效。OpenAI 官方渠道始终流式。流式正文先显示为未保存预览，完整校验通过后才保存。',
   },
 ];
 export const proxyFields: SettingField[] = [

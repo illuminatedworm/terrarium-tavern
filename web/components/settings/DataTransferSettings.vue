@@ -230,10 +230,7 @@ onMounted(refresh);
                   type="checkbox"
                   :value="item.id"
                   :disabled="!!busy"
-                /><span>{{ item.name }}</span
-                ><small v-if="item.agent_mode">{{
-                  item.agent_mode === 'full_agent' ? 'Full Agent' : 'Half Agent'
-                }}</small></label
+                /><span>{{ item.name }}</span></label
               >
               <p v-if="!items(group.key).length" class="muted">没有匹配的条目</p>
             </div>
@@ -295,6 +292,12 @@ onMounted(refresh);
               {{ item.name
               }}<span v-if="item.messages !== undefined" class="muted"> · {{ item.messages }} 条消息</span>
             </li>
+          </ul>
+        </details>
+        <details v-if="preview.skipped_sessions.length">
+          <summary>格式过旧，无法导入的故事 · {{ preview.skipped_sessions.length }} 项</summary>
+          <ul>
+            <li v-for="(name, index) in preview.skipped_sessions" :key="index">{{ name }}</li>
           </ul>
         </details>
         <label v-if="preview.settings" class="transfer-choice transfer-restore"

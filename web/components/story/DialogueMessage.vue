@@ -13,7 +13,6 @@ const props = defineProps<{
   session: any;
   name: string;
   portraitSrc?: string;
-  sourceHighlight?: any;
   regeneratingId?: string | null;
   busy: boolean;
   switchingVersion: boolean;
@@ -23,7 +22,7 @@ const props = defineProps<{
   reviewing: boolean;
   enabled: boolean;
   hasVisuals?: boolean;
-  writerResponseCache: boolean;
+  runtimeCacheBreakpoints: boolean;
   cacheEligible: boolean;
   cacheBreakpointId: string | null;
   cacheBreakpointBusy: boolean;
@@ -99,13 +98,12 @@ function forwardAction(
       message.role,
       {
         regenerating: message.id === regeneratingId,
-        'source-message-highlight': sourceHighlight?.id === message.id,
       },
     ]"
     :aria-busy="message.id === regeneratingId"
   >
     <button
-      v-if="writerResponseCache && cacheEligible"
+      v-if="runtimeCacheBreakpoints && cacheEligible"
       class="cache-breakpoint-dot"
       :class="{ manual: !session.cache_breakpoint_auto, planned: cacheBreakpointId === message.id }"
       :disabled="busy || cacheBreakpointBusy || reviewing || switchingVersion || !!editingMessageId"
@@ -118,9 +116,11 @@ function forwardAction(
       <CharacterPortrait v-else class="avatar" :src="portraitSrc" :name="name" size="message" />
       <strong>{{ message.role === 'user' ? session.persona : name }}</strong>
       <small v-if="message.ref" class="message-ref" title="当前分支消息编号">{{ message.ref }}</small>
-      <small v-if="writerResponseCache && cacheBreakpointId === message.id" class="cache-breakpoint-status">{{
-        session.cache_breakpoint_auto ? '缓存自动跟进' : '缓存位置已固定'
-      }}</small>
+      <small
+        v-if="runtimeCacheBreakpoints && cacheBreakpointId === message.id"
+        class="cache-breakpoint-status"
+        >{{ session.cache_breakpoint_auto ? '缓存自动跟进' : '缓存位置已固定' }}</small
+      >
     </header>
     <div class="message-body">
       <InlineMessageEditor
@@ -158,9 +158,6 @@ function forwardAction(
         <summary>检索线索</summary>
         <p>{{ message.retrieval_query }}</p>
       </details>
-      <div v-if="sourceHighlight?.id === message.id && sourceHighlight?.fallback" class="source-excerpt">
-        <small>引用原文</small><mark>{{ sourceHighlight?.excerpt }}</mark>
-      </div>
       <footer v-if="editingMessageId !== message.id || sentAt" class="message-foot">
         <div v-if="editingMessageId !== message.id" class="message-actions">
           <template v-if="message.role === 'assistant' && message.id === session.head">
@@ -225,7 +222,7 @@ function forwardAction(
             <Icon name="branch" :size="16" />
           </button>
           <button
-            v-if="cacheEligible && writerResponseCache"
+            v-if="cacheEligible && runtimeCacheBreakpoints"
             class="icon-action cache-set-action"
             :class="{ active: !session.cache_breakpoint_auto && cacheBreakpointId === message.id }"
             :disabled="busy || cacheBreakpointBusy || !!editingMessageId || reviewing || switchingVersion"

@@ -12,9 +12,7 @@ import {
   loreFields,
   retrievalFields,
   retrievalAdvanced,
-  fullFields,
-  historyFields,
-  memoryFields,
+  storyToolFields,
   networkFields,
   requestFields,
   proxyFields,
@@ -36,17 +34,15 @@ import type { TransferResult } from '../../lib/dataTransfer';
 import PromptSettingsEditor from './PromptSettingsEditor.vue';
 import SaveStatus from './SaveStatus.vue';
 import Icon from '../common/Icon.vue';
-import RecipeSettings from './RecipeSettings.vue';
 import PreferencePresetSettings from './PreferencePresetSettings.vue';
 import AdvisorSettings from './AdvisorSettings.vue';
 import NovelSettings from './NovelSettings.vue';
 import CardAuthorSettings from './CardAuthorSettings.vue';
 import WebSettings from './WebSettings.vue';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
-import { blankChannelProfile, channelProviders, profileKey, type Channel } from '../../lib/channels';
+import { blankChannelProfile, channelProviders, storyProfileKey, type Channel } from '../../lib/channels';
 import type { ModelWarmupState } from '../../composables/useModelWarmup';
 const props = defineProps<{
-  initialMode?: string;
   initialPage?: string;
   initialChannel?: Channel;
   effortOptions: Array<{ value: string; label: string }>;
@@ -63,18 +59,14 @@ const editor = useSettingsEditor((settings) => emit('updated', settings));
 const { saved, draft, error, busy, textBusy, textDirty, textErrors, pending } = editor;
 const pageId = ref('');
 const channel = ref<Channel>(props.initialChannel || 'standard');
+const storyProfile = computed(() => draft.value?.story[storyProfileKey(channel.value)]);
 const providersForChannel = computed(() =>
   channelProviders(draft.value?.shared.providers || [], channel.value),
 );
-function createChannelProfile(role: string) {
+function createChannelProfile() {
   if (!draft.value) return;
-  const owner = role === 'full_agent' ? draft.value.full_agent : draft.value.half_agent;
-  const base = role === 'full_agent' ? owner.model : owner[role];
-  owner[profileKey(role, channel.value)] = blankChannelProfile(
-    base,
-    draft.value.shared.providers,
-    channel.value,
-  );
+  const { story, shared } = draft.value;
+  story[storyProfileKey(channel.value)] = blankChannelProfile(story.model, shared.providers, channel.value);
 }
 const localErrors = ref<Record<string, string>>({});
 provide('settings-local-errors', localErrors);
@@ -85,7 +77,7 @@ const discardAll = ref(false);
 const continueButton = ref<HTMLButtonElement>();
 let returnFocus: HTMLElement | null = null;
 const page = computed(() => draft.value?.pages.find((item) => item.id === pageId.value));
-const scope = computed<SettingsScope>(() => page.value?.scope || 'full_agent');
+const scope = computed<SettingsScope>(() => page.value?.scope || 'story');
 provide('settings-scope', scope);
 provide(
   'settings-field-errors',
@@ -103,12 +95,10 @@ provide(
 );
 const values = computed<SettingsObject>(() => draft.value?.[scope.value] || {});
 const groups = [
-  { scope: 'full_agent', label: 'full agent' },
-  { scope: 'half_agent', label: 'half agent' },
+  { scope: 'story', label: '游玩' },
   { scope: 'shared', label: '通用' },
 ];
-const groupIcon = (s: string) =>
-  s === 'full_agent' ? 'sparkle' : s === 'half_agent' ? 'feather' : 'sliders';
+const groupIcon = (s: string) => (s === 'story' ? 'sparkle' : 'sliders');
 const groupLabel = (s: string) => groups.find((g) => g.scope === s)?.label || s;
 const prompts = computed(() => draft.value?.prompt_definitions.filter((p) => p.scope === scope.value) || []);
 const prompt = computed(() => prompts.value.find((p) => p.path === promptPath.value) || prompts.value[0]);
@@ -209,14 +199,6 @@ async function afterImport(result: TransferResult) {
   if (result.settings_restored) await editor.initialize();
   emit('imported', result);
 }
-async function saveRecipeText(path: string) {
-  try {
-    await editor.flush();
-    await editor.saveText('half_agent', path);
-  } catch {
-    /* Keep the error and text draft. */
-  }
-}
 async function savePresets() {
   try {
     await editor.flush();
@@ -232,9 +214,7 @@ const searchable = computed(() => {
     entries.push({ page: p, label: p.label, path: '' });
     const fields =
       p.key === 'memory'
-        ? p.scope === 'full_agent'
-          ? fullFields
-          : [...historyFields, ...memoryFields]
+        ? storyToolFields
         : p.key === 'retrieval'
           ? [...loreFields, ...retrievalFields, ...retrievalAdvanced]
           : p.key === 'web'
@@ -291,9 +271,13 @@ function selectSearch(result: { page: SettingsPage; label: string; path: string 
 onMounted(async () => {
   await editor.initialize();
   const previous = props.initialPage || localStorage.getItem('tavern-settings-page');
-  pageId.value = draft.value?.pages.some((p) => p.id === previous)
-    ? previous!
-    : `${props.initialMode === 'half_agent' ? 'half_agent' : 'full_agent'}.model`;
+  const pages = draft.value?.pages;
+  const page = pages?.find((p) => p.id === previous);
+  const savedKey = previous?.split('.').at(-1);
+  const restored = page || pages?.find((p) => p.scope === 'story' && p.key === savedKey);
+  pageId.value = restored?.id || 'story.model';
+  if (previous && !page && restored && !props.initialPage)
+    localStorage.setItem('tavern-settings-page', restored.id);
 });
 </script>
 <template>
@@ -387,7 +371,7 @@ onMounted(async () => {
             page?.key === 'novel'
               ? '调查模型与额度用于新建调查者；汇报消息适配用于新建对话。'
               : scope === 'shared'
-                ? '这些资源由两种模式共用。'
+                ? '游玩和辅助对话使用这些通用配置。'
                 : '参数独立保存，成功保存后用于下一轮。'
           }}
         </p>
@@ -407,48 +391,26 @@ onMounted(async () => {
                 :checked="values.default_channel === channel"
                 @change="values.default_channel = channel"
             /></label>
-            <div :class="['settings-profiles', { 'dual-profiles': scope === 'half_agent' }]">
+            <div class="settings-profiles">
               <ModelProfileEditor
-                v-if="scope === 'full_agent' && draft.full_agent[profileKey('full_agent', channel)]"
-                :key="'full-' + channel"
-                :profile="draft.full_agent[profileKey('full_agent', channel)]"
+                v-if="storyProfile"
+                :key="channel"
+                :profile="storyProfile"
                 :providers="providersForChannel"
                 :channel="channel"
-                role="full_agent"
+                role="story"
                 label="模型连接"
                 :effort-options="effortOptions"
                 :flush="editor.flush"
                 @checked="refreshAfterProbe"
               />
-              <div v-else-if="scope === 'full_agent'" class="channel-empty">
-                <p>此渠道的 Full Agent 模型尚未配置。</p>
-                <button :disabled="!providersForChannel.length" @click="createChannelProfile('full_agent')">
+              <div v-else class="channel-empty">
+                <p>此渠道的剧情模型尚未配置。</p>
+                <button :disabled="!providersForChannel.length" @click="createChannelProfile()">
                   配置模型连接
                 </button>
                 <button class="quiet" @click="navigate('shared.providers')">管理本渠道供应商</button>
               </div>
-              <template v-else>
-                <template v-for="role in ['foreground', 'background'] as const" :key="role + channel">
-                  <ModelProfileEditor
-                    v-if="draft.half_agent[profileKey(role, channel)]"
-                    :profile="draft.half_agent[profileKey(role, channel)]"
-                    :providers="providersForChannel"
-                    :channel="channel"
-                    :role="role"
-                    :label="role === 'foreground' ? '正文生成' : '后台整理'"
-                    :effort-options="effortOptions"
-                    :flush="editor.flush"
-                    @checked="refreshAfterProbe"
-                  />
-                  <div v-else class="channel-empty">
-                    <p>{{ role === 'foreground' ? '正文生成' : '后台整理' }}尚未配置。</p>
-                    <button :disabled="!providersForChannel.length" @click="createChannelProfile(role)">
-                      配置模型连接
-                    </button>
-                    <button class="quiet" @click="navigate('shared.providers')">管理本渠道供应商</button>
-                  </div>
-                </template>
-              </template>
             </div>
             <div class="settings-policy" data-setting-path="policy">
               <PolicySelect v-model="values.policy" global compact />
@@ -457,25 +419,6 @@ onMounted(async () => {
           <template v-else-if="page.key === 'retrieval'">
             <h4>世界书注入</h4>
             <SettingsFields :value="values" :fields="loreFields" />
-            <SettingsFields
-              v-if="scope === 'half_agent'"
-              :value="values"
-              :fields="[
-                {
-                  path: 'lore_injection_mode',
-                  label: '新对话的注入方案',
-                  options: [
-                    { value: 'conversation', label: '随对话滚动' },
-                    { value: 'st_top', label: '按角色卡位置注入' },
-                  ],
-                },
-              ]"
-            />
-            <p class="muted">
-              数量和字符额度是上限，不以弱匹配补满。常驻条目仍受总上下文窗口限制。{{
-                scope === 'full_agent' ? '此模式固定随对话注入。' : '注入方案仅影响新对话。'
-              }}
-            </p>
             <h4>召回通道与权重</h4>
             <div class="settings-channel-grid">
               <label
@@ -507,32 +450,8 @@ onMounted(async () => {
             </details>
           </template>
           <template v-else-if="page.key === 'memory'">
-            <SettingsFields
-              v-if="scope === 'full_agent'"
-              class="full-agent-fields"
-              :value="values"
-              :fields="fullFields"
-            />
-            <template v-else
-              ><h4>历史窗口</h4>
-              <p class="muted">
-                本地窗口按消息上限或上次实测水位退出完整交流；实测压力每次只触发一个批次，之后等待新实测。
-                云端 compact 同样依据有效实测输入触发；服务端明确的超限拒绝或已失效的压缩状态也触发一次整理。
-                没有这些依据时不按 tokens 自动整理。
-                旧版“按历史预算”已迁移为“按消息批次”，消息上限与每批移除量保持原值；旧历史 token
-                预算和裁剪目标比例已移除。
-              </p>
-              <SettingsFields :value="values" :fields="historyFields" />
-              <h4>Tracker 与记忆整理</h4>
-              <SettingsFields :value="values" :fields="memoryFields"
-            /></template>
-            <p class="muted">
-              {{
-                scope === 'full_agent'
-                  ? '模型通过工具查阅资料、保存笔记并主动换窗。'
-                  : '周期记忆在正文后整理，可与本轮变量维护合并。消息退出前仍须补齐记忆覆盖；关闭裁剪仍执行周期整理。'
-              }}取消或拒绝审核不会提交本轮变更。
-            </p>
+            <SettingsFields class="story-tool-fields" :value="values" :fields="storyToolFields" />
+            <p class="muted">模型通过工具查阅资料、保存笔记并主动换窗。</p>
           </template>
           <template v-else-if="page.key === 'prompts' && prompt">
             <div class="settings-prompt-layout">
@@ -554,17 +473,6 @@ onMounted(async () => {
               />
             </div>
           </template>
-          <RecipeSettings
-            v-else-if="page.key === 'recipe'"
-            :recipe="draft.half_agent.context_recipe"
-            :saved="saved!.half_agent.context_recipe"
-            :guard="guard"
-            :text-value="(path) => editor.textValue('half_agent', path)"
-            :edit-text="(path, value) => editor.editText('half_agent', path, value)"
-            :save-text="saveRecipeText"
-            :text-busy="textBusy"
-            :text-errors="textErrors"
-          />
           <ProviderSettings
             v-else-if="page.key === 'providers'"
             v-model:providers="draft.shared.providers"
@@ -574,9 +482,9 @@ onMounted(async () => {
           />
           <NovelSettings
             v-else-if="page.key === 'novel'"
-            :value="draft.full_agent.novel_research"
-            :main="draft.full_agent.model"
-            :official-main="draft.full_agent.official_model"
+            :value="draft.story.novel_research"
+            :main="draft.story.model"
+            :official-main="draft.story.official_model"
             :providers="draft.shared.providers"
             :initial-channel="channel"
             :effort-options="effortOptions"

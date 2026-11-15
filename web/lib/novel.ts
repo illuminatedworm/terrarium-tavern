@@ -65,7 +65,7 @@ export interface NovelTrace {
 }
 export const novelStatus: Record<NovelStatus, string> = {
   running: '调查中',
-  waiting: '等待主 agent 回答',
+  waiting: '等待剧情模型回答',
   completed: '已报告 · 待销毁或追问',
   paused: '已暂停',
   failed: '调查失败',

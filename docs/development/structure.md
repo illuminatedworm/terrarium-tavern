@@ -1,6 +1,6 @@
 # 项目目录与开发入口
 
-后端位于 `src/tavern/`，前端位于 `web/`。两种游玩模式分别编排，共享存储、传输与兼容模块，可按所属功能定位入口。
+后端位于 `src/tavern/`，前端位于 `web/`。游玩与辅助对话 共享存储、传输与兼容模块，可按所属功能定位入口。
 
 ## 后端
 
@@ -8,15 +8,13 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 
 | 目录 | 职责与主要入口 |
 |---|---|
-| `application/` | [api.py](../../src/tavern/application/api.py) 注册通用 API，[modes.py](../../src/tavern/application/modes.py) 路由模式，[service.py](../../src/tavern/application/service.py) 编排 Half Agent |
+| `application/` | [api.py](../../src/tavern/application/api.py) 注册通用 API，[service.py](../../src/tavern/application/service.py) 管理游玩服务和共享资源 |
 | `core/` | 数据模型、设置、提示词、模型视图、token 和缓存策略 |
 | `character/` | 角色卡格式、资源、编辑 Agent、工作区及其 API |
-| `conversation/` | Half Agent 上下文、窗口、场景、工作记录与会话断点 |
-| `tracker/` | Half Agent 前后置维护任务、原生工具循环和变量草稿 |
-| `memories/` | 分类记忆、来源协议、投影、准出与历史补查 |
-| `full_agent/` | Full Agent 模型循环、窗口、笔记、工具、检索仲裁与失败恢复 |
-| `novel/` | Full Agent 授权原著文件的导入、索引、独立调查者、消息送达及生命周期 |
-| `advisor/` | 两种模式共用的参谋 agent 聊天、独立上下文、只读工具、联网与偏好提交 |
+| `conversation/` | 世界书注入、云端 compact、重生成、回合审核和缓存断点 |
+| `story/` | 剧情模型循环、窗口、笔记、工具、检索仲裁与失败恢复 |
+| `novel/` | 已授权原著文件的导入、索引、独立调查者、消息送达及生命周期 |
+| `advisor/` | 参谋 agent 聊天、独立上下文、只读工具、联网与偏好提交 |
 | `chatgpt/` | SIWC 账号授权、凭据存储、模型目录与 OpenAI 官方 Responses 传输 |
 | `web/` | 参谋 agent 与制卡 agent 共用的联网服务、分页和来源记录 |
 | `search/` | 召回、准入、文本解析、本地模型进程和索引 |
@@ -33,13 +31,13 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 - 首页：[HomeView.vue](../../web/components/story/HomeView.vue)。
 - 侧栏列表：[SessionList.vue](../../web/components/story/SessionList.vue)、[CardList.vue](../../web/components/character/CardList.vue)、[WorldbookList.vue](../../web/components/character/WorldbookList.vue)、[CardConversationList.vue](../../web/components/character/CardConversationList.vue)；[阅读排版](../../web/components/settings/ReadingLayoutPanel.vue)。
 - 右侧栏：MVU 变量、场景与会话设置页（[MvuInspector.vue](../../web/components/story/MvuInspector.vue)、[SceneInspector.vue](../../web/components/story/SceneInspector.vue)、[SessionOptions.vue](../../web/components/story/SessionOptions.vue)；会话设置编辑本地草稿，保存后才写回）。
-- 弹窗：变量与记忆、分支、记忆重建、删除角色卡和关于面板。
+- 弹窗：变量与记忆、分支、删除角色卡和关于面板。
 
 故事 API 的响应类型集中在 [types.ts](../../web/lib/types.ts)。`components/` 按 `common`、`story`、`settings`、`character`、`records` 分类；`lib/` 保存请求与业务辅助逻辑，`composables/` 保存组合式函数。
 
 世界书条目的列表、筛选、导入与条目弹窗集中在 [LoreBookEditor.vue](../../web/components/character/LoreBookEditor.vue)，角色卡编辑页与世界书库编辑页（[WorldbookEditor.vue](../../web/components/character/WorldbookEditor.vue)）共用。
 
-两种对话流分别由 [HalfAgentDialogue.vue](../../web/components/story/HalfAgentDialogue.vue) 与 [FullAgentDialogue.vue](../../web/components/story/FullAgentDialogue.vue) 负责，正文、编辑、分支和版本操作共用 [DialogueMessage.vue](../../web/components/story/DialogueMessage.vue)。
+[StoryDialogue.vue](../../web/components/story/StoryDialogue.vue) 管理游玩对话流及工具活动，[DialogueMessage.vue](../../web/components/story/DialogueMessage.vue) 渲染正文、编辑、分支和版本操作。
 
 [StoryHistory.vue](../../web/components/story/StoryHistory.vue) 与 [storyHistory.ts](../../web/lib/storyHistory.ts) 管理动态高度虚拟列表；[ConversationRail.vue](../../web/components/story/ConversationRail.vue) 管理历史刻度导航。脚本交互实例保留到退出会话视图，避免因虚拟列表滚动而重复运行或丢失草稿。界面渲染范围不影响模型窗口。
 
@@ -51,12 +49,11 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 
 | 改动 | 先读 | 同时检查 |
 |---|---|---|
-| Half Agent 调用顺序或失败处理 | [工作流](../design/agent-workflow.md) | 事务、回调顺序、来源覆盖与取消 |
-| Full Agent 工具或换窗 | [架构](../design/full-agent.md)、[工具协议](../reference/full-agent-tools.md) | 强制换窗、进度恢复和工具权限 |
+| 剧情工具或换窗 | [架构](../design/story.md)、[工具协议](../reference/story-tools.md) | 强制换窗、进度恢复和工具权限 |
 | 模型协议或缓存 | [接入参考](../reference/model-api.md)、[缓存设计](../design/cache-control.md) | 最终 HTTP 序列化、原生回复和 usage |
 | 设置字段 | [设置 API](../reference/settings-api.md) | 默认值、迁移、范围修订和前端保存合并 |
 | 卡片编辑 | [工作区设计](../design/card-author.md) | 草稿版本、资源引用和模型视图恢复 |
-| 检索或上下文 | [检索](../guides/retrieval.md)、[上下文](../design/context-lifecycle.md) | 准入、窗口计数和预览一致性 |
+| 检索或上下文 | [检索](../guides/retrieval.md)、[工作窗口](../design/story.md#工作窗口与追加记录) | 准入、窗口计数和预览一致性 |
 | 平台相关行为 | [Android 与桌面的边界](android.md#与桌面的边界) | 桌面输出不变、Android 裁剪依赖未被引用 |
 
 测试集中在 `tests/`，命令及选择方式见[验证与发行](validation.md)。

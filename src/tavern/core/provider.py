@@ -1,4 +1,4 @@
-"""Shared HTTP transport independent of story mode."""
+"""Shared HTTP transport for model requests."""
 
 import os
 

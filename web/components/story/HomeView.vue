@@ -80,7 +80,7 @@ const recentSessions = computed(() =>
       </li>
       <li>
         <Icon name="memory" :size="18" /><span
-          ><strong>记忆在后台整理</strong>Tracker 随剧情维护记忆与变量，长对话也能记得来龙去脉。</span
+          ><strong>延续长篇剧情</strong>通过交接笔记和长期笔记记录重要进展。</span
         >
       </li>
       <li>

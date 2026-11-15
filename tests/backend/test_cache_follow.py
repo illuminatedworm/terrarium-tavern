@@ -9,11 +9,11 @@ from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import Conflict, Store, uid
 
 
-@pytest.fixture(params=["half_agent", "full_agent"])
-def story(tmp_path, request):
+@pytest.fixture
+def story(tmp_path):
     store = Store(tmp_path)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes())
-    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=request.param))
+    session = store.new_session(SessionCreate(card_id=card["id"]))
     return store, session
 
 
@@ -170,7 +170,7 @@ async def test_api_validation_legacy_updates_and_additive_migration(story):
     assert migrated["cache_breakpoint_follow"]["offset"] == 2
 
 
-def test_failures_maintenance_versions_and_rollover_do_not_advance(story):
+def test_failures_versions_and_rollover_do_not_advance(story):
     store, session = story
     for _ in range(3):
         session = commit_reply(store, session)
@@ -184,36 +184,20 @@ def test_failures_maintenance_versions_and_rollover_do_not_advance(story):
         )
         store.set_turn(turn_id, status=status)
         assert store.session(session["id"])["cache_breakpoint_follow"] == previous
-    turn_id, _ = store.create_turn(
-        session["id"],
-        TurnRequest(operation_id=uid(), expected_revision=session["revision"], scene_refresh="memory"),
-    )
-    store.set_turn(turn_id, status="running")
-    store.commit_turn(
-        turn_id,
-        {
-            "scene": {"message_id": session["head"], "snapshot": session["snapshot"]},
-            "before": session["snapshot"],
-            "messages": [],
-        },
-    )
-    session = store.session(session["id"])
-    assert session["cache_breakpoint_follow"] == previous
     original = session["head"]
     session = commit_reply(store, session, regenerate=True)
     session = store.switch_message_version(session["id"], session["head"], original, session["revision"])
     assert session["cache_breakpoint_follow"] == previous
-    if session["agent_mode"] == "full_agent":
-        snapshot = copy.deepcopy(session["snapshot"])
-        snapshot["full_agent"]["window"]["start"] = len(session["messages"])
-        from tavern.storage.store import dump
+    snapshot = copy.deepcopy(session["snapshot"])
+    snapshot["story"]["window"]["start"] = len(session["messages"])
+    from tavern.storage.store import dump
 
-        with store.connection() as database:
-            database.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), session["head"]))
-        session = store.session(session["id"])
-        assert session["cache_breakpoint_effective_id"] is None
-        assert "窗口" in session["cache_breakpoint_reason"]
-        assert session["cache_breakpoint_follow"] == previous
+    with store.connection() as database:
+        database.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), session["head"]))
+    session = store.session(session["id"])
+    assert session["cache_breakpoint_effective_id"] is None
+    assert "窗口" in session["cache_breakpoint_reason"]
+    assert session["cache_breakpoint_follow"] == previous
 
 
 def test_fixed_prefix_waits_for_interval_even_when_enough_replies_exist(story):

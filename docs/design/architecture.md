@@ -1,18 +1,14 @@
 # 应用架构与职责
 
-应用由两种游玩模式、参谋 agent 和制卡 agent 组成，共享模型传输、检索和存储能力。各运行时分别管理工作上下文与写入范围，设计说明见 [Full Agent](full-agent.md)、[参谋 agent](advisor.md)和[制卡 agent](card-author.md)。
+剧情、咨询和制卡共用模型传输、检索和存储能力，各有独立的工作上下文与写入范围。设计说明见[剧情运行时](story.md)、[参谋 agent](advisor.md)和[制卡 agent](card-author.md)。
 
 ```mermaid
 flowchart TD
-    UI[Vue 界面] --> API[FastAPI 与模式路由]
-    API --> FULL[Full Agent Runtime]
-    API --> HALF[Roleplay Runtime · Half Agent]
+    UI[Vue 界面] --> API[FastAPI]
+    API --> STORY[剧情运行时]
     API --> EDIT[制卡 agent]
     API --> ADVISOR[参谋 agent]
-    HALF --> WRITER[Writer 正文]
-    HALF --> TRACKER[Tracker 维护]
-    HALF --> SHARED[共享存储、检索、传输与脚本能力]
-    FULL --> SHARED
+    STORY --> SHARED[共享存储、检索、传输与脚本能力]
     EDIT --> SHARED
     ADVISOR --> SHARED
 ```
@@ -21,17 +17,11 @@ flowchart TD
 
 | 角色 | 职责 | 代码入口与边界 |
 |---|---|---|
-| Full Agent | 通过工具检索、维护笔记并生成正文 | [full_agent/agent.py](../../src/tavern/full_agent/agent.py)；独立模型循环 |
-| Writer | Half Agent 中演绎角色、生成正文及检索线索 | [scripting/agent.py](../../src/tavern/scripting/agent.py) 的 `Writer`；正文一次生成，无业务工具；可选实验层声明仅传输正文的函数，不调度 Tracker 或提交状态 |
-| Tracker | Half Agent 中的分类记忆、授权对话设定和 MVU 变量维护 | [tracker/workflow.py](../../src/tavern/tracker/workflow.py) 调度，[tracker/task.py](../../src/tavern/tracker/task.py) 执行原生工具循环；工具按本轮任务授权 |
+| 剧情模型 | 通过工具检索、维护笔记并生成正文 | [story/agent.py](../../src/tavern/story/agent.py)；独立模型循环 |
 | 制卡 agent | 独立编辑和适配已引用卡片的草稿 | [character/card_author.py](../../src/tavern/character/card_author.py)；用户审阅后保存书架卡片 |
 | 参谋 agent | 查阅故事、咨询与联网；按明确要求更新本轮偏好 | [advisor/runtime.py](../../src/tavern/advisor/runtime.py)；使用独立咨询记录和偏好草稿 |
-| Roleplay Runtime | Half Agent 的回合、检索、上下文、窗口、脚本、审核和提交 | [application/service.py](../../src/tavern/application/service.py) 的 `RoleplayRuntime`；程序编排者 |
-| 模式路由 | 将故事操作交给对应引擎 | [application/modes.py](../../src/tavern/application/modes.py)；Full Agent 不调用 Writer／Tracker 编排 |
 
-Writer 和 Tracker 的调用及草稿交换由 Runtime 统一编排。前置任务处理必要的裁剪补整理及明确设定修改，后置任务合并到期记忆与授权变量维护。调用限额见[Half Agent 设置](../guides/history-maintenance-settings.md#记忆与任务限额)。
-
-`scripting/agent.py` 的 `Writer` 适配正文请求与 Terrarium；[scripting/runtime.py](../../src/tavern/scripting/runtime.py) 的 `ScriptRuntime` 执行隔离卡片脚本；`RoleplayRuntime` 负责整个回合的调度和提交。
+[application/service.py](../../src/tavern/application/service.py) 管理游玩服务和共享资源。[ScriptRuntime](../../src/tavern/scripting/runtime.py) 执行隔离卡片脚本，[StoryRuntime](../../src/tavern/story/runtime.py) 负责回合调度与提交。
 
 ## 数据所有权与事务
 
@@ -47,11 +37,11 @@ SQLite 是剧情和状态的权威来源。消息通过父节点构成历史，�
 
 书架角色卡保存使用 revision。创建故事时复制角色资料、脚本权限和依赖清单，书架后续保存或删除不改变旧故事。书库世界书同样按副本挂载：条目复制进对话级角色卡，来源记录保存在快照中，书库后续修改只在用户重新载入时进入对话，见[世界书库与挂载](../guides/worldbooks.md)。编辑草稿和副本共同保护引用资源。
 
-独立分支复制可见消息前缀和快照，重映射记忆来源及世界书锚点；删除源会话不影响分支。编辑或同步对话设定、卡片交互把最新回复复制为同一轮的新版本，以同一套规则重映射该回复的引用、覆盖指纹和请求轨迹，见 [message_copy.py](../../src/tavern/storage/message_copy.py)。操作语义见[工作流](agent-workflow.md#操作边界)。
+独立分支复制可见消息前缀和快照，重映射记忆来源及世界书锚点；删除源会话不影响分支。编辑或同步对话设定会把最新回复复制为同一轮的新版本，以同一套规则重映射该回复的引用和请求轨迹，见 [message_copy.py](../../src/tavern/storage/message_copy.py)。操作语义见[回合生命周期](story.md#回合生命周期)。
 
 ## 设置与恢复
 
-设置文档按 `full_agent`、`half_agent` 和 `shared` 持久化，运行时使用一次操作的配置快照。Writer、Tracker、Full Agent、参谋 agent 和制卡 agent 各有独立模型配置。“后台工作记录”按回合汇集 Runtime 事件。
+设置文档按 `story` 和 `shared` 持久化，运行时读取当前操作的配置快照。剧情模型、参谋 agent 与制卡 agent 独立配置模型。Agent 工作记录按回合汇集运行时事件。
 
 数据库格式版本、升级前备份与迁移规则见[设置 API](../reference/settings-api.md#数据库与设置迁移)；不支持的版本在写入前报错。
 
@@ -59,13 +49,13 @@ SQLite 是剧情和状态的权威来源。消息通过父节点构成历史，�
 
 ## 上下文与模型传输
 
-检索器输出最终候选、准入证据和递归结果。Half Agent 窗口规划与编译消费同一清单，编译器不自行增加候选。中途世界书占 token 容量，不占剧情条数；退出原文前由 Tracker 校验整理覆盖。
+检索器输出最终候选、准入证据和递归结果。剧情模型的自动注入和主动检索使用同一准入规则。中途世界书随其对话锚点进入窗口。
 
-Writer 每回合建立无工具 Creature，关闭基座自动 compact；Tracker 使用独立工具上下文。通用管理工具不进入模型白名单。最终 HTTP 请求统一检查协议并保存接口观测，超量发送遵循[文本完整性](text-integrity.md)。
+剧情模型使用独立的工具循环和上下文编译。通用管理工具不进入模型白名单。最终 HTTP 请求统一检查协议并保存接口观测，超量发送遵循[文本完整性](text-integrity.md)。
 
 模型业务输入使用[数据边界](model-data-boundary.md)定义的自然语言投影和短引用。持久身份、指纹、schema 与初始化账本留在运行时；原始快照仍保存完整数据。
 
-两种模式共用 [模型传输](../reference/model-api.md)，分别管理原生回复和动态上下文记录。固定依赖版本和最终请求序列化测试共同保护升级。
+各 agent 共用[模型传输](../reference/model-api.md)，按对话管理原生回复和动态上下文记录。固定依赖版本和最终请求序列化测试共同保护升级。
 
 ## 脚本与资源隔离
 

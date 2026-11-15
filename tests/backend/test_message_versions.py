@@ -1,5 +1,4 @@
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
@@ -7,9 +6,7 @@ from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
 from tavern.core.models import OpeningEdit, SessionCreate, TurnRequest
-from tavern.memories.memory import fingerprint, window_valid
-from tavern.memories.memory_records import Record, new_memory, source_hash
-from tavern.storage.store import Conflict, Store, dump, uid
+from tavern.storage.store import Conflict, Store, uid
 
 
 @pytest.fixture
@@ -113,7 +110,7 @@ async def test_version_endpoint(story):
 async def test_opening_save_cannot_overwrite_failed_or_concurrent_work(tmp_path):
     from tavern.advisor.runtime import ConsultationRequest
     from tavern.application.context_operations import ContextOperationRequest
-    from tests.backend.test_full_agent import Model, ScriptHost
+    from tests.backend.test_story import Model, ScriptHost
 
     app = create_app(tmp_path)
     store, service, advisor = app.state.store, app.state.service, app.state.advisor
@@ -131,7 +128,7 @@ async def test_opening_save_cannot_overwrite_failed_or_concurrent_work(tmp_path)
             await release.wait()
             return await super().open(*args, **kwargs)
 
-    service.half.runtime = host = OpeningHost()
+    service.story.runtime = host = OpeningHost()
     edit = OpeningEdit(text="new opening", expected_revision=0)
     try:
         with pytest.raises(ValueError, match="invalid opening"):
@@ -175,62 +172,3 @@ async def test_opening_save_cannot_overwrite_failed_or_concurrent_work(tmp_path)
         release.set()
         await advisor.close()
         await service.close()
-
-
-async def test_card_edit_version_keeps_memory_coverage_and_request_traces(story):
-    store, session = story
-    first = generate(store, session)
-    sid, head, messages = first["id"], first["head"], first["messages"]
-    # Tracker maintenance in the reply's own turn covers and cites the reply.
-    snapshot = {
-        **first["snapshot"],
-        "memory_archive": {"covered_count": len(messages), "fingerprint": fingerprint(messages)},
-        "memory_document": new_memory(
-            [
-                Record(
-                    category="current",
-                    content="相同正文",
-                    sources=[
-                        {"message_id": head, "fingerprint": source_hash(messages[-1]), "excerpt": "相同"}
-                    ],
-                ).model_dump()
-            ]
-        ),
-    }
-    record = {"window": "half-window", "input_id": messages[-2]["id"], "base": [{"message_id": head}]}
-    with store.connection() as db:
-        db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), head))
-        db.execute(
-            "INSERT INTO half_agent_trace VALUES (?,?,?,?,?)", (sid, head, 1, "half-window", dump(record))
-        )
-        db.execute(
-            "INSERT INTO full_agent_trace VALUES (?,?,?,?,?)",
-            (sid, head, 1, "full-window", dump({"role": "tool", "content": "读取结果"})),
-        )
-    app = create_app(store.root)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-        response = await client.put(
-            f"/api/sessions/{sid}/lorebook",
-            json={
-                "document": store.session_card(sid)["document"],
-                "expected_revision": first["revision"],
-                "operation_id": "lore",
-            },
-        )
-    assert response.status_code == 200, response.text
-    edited = response.json()
-    copied = edited["head"]
-    assert edited["messages"][-1]["versions"] == [head, copied]
-    assert window_valid(edited["snapshot"]["memory_archive"], edited["messages"])
-    # The card edit itself may mark the source changed; it must never go missing.
-    assert edited["memory_view"]["records"][0]["sources"][0]["message_id"] == copied
-    with store.connection() as db:
-        half = db.execute(
-            "SELECT window_id,payload FROM half_agent_trace WHERE message_id=?", (copied,)
-        ).fetchone()
-        full = db.execute(
-            "SELECT window_id,payload FROM full_agent_trace WHERE message_id=?", (copied,)
-        ).fetchone()
-    assert half["window_id"] == "half-window"
-    assert json.loads(half["payload"])["base"][0]["message_id"] == copied
-    assert full["window_id"] == "full-window" and json.loads(full["payload"])["content"] == "读取结果"

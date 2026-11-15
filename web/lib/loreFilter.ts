@@ -1,13 +1,13 @@
 import { loreField } from './loreBook';
 
-export const audiences: Record<string, string> = {
-  writer: 'Writer 叙事',
-  tracker_mvu: 'Tracker 变量规则',
+export const purposeLabels: Record<string, string> = {
+  narrative: '叙事设定',
+  mvu_rules: 'MVU 变量规则',
 };
-export const emptyLoreFilter = () => ({ query: '', enabled: 'all', trigger: 'all', audience: 'all' });
+export const emptyLoreFilter = () => ({ query: '', enabled: 'all', trigger: 'all', purpose: 'all' });
 export type LoreFilter = ReturnType<typeof emptyLoreFilter>;
-export function entryAudience(entry: any): string {
-  return entry.extensions?.terrarium?.audience || 'writer';
+export function entryPurpose(entry: any): string {
+  return entry.extensions?.terrarium?.purpose ?? 'narrative';
 }
 function loreOrder({ entry, index }: { entry: any; index: number }) {
   const field = (name: string) => loreField(entry, name);
@@ -49,11 +49,12 @@ export function filterLore(entries: any[], filter: LoreFilter) {
         .join(' ')
         .toLocaleLowerCase();
       const enabled = entry.enabled ?? !entry.disable;
+      const purpose = entryPurpose(entry);
       return (
         terms.every((term) => text.includes(term)) &&
         (filter.enabled === 'all' || enabled === (filter.enabled === 'enabled')) &&
-        (filter.trigger === 'all' || !!entry.constant === (filter.trigger === 'constant')) &&
-        (filter.audience === 'all' || entryAudience(entry) === filter.audience)
+        (filter.trigger === 'all' || !!loreField(entry, 'constant') === (filter.trigger === 'constant')) &&
+        (filter.purpose === 'all' || purpose === filter.purpose)
       );
     })
     .sort((a, b) => {

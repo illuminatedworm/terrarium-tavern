@@ -3,9 +3,7 @@
 import json
 import re
 
-from kohakuterrarium.llm.base import NativeToolCall
-
-from tavern.core.kemini import TOOL_NAME, KeminiConfig
+from tavern.core.kemini import KeminiConfig
 
 
 class AuxiliaryParser:
@@ -122,7 +120,7 @@ class ArgumentText:
 class ToolArguments:
     """Stream the content string of the first call to one of ``names``.
 
-    Shared by Kemini transport and the Full Agent story preview. Only the first
+    Shared by Kemini transport and the story preview. Only the first
     choice/candidate is read, as StreamState does; fragments are held while a
     split name can still match, so no argument prefix is lost.
     """
@@ -188,47 +186,3 @@ class ToolArguments:
                             self._arguments(call.get("id") or index, call.get("name", ""), arguments)
                         )
         return "".join(chunks)
-
-
-class KeminiReply:
-    def __init__(self, config: KeminiConfig, transport: bool):
-        self.config, self.transport = config, transport
-        self.parser = AuxiliaryParser(config)
-        self.story = ToolArguments({TOOL_NAME})
-        self.emitted = ""
-        self.parts = []
-        self.transported = False
-
-    def feed(self, event: dict, plain: str, api: str) -> str:
-        delta = self.parser.feed(self.story.feed(event, api) if self.transport else plain)
-        self.emitted += delta
-        return delta
-
-    def finish(self, text: str, calls: list[NativeToolCall]) -> tuple[str, list[NativeToolCall]]:
-        synthetic = [call for call in calls if call.name == TOOL_NAME] if self.transport else []
-        if synthetic:
-            if len(synthetic) != 1 or len(calls) != 1:
-                raise ValueError("正文传输必须单独调用一次，不能与业务工具混合；本次响应未执行任何工具")
-            try:
-                args = json.loads(synthetic[0].arguments)
-            except (ValueError, TypeError):
-                raise ValueError("正文传输参数不是完整 JSON，本回合未提交") from None
-            if not isinstance(args, dict) or set(args) != {"content"} or not isinstance(args["content"], str):
-                raise ValueError("正文传输需要且仅接受字符串 content，本回合未提交")
-            if text.strip():
-                self.parts.append({"kind": "extra", "text": text})
-            text, calls, self.transported = args["content"], [], True
-        elif calls:
-            # Genuine tool exchanges retain their original native response and permissions.
-            return text, calls
-        parser = AuxiliaryParser(self.config)
-        clean = parser.feed(text, final=True)
-        self.parts.extend(parser.parts)
-        if not clean.strip():
-            raise ValueError("实验输出未包含故事正文，本回合未提交")
-        if not clean.startswith(self.emitted):
-            raise ValueError("正文传输的最终回复与流式片段不一致，本回合未提交")
-        return clean, calls
-
-    def tail(self, text: str) -> str:
-        return text[len(self.emitted) :]

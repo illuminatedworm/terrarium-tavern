@@ -10,7 +10,6 @@ export interface EditorCard {
   base_document: Record<string, any>;
   source: Record<string, any>;
   base_revision: number | null;
-  target_mode: 'half_agent' | 'full_agent' | null;
   brief: string;
   source_exists?: boolean;
   source_changed?: boolean;

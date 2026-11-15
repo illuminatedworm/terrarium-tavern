@@ -8,17 +8,15 @@ import tempfile
 from threading import Event, Thread
 
 import uvicorn
-from kohakuterrarium.testing.llm import ScriptedLLM
 from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
 from tavern.desktop_browser import system_browser
-from tavern.memories.memory_records import Record, source_hash
 from tavern.scripting.network_guard import NETWORK_GUARD
 from tavern.storage.store import dump
-from tests.backend.test_full_agent import ScriptHost
 from tests.backend.test_message_versions import generate
+from tests.backend.test_story import Model, ScriptHost
 
 
 async def main(all_viewports=False):
@@ -27,7 +25,8 @@ async def main(all_viewports=False):
         store = app.state.store
         cfg = store.settings()
         cfg.retrieval.channels = ["keyword"]
-        cfg.foreground.model = cfg.background.model = "fixture"
+        cfg.story.model = "fixture"
+        cfg.story_config.auto_retrieval = False
         cfg.local_models.reranker_enabled = False
         store.save_settings(cfg)
         card = store.import_card(b'{"name":"History fixture","first_mes":"Old source sentence."}')
@@ -35,22 +34,6 @@ async def main(all_viewports=False):
             db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
         session = store.new_session(SessionCreate(card_id=card["id"]))
         snapshot = session["snapshot"]
-        snapshot["memory_document"] = {
-            "version": 3,
-            "records": [
-                Record(
-                    category="current",
-                    content="A remembered source",
-                    sources=[
-                        {
-                            "message_id": session["head"],
-                            "fingerprint": source_hash(session["messages"][0]),
-                            "excerpt": "Old source sentence.",
-                        }
-                    ],
-                ).model_dump()
-            ],
-        }
         parent = session["head"]
         with store.connection() as db:
             for i in range(1, 300):
@@ -84,20 +67,19 @@ async def main(all_viewports=False):
         )
         release = Event()
 
-        class GatedModel(ScriptedLLM):
+        class GatedModel(Model):
             fail = True
 
-            async def chat(self, messages, **kwargs):
+            async def chat_complete(self, messages, **kwargs):
                 if not await asyncio.to_thread(release.wait, 15):
                     raise RuntimeError("Browser did not release the request")
                 if self.fail:
                     raise RuntimeError("fixture generation failed")
-                async for chunk in super().chat(messages, **kwargs):
-                    yield chunk
+                return await super().chat_complete(messages, **kwargs)
 
-        model = GatedModel(["Replayed reply"])
-        app.state.service.half.runtime = ScriptHost()
-        app.state.service.provider_factory = lambda: model
+        model = GatedModel("Replayed reply")
+        app.state.service.story.runtime = ScriptHost()
+        app.state.service.story.provider_factory = lambda: model
         ready = Event()
 
         class ReadyServer(uvicorn.Server):
@@ -165,17 +147,6 @@ async def main(all_viewports=False):
                         await expect(latest_input.locator("textarea")).to_have_count(1)
                         await rail.press("End")
                         await latest_input.get_by_role("button", name="取消", exact=True).click()
-                        if width == 1440:
-                            await page.get_by_role("tab", name="场景", exact=True).click()
-                            await page.locator(".memory-group > summary").click()
-                            await page.locator(".memory-record details > summary").click()
-                            await page.get_by_role("button", name="定位原文", exact=True).click()
-                            await expect(page.locator("mark.source-sentence-highlight")).to_have_text(
-                                "Old source sentence."
-                            )
-                            assert await rows.count() < 60
-                            await page.get_by_role("button", name="跳到最新", exact=True).click()
-                            await expect(last).to_be_visible()
                         assert await page.evaluate(
                             "document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight"
                         )

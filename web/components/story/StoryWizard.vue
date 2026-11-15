@@ -9,7 +9,7 @@ const props = defineProps<{ cards: any[]; settings?: any }>();
 const emit = defineEmits<{
   started: [session: any];
   back: [];
-  settings: [channel: Channel, mode: string];
+  settings: [channel: Channel];
   cardChanged: [card: any];
 }>();
 const selectedId = ref(''),
@@ -34,7 +34,7 @@ watch(
     :settings="settings"
     @back="selectedId = ''"
     @started="emit('started', $event)"
-    @settings="(channel, mode) => emit('settings', channel, mode)"
+    @settings="emit('settings', $event)"
     @card-changed="emit('cardChanged', $event)"
   />
   <section v-else class="editor-page story-setup">

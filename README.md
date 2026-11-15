@@ -15,16 +15,11 @@
 [![Version](https://img.shields.io/badge/version-0.8.16-4C8C72?style=flat-square)](docs/changelog.md)
 [![Status](https://img.shields.io/badge/status-experimental-F59E0B?style=flat-square)](#当前局限)
 
-[版本记录](docs/changelog.md) · [主要功能](#主要功能) · [运行模式](#两种运行模式) · [快速开始](#快速开始) · [上手指南](#上手指南) · [当前局限](#当前局限) · [文档](#文档与开发) · [许可](#许可与致谢)
+[版本记录](docs/changelog.md) · [主要功能](#主要功能) · [游玩](#游玩) · [快速开始](#快速开始) · [上手指南](#上手指南) · [当前局限](#当前局限) · [文档](#文档与开发) · [许可](#许可与致谢)
 
 </div>
 
 <br>
-
-<p align="center">
-  <img src="docs/images/story.jpg" alt="Terrarium Tavern 游玩对话界面：左侧栏收缩，右侧打开参谋 agent，正文展示“雾港来信”的开场" width="100%">
-</p>
-<p align="center"><sub>示例角色卡「雾港来信」的开场，右侧可与参谋 agent 讨论剧情</sub></p>
 
 <details>
 <summary><b>查看角色卡编辑界面</b></summary>
@@ -83,18 +78,13 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 </tr>
 </table>
 
-## 两种运行模式
+## 游玩
 
-创建故事时可选择运行模式，两者各自独立配置模型与参数。
-
-| | **Full Agent** | **Half Agent** |
-|:--|:--|:--|
-| **分工** | 单一 Agent 通过工具完成检索、笔记、变量与正文 | Writer 专注正文，后台 Tracker 维护记忆与变量 |
-| **记忆** | 自行维护笔记，跨上下文窗口时通过交接笔记续接 | 按周期积累分类记忆，可查看来源并手工修订 |
-| **特点** | 由模型按剧情需要主动查阅、记录和换窗 | 写作与工具操作分离，Writer 不调用工具 |
-| **说明** | [使用指南](docs/guides/full-agent.md) | [窗口与记忆](docs/guides/history-maintenance-settings.md) |
+剧情模型在同一工具循环中检索世界书、维护笔记、执行授权的变量与设定修改，并交付剧情正文。模型通过交接笔记延续故事，Runtime 校验换窗、审核和回合提交。操作见 [游玩指南](docs/guides/story.md)。
 
 ## 快速开始
+
+升级前请保留完整备份。导入旧数据包时，预览会标明因格式过旧而无法导入的故事。详见[安装与维护](docs/guides/maintenance.md#备份升级与回退)。
 
 三种方式使用同一应用版本，按需选择：
 
@@ -169,18 +159,18 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 ## 上手指南
 
-1. **配置模型** — 在「设置 → 通用 → 提供商」添加普通 API 的连接，或在「OpenAI 官方」添加 SIWC 或 OpenAI 官方 API 连接。再到对应运行模式的「模型与生成」选择提供商和模型。Full Agent 与 Half Agent 的 Tracker 需要模型支持工具调用；Half Agent 的「正文生成」与「后台整理」分别对应 Writer 和 Tracker。同一提供商的模型列表在各处共享。普通参数自动保存，提示词通过绿色勾保存。
+1. **配置模型** — 在「设置 → 通用 → 提供商」添加普通 API 的连接，或在「OpenAI 官方」添加 SIWC 或 OpenAI 官方 API 连接。再到「游玩 → 模型与生成」选择提供商和模型。游玩模型需要支持工具调用。同一提供商的模型列表在各处共享。普通参数自动保存，提示词通过绿色勾保存。
 2. **导入角色卡** — 从侧栏「角色卡」导入文件，或从空白卡开始编辑。仓库附带两张示例卡：
    - [雾港来信](samples/雾港来信.json)：体验文本故事
    - [星航状态卡](samples/星航状态卡.json)：体验 HTML/MVU，进入故事前需启用该卡的脚本权限
-3. **开始故事** — 点击「开始新故事」，按三步完成：选择角色卡 → 在「用户与开场」中设定对话渠道、运行模式（默认 Full Agent）、用户身份并选择开场 → 按需挂载[世界书库](docs/guides/worldbooks.md)中的世界书。角色卡可预设新建对话默认使用的用户角色与世界书。
+3. **开始故事** — 点击「开始新故事」，按三步完成：选择角色卡 → 在「用户与开场」中设定对话渠道、用户身份并选择开场 → 按需挂载[世界书库](docs/guides/worldbooks.md)中的世界书。角色卡可预设新建对话默认使用的用户角色与世界书。
 4. **调整开场** — 在首次模型任务（生成、参谋 agent 咨询或上下文整理）开始前，可点击开场白旁的「编辑」修改开场原文；保存只影响当前对话，并重新初始化开场变量和脚本状态。任务开始后开场白永久锁定。
 5. **阅读与调整** — 在对话中续写行动，按需修改最新用户输入并重试、重生成或创建分支；通过上下文预览、记忆和工作记录查看故事状态。变量更新与设定修改按界面提示授权。
 
 **模型接入**支持 Chat Completions、Responses、Anthropic Messages 与 Gemini。API 连接与 Sign In With ChatGPT（SIWC）的配置方法见[设置指南](docs/guides/settings.md)；编辑与分支规则见[阅读、编辑与分支](docs/guides/story-history.md)。
 
 > [!IMPORTANT]
-> 剧情、角色资源和模型配置默认保存在 `data/`。升级或迁移前请先备份该目录。v0.8.16 升级了设置和个人数据包格式，回退旧程序须恢复升级前的备份。ChatGPT 账号在换机后需要重新连接。
+> 剧情、角色资源和模型配置默认保存在 `data/`。升级或迁移前请先备份该目录。回退旧程序须恢复升级前的备份。ChatGPT 账号在换机后需要重新连接。详见[备份、升级与回退](docs/guides/maintenance.md#备份升级与回退)。
 
 ## 当前局限
 
@@ -191,8 +181,6 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 | **制卡 agent** | 已提供草稿编辑、工作流适配、校验和保存流程，但交互打磨、复杂卡片理解及修改质量仍需完善。修改结果需人工审阅，尤其是初始化、脚本与世界书用途的调整。 |
 | **角色卡兼容范围** | 当前适配了 SillyTavern 的部分格式与接口。扩展、远程脚本和复杂 MVU 卡片需逐卡确认，详见[兼容范围](docs/guides/compatibility.md)。 |
 | **长篇叙事质量** | 开发者个人游玩初步确认中篇体验较好。模型选择、系统提示词和各项机制参数都会显著影响体验。 |
-| **记忆系统对模型的要求** | 两种模式的记忆维护都依赖工具调用，涉及复杂判断和格式化输出。Half Agent 的 Tracker 整理测试中，GPT-5.6-Luna 故障与错误率较高，正常运行至少需要 GPT-5.6-Terra 或相近能力的模型。 |
-| **两种模式的取舍** | Full Agent 让同一模型统筹检索、记忆与正文；Half Agent 将正文生成与工具操作分开，以避免当前模型的 agent 与编程训练倾向让写作变得机械。两条路线的长篇叙事质量都仍在验证。 |
 
 ## 文档与开发
 
@@ -201,9 +189,8 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 | 使用指南 | 设计与开发 |
 |:--|:--|
 | [设置指南](docs/guides/settings.md) | [应用架构](docs/design/architecture.md) |
-| [Full Agent 使用指南](docs/guides/full-agent.md) | [Full Agent 架构](docs/design/full-agent.md) |
-| [Half Agent 窗口与记忆](docs/guides/history-maintenance-settings.md) | [Half Agent 回合工作流](docs/design/agent-workflow.md) |
-| [制卡与角色卡编辑](docs/guides/card-author.md) | [Half Agent 上下文生命周期](docs/design/context-lifecycle.md) |
+| [游玩指南](docs/guides/story.md) | [剧情架构](docs/design/story.md) |
+| [制卡与角色卡编辑](docs/guides/card-author.md) | [制卡 agent 设计](docs/design/card-author.md) |
 | [阅读、编辑与分支](docs/guides/story-history.md) | [项目目录](docs/development/structure.md) |
 | [参谋 agent](docs/guides/advisor.md) | [开发、测试与发行](docs/development/validation.md) |
 | [世界书检索](docs/guides/retrieval.md) | |

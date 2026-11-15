@@ -8,6 +8,8 @@ from pathlib import Path
 from time import time
 from typing import TYPE_CHECKING
 
+from tavern.storage.legacy_story import OLD_STORY_KEY, RETIRED_STORY_KEY
+
 if TYPE_CHECKING:
     from tavern.core.models import Settings
 
@@ -34,7 +36,11 @@ class RequestDebugLog:
     def records(self, offset: int = 0) -> list[dict]:
         records = []
         for path in self.entries():
-            records.append({**self._metadata(path), "bytes": path.stat().st_size})
+            metadata = self._metadata(path)
+            # Normalize the list entry while keeping the downloadable HTTP archive intact.
+            if metadata.get("purpose") in (OLD_STORY_KEY, RETIRED_STORY_KEY):
+                metadata["purpose"] = "story"
+            records.append({**metadata, "bytes": path.stat().st_size})
         return sorted(records, key=lambda r: (r["created"], r["id"]), reverse=True)[
             offset : offset + MAX_RECORDS
         ]

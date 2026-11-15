@@ -94,9 +94,7 @@ async def test_official_checkpoint_is_independent_and_requires_valid_state(tmp_p
     settings.shared.advisor.keep_recent = 1
     settings.shared.advisor.context_strategy = "openai_compact"
     store.save_settings(settings)
-    session = store.new_session(
-        SessionCreate(card_id=standard["card"], agent_mode="full_agent", channel_origin="chatgpt")
-    )
+    session = store.new_session(SessionCreate(card_id=standard["card"], channel_origin="chatgpt"))
     for index in range(3):
         result = await ask(advisor, session["id"], ToolLLM([]), f"云端咨询{index}")
         assert result["status"] == "completed", result

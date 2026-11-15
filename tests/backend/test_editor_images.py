@@ -24,8 +24,8 @@ from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_card_author_alignment import Editor
 from tests.backend.test_card_authoring import run
 from tests.backend.test_editor_reference_prefix import execute
-from tests.backend.test_half_agent_alignment import blocks
 from tests.backend.test_image_protocols import assert_images, response
+from tests.support.model_transport import blocks
 
 
 def image_bytes(format="PNG", *, animated=False, size=(24, 16)):

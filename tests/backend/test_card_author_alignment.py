@@ -19,17 +19,15 @@ from tavern.storage.backup import backup, restore
 from tavern.storage.maintenance import cleanup
 from tavern.storage.store import Store
 from tests.backend.test_card_author import ToolLLM, import_fixture
-from tests.backend.test_full_agent_alignment import reply
-from tests.backend.test_half_agent_alignment import blocks, sse
+from tests.backend.test_story_alignment import reply
+from tests.support.model_transport import blocks, sse
 
 
 class Editor:
     def __init__(self, tmp_path, monkeypatch, api, mode="runtime", *, official=False):
         self.store = Store(tmp_path)
         settings = self.store.settings_document()
-        settings.full_agent.model.api_mode = api
-        settings.half_agent.foreground.api_mode = api
-        settings.half_agent.background.api_mode = api
+        settings.story.model.api_mode = api
         settings.shared.card_author.api_mode = api
         settings.shared.providers[0].api_key = "editor-test-secret"
         settings.shared.providers[0].base_url = "https://fixture.test"

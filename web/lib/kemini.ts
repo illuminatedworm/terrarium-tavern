@@ -16,9 +16,6 @@ export interface KeminiSettings {
   output_prompt: string;
   filler_text: string;
   disclaimer_text: string;
-  transport_prompt: string;
-  tool_description: string;
-  content_description: string;
 }
 export interface AuxiliaryPart {
   kind: 'thinking' | 'disclaimer' | 'extra';

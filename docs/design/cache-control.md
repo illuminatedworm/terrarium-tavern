@@ -1,12 +1,12 @@
 # 本地运行时缓存控制
 
-本模块负责保持可复用请求内容、规划断点、保存已发送端点，以及管理缓存对象。适用于两种游玩模式和共享模型传输。操作步骤见[提示缓存指南](../guides/prompt-cache.md)，跟进建议的假设见[成本模型](cache-cost.md)。
+本模块负责保持可复用请求内容、规划断点、保存已发送端点，以及管理缓存对象。适用于游玩和共享模型传输。操作步骤见[提示缓存指南](../guides/prompt-cache.md)，跟进建议的假设见[成本模型](cache-cost.md)。
 
 ## 分层与配置
 
 | 层 | 职责 | 入口 |
 |---|---|---|
-| 上下文记录 | 保持已发送动态消息与原生回复顺序，变化时追加或重建 | [half_context.py](../../src/tavern/conversation/half_context.py)、[context_ledger.py](../../src/tavern/full_agent/context_ledger.py) |
+| 上下文记录 | 保持已发送动态消息与原生回复顺序，变化时追加或重建 | [context_ledger.py](../../src/tavern/story/context_ledger.py) |
 | 断点计划 | 将会话策略解析为当前窗口中的剧情锚点 | [cache_breakpoint.py](../../src/tavern/conversation/cache_breakpoint.py) |
 | 协议编译 | 模型预设、时效和字段映射 | [cache_policy.py](../../src/tavern/core/cache_policy.py)、[protocols.py](../../src/tavern/scripting/protocols.py) |
 | 传输与记录 | 最终请求、已发送端点、缓存对象和降级 | [model_transport.py](../../src/tavern/scripting/model_transport.py)、[sent_breakpoints.py](../../src/tavern/scripting/sent_breakpoints.py)、[cloud_cache.py](../../src/tavern/scripting/cloud_cache.py) |
@@ -26,7 +26,7 @@
 
 切换整轮版本、换窗、固定资料或来源身份改变时，记录层重建适用的基线。请求仍包含当前完整上下文；保持前缀只提供复用条件，实际服务链路还可能受时效、路由和协议处理影响。
 
-本地自动跟进按已提交的完整回合计数。同轮发出的模型请求（含工具续答）不触发推进。云端隐式策略可逐次选择边界，是否实际读写由服务商决定。Writer、Tracker 和制卡 agent 分别维护上下文，缓存评估按用途分组。
+本地自动跟进按已提交的完整回合计数。同轮发出的模型请求（含工具续答）不触发推进。云端隐式策略可逐次选择边界，是否实际读写由服务商决定。剧情模型、参谋 agent 和制卡 agent 分别维护上下文，缓存评估按用途分组。
 
 ## 跟进状态与分支一致性
 
@@ -39,7 +39,7 @@
 | `anchor` | 当前固定的消息锚点 |
 | `progress` | 自上次推进以来的新增正文计数 |
 
-Full Agent 和 Half Agent 默认 `interval=1`、`offset=2`。新会话在完成两轮后首次定位到正文锚点，之后每新增一轮推进一次。已有会话保留已保存的策略。保存自动策略或恢复自动会立即定位并归零，之后计数只在新增正文提交的同一事务中推进。重生成、维护、失败、取消和重复提交不增加计数。
+游玩对话默认 `interval=1`、`offset=2`。新会话在完成两轮后首次定位到正文锚点，之后每新增一轮推进一次。已有会话保留已保存的策略。保存自动策略或恢复自动会立即定位并归零，之后计数只在新增正文提交的同一事务中推进。重生成、维护、失败、取消和重复提交不增加计数。
 
 `PUT /api/sessions/{sid}/cache-breakpoint` 接受 `expected_revision`，以及可选的正整数 `follow_interval` 和 `reply_offset`；省略参数保留已有值。界面还可选择手动固定。开场白与工具交换不能作为目标。
 
@@ -95,6 +95,6 @@ Gemini 原生不接受自定义内容块标记与附加缓存 JSON，界面隐�
 | [test_cache_follow.py](../../tests/backend/test_cache_follow.py)、[test_session_cache_breakpoint.py](../../tests/backend/test_session_cache_breakpoint.py) | 跟进计数、手动位置、分支和窗口 |
 | [test_unified_cache.py](../../tests/backend/test_unified_cache.py) | 四协议请求、Gemini 对象及失败降级 |
 | [test_sent_cache_breakpoints.py](../../tests/backend/test_sent_cache_breakpoints.py) | 发送事实、持久化、内容匹配及失败路径 |
-| [test_full_agent_alignment.py](../../tests/backend/test_full_agent_alignment.py)、[test_half_agent_alignment.py](../../tests/backend/test_half_agent_alignment.py) | 动态内容追加、原生回复和预览一致性 |
+| [test_story_alignment.py](../../tests/backend/test_story_alignment.py) | 动态内容追加、原生回复和预览一致性 |
 
 真实请求审计见[缓存链路评估](../development/validation.md#缓存链路评估)，合成协议探测工具见[工具说明](../../tools/probe_prefix_cache.md)。

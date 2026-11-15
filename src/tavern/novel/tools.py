@@ -1,4 +1,4 @@
-"""Shared read tools and separate Full Agent investigator controls."""
+"""Shared read tools and separate story investigator controls."""
 
 import asyncio
 

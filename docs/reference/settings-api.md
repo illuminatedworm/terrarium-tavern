@@ -1,15 +1,14 @@
 # 设置持久化与 API
 
-设置按范围保存，用修订号处理并发修改。当前版本为设置格式 20、数据库 schema 25、个人数据包格式 13。旧设置和旧包中的非对话资料可以导入；旧剧情对话与整轮重试格式不兼容，读取或导入时明确拒绝，见[数据库与设置迁移](#数据库与设置迁移)。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
+设置按范围保存，用修订号处理并发修改。当前设置格式为 22、数据库 schema 为 27、个人数据包格式为 15。旧格式的读取规则见[数据库与设置迁移](#数据库与设置迁移)。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
 ## 配置范围与修订号
 
-数据库中的设置文档由三个独立范围组成：
+数据库中的设置文档由两个独立范围组成：
 
 | 范围 | 主要内容 | 模型字段 |
 |---|---|---|
-| `full_agent` | 模型、工具与记忆、检索、提示词及默认修改保存方式 | `model`、`official_model` |
-| `half_agent` | 模型、历史与记忆、检索、提示词、上下文配方及默认修改保存方式 | `foreground`、`background`、`official_foreground`、`official_background` |
+| `story` | 模型、工具与记忆、检索、提示词及默认修改保存方式 | `model`、`official_model` |
 | `shared` | 提供商、参谋 agent、制卡 agent、联网服务、本地模型、偏好及清理参数 | `card_author`、`advisor.model`、`advisor.official_model` |
 
 **提供商连接**
@@ -21,15 +20,15 @@
 
 游玩、制卡和参谋 agent 的对话级 `model_selection` 包含当前 `provider_id/model`，以及可选的 `provider_models`（其他提供商在此对话中上次选择的模型名）。后者由服务器在切换时更新，不改变全局模型名。对话所选的协议和路径通过相应角色的 `provider_connections` 查找，不从另一提供商继承。游玩和制卡允许 `model: ""`，表示所选提供商尚未配置模型，此时禁止发送。现有对话与分支继承这些记录。
 
-两种模式的 `policy` 只控制保存方式：`automatic` 自动保存，`review` 在实际变量、角色设定或世界书有变化时审核整轮；记忆和运行记录不触发审核。旧值 `directed`／`evolving` 读作 `automatic`，`preview` 读作 `review`；会话级 `policy: null` 沿用全局。设定写入只由请求的 `allow_content_edit` 授权，变量任务由 `update_variables` 开启，授权与保存方式分别校验。
+`policy` 只控制保存方式：`automatic` 自动保存，`review` 在实际变量、角色设定或世界书有变化时审核整轮；记忆和运行记录不触发审核。旧值 `directed`／`evolving` 读作 `automatic`，`preview` 读作 `review`；会话级 `policy: null` 沿用全局。设定写入只由请求的 `allow_content_edit` 授权，变量任务由 `update_variables` 开启，授权与保存方式分别校验。
 
 每个范围有自己的 `revisions` 值。更新共享提供商可能使其他范围的模型能力检查失效，所以一次响应可能带回多个范围的新修订号。客户端应合并响应中的实际值，而不是只递增所提交范围的本地计数。
 
-`SettingsDocument.runtime(mode)` 为一次操作生成深拷贝配置：执行中的回合继续使用开始时的快照，保存后的配置用于后续操作。Full Agent 与制卡 agent 都有明确的模型配置，运行时不继承 Half Agent 模型。
+`SettingsDocument.runtime(channel)` 为一次操作生成深拷贝配置：执行中的回合继续使用开始时的快照，保存后的配置用于后续操作。剧情模型与制卡 agent 都有明确的模型配置。
 
 ## 读取与写入
 
-`GET /api/settings` 返回 `version`、三个配置范围、`revisions`、设置页面目录 `pages` 和提示词目录 `prompt_definitions`。提供商只返回 `has_api_key`，不返回密钥原文。
+`GET /api/settings` 返回 `version`、两个配置范围、`revisions`、设置页面目录 `pages` 和提示词目录 `prompt_definitions`。提供商只返回 `has_api_key`，不返回密钥原文。
 
 `GET /api/settings/reasoning?api_mode=...&model=...` 只读取普通 API 的本地思考规则，返回 `id/display_name`、`supported_reasoning_levels: [{effort, description}]` 和说明 `note`。它不联网，不修改设置或模型列表缓存；在 Gemini 原生预算档位中，`description` 包含对应的思考 tokens。设置页和输入框共用此接口，SIWC 使用账号模型目录。
 
@@ -41,10 +40,10 @@
 | `changes` | 是 | 相对于该范围的字段路径到新值的映射 |
 | `edit_session` | 否 | 将修改关联到一个可撤回的设置编辑会话 |
 
-例如，读取到 `revisions.full_agent` 为 3 后，调整 Full Agent 输出预算：
+例如，读取到 `revisions.story` 为 3 后，调整剧情模型输出预算：
 
 ```http
-PATCH /api/settings/full_agent
+PATCH /api/settings/story
 Content-Type: application/json
 
 {
@@ -62,9 +61,9 @@ Content-Type: application/json
 
 ## 单项设置字段
 
-**主提示词选项**。Full Agent 和前台 Writer 各自的 `system_prompt`、后台 Tracker 的 `half_agent.tracker_system_prompt`，以及 `shared.advisor.system_prompt` 和 `shared.card_author_config.system_prompt` 使用同一种结构。每项包含 `active`（整数 1～4，初始 1）及四个按编号排列的 `options`。每个选项保存 `text` 和 `name` 字符串，空名称显示编号。可通过相对路径 `system_prompt.options.1.text` 或 `system_prompt.options.1.name` 单独更新第二项，索引从 0 开始。通过 `system_prompt.active` 切换生效项，运行时读取对应的完整文本，包含显式空白。提示词目录中这五项的 `choices` 为 `true`，`default` 给出第一项的内置文本。
+**主提示词选项**。剧情模型的 `system_prompt`、 `shared.advisor.system_prompt` 和 `shared.card_author_config.system_prompt` 使用同一种结构。每项包含 `active`（整数 1～4，初始 1）及四个按编号排列的 `options`。每个选项保存 `text` 和 `name` 字符串，空名称显示编号。可通过相对路径 `system_prompt.options.1.text` 或 `system_prompt.options.1.name` 单独更新第二项，索引从 0 开始。通过 `system_prompt.active` 切换生效项，运行时读取对应的完整文本，包含显式空白。提示词目录中这三项的 `choices` 为 `true`，`default` 给出第一项的内置文本。
 
-**`full_agent.tools.parallel_tool_calls`**：严格布尔值，默认 `true`，旧设置缺少时按开启处理。对应“工具与记忆”页的“单次允许多个工具调用”，只控制 Full Agent。关闭示例：`PATCH /api/settings/full_agent`，`changes` 为 `{"tools.parallel_tool_calls":false}`。
+**`story.tools.parallel_tool_calls`**：严格布尔值，默认 `true`，旧设置缺少时按开启处理。对应“工具与记忆”页的“单次允许多个工具调用”，只控制剧情模型。关闭示例：`PATCH /api/settings/story`，`changes` 为 `{"tools.parallel_tool_calls":false}`。
 
 **`shared.model_request_mode`**：`auto`（默认，保持各调用方原有方式）、`stream`（普通 API 统一流式）或 `non_stream`（普通 API 统一非流式）。通过 `PATCH /api/settings/shared` 写入，如 `{"model_request_mode":"stream"}`；属于 `shared.web` 页面（“联网与代理”），支持该页撤回。配置进入每次操作的运行时快照，覆盖各角色的模型生成请求。OpenAI 官方渠道始终流式；独立的 compact、向量、目录和缓存管理端点使用各自的请求方式。
 
@@ -74,7 +73,7 @@ Content-Type: application/json
 - `GET /api/debug/failed-requests/{UUID}` 下载对应 ZIP，不提供任意路径访问。
 - 记录格式、正文限额、脱敏和清理规则见[杂项设置](../guides/settings.md#杂项)。
 
-**`shared.debug_full_agent_prefix`**：严格布尔值，默认 `false`，属于 `shared.misc` 页，支持自动保存、页面撤回和个人设置导入导出，从下一次 Full Agent 操作生效。只在运行时内存中保留最近两次 SDK 序列化后的生成请求正文，比较结果通过 `full_agent_prefix_debug` 回合事件返回，不包含参数原文：
+**`shared.debug_story_prefix`**：严格布尔值，默认 `false`，属于 `shared.misc` 页，支持自动保存、页面撤回和个人设置导入导出，从下一次剧情运行生效。只在运行时内存中保留最近两次 SDK 序列化后的生成请求正文，比较结果通过 `story_prefix_debug` 回合事件返回，不包含参数原文：
 
 - `payload.message` 用于界面通知。消息参数（`messages`／`input`／`contents`）一致或数组正常追加时显示“公共前缀与首个差异未错位”，否则显示“公共前缀或首个差异发生错位”；其他参数只显示“一致”或“不一致”。
 - `payload.parameters` 按实际的顶层 JSON 参数分别返回 `parameter`、`previous_bytes`、`current_bytes`、`status`；两侧都存在的参数另返回 `common_prefix_bytes` 和 `first_difference_byte`（从 0 开始，完全相同时为 `null`）。`status` 为 `identical`、`array_extended`、`changed`、`added` 或 `removed`；不存在的一侧字节数为 `null`。
@@ -82,12 +81,11 @@ Content-Type: application/json
 
 **`shared.advisor`**：参谋 agent 配置。`model` 与 `official_model` 分别引用同渠道的供应商；`system_prompt` 进入共享提示词目录，支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。
 
-**`shared.unicode_story_enabled`** 是「杂项」页的局部 Unicode 码点传输总开关，接受严格布尔值，默认 `false`。`PUT /api/sessions/{sid}/full-agent/tools` 接收可选布尔 `unicode_story`，省略时保留当前对话值，与工具设置共用 `expected_revision` 及会话互斥检查。新回合在两个值均为 `true` 时采用局部码点格式，失败续接沿用原回合的格式。 [设置指南](../guides/settings.md#unicode-码点传输)
+**`shared.unicode_story_enabled`** 是「杂项」页的局部 Unicode 码点传输总开关，接受严格布尔值，默认 `false`。`PUT /api/sessions/{sid}/story/tools` 接收可选布尔 `unicode_story`，省略时保留当前对话值，与工具设置共用 `expected_revision` 及会话互斥检查。新回合在两个值均为 `true` 时采用局部码点格式，失败续接沿用原回合的格式。 [设置指南](../guides/settings.md#unicode-码点传输)
 
 **`shared.kemini`**：属于 `shared.misc` 页面，包含默认关闭的 `enabled`、`normal_disclaimer_enabled` 及十三项可编辑文本，复用共享设置的 PATCH、修订检查和页面撤回。
 
 - `enabled` 只允许创建并继续 Kemini 实验对话，本身不改变任何对话。为 `false` 时，`POST /api/sessions` 拒绝 `kemini: true`，已有 Kemini 实验对话的生成回合也被拒绝。
-- `transport_prompt`、`tool_description` 和 `content_description` 仅用于 Half Agent Writer 的 `kemini_emit_story`。Full Agent 使用固定的 `submit_story` 工具协议，每轮最多成功追加三段正文。
 - 免责声明只在 Kemini 实验对话中、且 `normal_disclaimer_enabled` 为 `true` 时生效。主开关关闭时保留其保存值，界面置灰。
 - `thinking_prompt` 和 `disclaimer_text` 保存完整提示及其格式要求，Runtime 不另加包装。默认值来自原预设的对应条目，去掉了 SillyTavern 宏；独立边界标签仍用 Markdown 分隔，Interleaving 三段式示例和自检原文完整保留在同一条 `kemini_control` 消息中；CLEAR 和末尾输出提示只引用名称，不放孤立的开标签。
 - `roleplay_prompt` 位于助手确认之前，`content_prompt` 位于自检之后，`output_prompt` 位于传输指令之后，均可显式保存。请求只读取已保存的文本。
@@ -96,9 +94,11 @@ Content-Type: application/json
 
 `PUT /api/sessions/{sid}/options` 接受 `expected_revision` 及需修改的会话字段，省略的字段保持原值。`update_variables` 是对话级布尔偏好，默认 `false`，在输入框勾选时立即保存，分支和个人数据包保留；回合请求仍显式传入当轮的 `update_variables`。
 
+`POST /api/sessions` 和 `POST /api/sessions/{sid}/turns` 收到未定义的字段时返回 422。
+
 会话的 `kemini` 是创建时固定的布尔值（`POST /api/sessions` 的可选字段，默认 `false`），只允许 `channel_origin` 为 `standard`。会话更新接口不能修改它；分支与数据包原样继承，导入时按同样约束校验。剧情消息的 `auxiliary` 为 `{kind: thinking|disclaimer|extra, text: string}[]`，旧消息为空列表；`kemini_auxiliary` SSE 事件的 `items` 替换当前响应的辅助记录，沿用事件序号去重。
 
-Full Agent 流式接收时，只把正文工具的 content 参数通过 `text` 事件追加到未保存的预览，普通过程说明不进入预览。`text_reset` 以 `payload.text` 替换预览，用于清空被拒绝的正文提案、按完整结果校正，或显示脚本处理后的正文。已接收的正文在后续工具请求期间保留。客户端必须按事件序号去重，完整重放时从空文本开始；预览快照与对应事件原子写入，正式剧情仍经全部校验后提交。
+剧情模型流式接收时，只把正文工具的 content 参数通过 `text` 事件追加到未保存的预览，普通过程说明不进入预览。`text_reset` 以 `payload.text` 替换预览，用于清空被拒绝的正文提案、按完整结果校正，或显示脚本处理后的正文。已接收的正文在后续工具请求期间保留。客户端必须按事件序号去重，完整重放时从空文本开始；预览快照与对应事件原子写入，正式剧情仍经全部校验后提交。
 
 `PUT /api/sessions/{sid}/opening` 接受 `text` 与 `expected_revision`，只允许用于未锁定、且当前只有开场的对话。隔离初始化成功后复核修订号与锁定状态，原子保存原文、model、display 和快照，并增加修订号。`GET /api/sessions/{sid}` 的 `opening_editable` 表示当前是否可编辑。锁定规则见 [schema 14](#数据库-schema-变更)。
 
@@ -133,6 +133,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 |---|---|
 | `GET /api/worldbooks` | 摘要数组：`id`、`name`、`revision`、`created`、`entries`（条目数） |
 | `POST /api/worldbooks` | `{name, book}`，新建或导入，返回完整记录 |
+| `POST /api/worldbooks/prepare-import` | multipart `file`，返回经校验和用途转换的世界书 JSON，供编辑器加入草稿 |
 | `GET /api/worldbooks/{id}` | 完整记录，含 `book` |
 | `PUT /api/worldbooks/{id}` | `{name, book, expected_revision}`；修订号不一致返回 409 |
 | `DELETE /api/worldbooks/{id}` | 删除书库记录；已挂载的对话保留各自副本 |
@@ -163,7 +164,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 角色卡记录附带 `defaults`（`persona_id`、`worldbook_ids`），导出时只保留同一包中的用户角色和世界书，导入时随新身份重映射。对话快照中的挂载记录同样重映射到包内世界书；未随包的世界书保留原名称，显示为“书库中已删除”。
 
-ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`，当前导出版本为 11，可读取版本 1–11。旧版程序拒绝读取新版包。下表列出各版本的新增内容。
+ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`，当前导出版本为 16，可读取版本 1–16。旧版程序拒绝读取新版包。下表列出各版本的新增内容。
 
 | 版本 | 新增 |
 |---|---|
@@ -175,6 +176,9 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 | 9 | 正文分段边界 |
 | 10 | 校验交互图形 |
 | 11 | 用户消息的独立场外发言，导入时核对非空场外发言与模型消息中的原文一致 |
+| 12–14 | 主提示词选项、正文码点交付选项及新版剧情记录 |
+| 15 | 使用 `story` 保存剧情快照和消息适配，工具轨迹使用 `story_trace` |
+| 16 | 角色卡、世界书和剧情快照使用 `extensions.terrarium.purpose` 表示条目用途 |
 
 - 限额：上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。
 - 导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建的文件。
@@ -184,11 +188,11 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 ## 消息适配
 
-模型配置的 `message_adapter` 字典整体写入，如 `model.message_adapter`、`foreground.message_adapter`。结构为 `{"version":1,"mappings":{"chat_completions":{"state":{"role":"user","wrap":false}}}}`，省略的类型使用程序默认值；只能覆盖类型目录中 `configurable=true` 的项。
+模型配置的 `message_adapter` 字典整体写入，如 `model.message_adapter`。结构为 `{"version":1,"mappings":{"chat_completions":{"handoff":{"role":"user","wrap":false}}}}`，省略的类型使用程序默认值；只能覆盖类型目录中 `configurable=true` 的项。
 
-`GET /api/message-adapter/types?lane=foreground` 返回该调用链的类型目录、标签和四种协议的默认规则；`lane` 也可为 `background`、`full_agent`、`card_author`、`advisor`。
+`GET /api/message-adapter/types?lane=story` 返回该调用链的类型目录、标签和四种协议的默认规则；`lane` 也可为 `card_author` 或 `advisor`。
 
-`full_agent` 的 `novel_research`（原著调查消息）和 `novel_status`（原著参考运行状态）允许配置发送角色：Google GenAI（`gemini`）默认 `user`，其他协议默认 `system`，显式设置的映射优先。全局“原著调查”页的“消息适配”只展示这两个类型，直接编辑 `full_agent.model.message_adapter`，与“模型与生成 → 普通 API”共用配置。该页的撤回范围同时包含 `novel_research` 和 `model.message_adapter`；撤回共享映射时两处入口同步更新。
+`story` 的 `novel_research`（原著调查消息）和 `novel_status`（原著参考运行状态）允许配置发送角色：Google GenAI（`gemini`）默认 `user`，其他协议默认 `system`，显式设置的映射优先。全局“原著调查”页的“消息适配”只展示这两个类型，直接编辑 `story.model.message_adapter`，与“模型与生成 → 普通 API”共用配置。该页的撤回范围同时包含 `novel_research` 和 `model.message_adapter`；撤回共享映射时两处入口同步更新。
 
 对话配置使用 `GET/PUT /api/sessions/{sid}/message-adapter`，制卡使用 `GET/PUT /api/card-author/conversations/{wid}/message-adapter`。GET 返回 `revision`、按调用链组织的 `config` 和 `lanes` 类型目录。PUT 提交 `{"expected_adapter_revision":0,"config":{...}}`，成功返回完整新值。这个修订号独立于剧情／草稿修订号，运行中也可保存；下一次模型调用读取新值，同一次调用的重试保持原快照。
 
@@ -201,7 +205,7 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 3. `POST /api/settings/edit-sessions/{id}/undo` 接受页面标识和该页面所属范围的修订号，例如：
 
    ```json
-   {"page": "full_agent.model", "expected_revision": 4}
+   {"page": "story.model", "expected_revision": 4}
    ```
 
 4. `DELETE /api/settings/edit-sessions/{id}` 释放快照。
@@ -228,24 +232,24 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 | 格式 | 当前版本 |
 |---|---|
-| 数据库 schema | **24** |
-| 设置文档 | **20** |
-| 剧情快照 `memory_document.version`（Half Agent 记忆） | **3** |
-| Full Agent 快照 `full_agent.version` | **4**（handoff 由模型维护，不含章节手工标记） |
-| 个人数据包 | **13** |
+| 数据库 schema | **28** |
+| 设置文档 | **22** |
+| 剧情快照 `story.version` | **4**（handoff 由模型维护，不含章节手工标记） |
+| 个人数据包 | **16** |
 
-整轮重试从 schema 9 开始：用户节点快照必须早于本轮脚本和 Tracker，Full Agent 状态为 4，Half Agent 记忆格式为 3。schema 1–8 中已有的剧情不迁移：打开数据库时在任何写入前拒绝，恢复旧备份也不会迁移其剧情。原数据库保留，可用旧版导出非对话资料，再在新目录导入；个人数据包 1、2 中的对话同样拒绝。**下文的旧格式升级只适用于没有剧情对话的数据库和独立的设置资料。**
+整轮重试从 schema 9 开始。缺少可恢复回合结构的旧数据库会在写入前给出处理说明。对可升级的数据库，程序先备份，再迁移已有的分支、回合及快照。旧数据包预览会列出格式过旧的故事，并提供同包可导入的资料。
 
-- Full Agent 版本 1 的自由文本 handoff 和未发行的版本 2 开发数据不迁移，读取时报错并提示新建对话，不改写旧快照。
-- 记忆格式 version 2 除活跃记录外，在消息快照的 `memory_retired` 中保存该消息新增或修改的归档条目（见[归档与召回](../design/memory-consistency.md#归档与召回)）；新增字段属于持久格式变化，所以递增了版本。version 1 的记忆不迁移，读取时报错并提示新建对话，不改写旧快照。
+- 快照版本 1 的自由文本 handoff 与版本 2 的开发数据需要用对应旧版读取。
 
 ### 升级流程
 
-存储层接受 schema 1–25，先只读核对版本与设置。数据库低于 25、设置需要迁移或会话表缺少新增列时，在任何写入前生成 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份；已是当前格式则不备份。各步骤可重复执行，全部完成后写入 schema 25；中途中断时，下次启动从头重跑。其他数据库版本在写入前报错。
+存储层接受 schema 1–28，先只读核对版本与设置。数据库低于 28、设置需要迁移或会话表缺少新增列时，在任何写入前生成 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份。剧情迁移和格式版本写入在同一事务中完成。其他数据库版本在写入前报错。
 
 旧程序不能直接打开已升级的数据库，回退应使用迁移前的备份。重复迁移不覆盖已迁移的配置。设置导入接受旧版本并使用相同的迁移规则。升级操作与恢复步骤见[安装与维护](../guides/maintenance.md#备份升级与回退)。
 
 ### 数据库 schema 变更
+
+下文以当前字段名说明各版本的数据变化。
 
 - **4**：初始化参谋 agent 数据表。
 - **5**：添加 `sessions.update_variables` 等新增列。该偏好不从历史回合推断。
@@ -255,48 +259,54 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 - **9**：整轮重试格式，见上文。
 - **10**：新增 `worldbooks`、`card_defaults`、`card_default_worldbooks` 三张表和剧情快照的可选字段 `worldbooks`（见[世界书库与挂载](#世界书库与挂载)）。schema 9 的剧情对话照常升级；已有快照缺少该字段即视为没有挂载，无需改写。
 - **11**：制卡对话的草稿项（`card_author_conversations.payload.cards[]`）新增可选字段 `worldbook`：存在时该项是书库中一本书的草稿，文档为 `{name, character_book}`，`card` 为空，`base_revision` 是库书修订号；缺少该字段的项仍是角色卡草稿，无需改写。引用与保存接口见[制卡 agent 工具与接口](card-author-tools.md#http-接口)。
-- **13**：`full_agent_progress.payload` 升为 version 3，保存稳定的 `output_id`、`story`（content 与 auxiliary）、原生 `model_completed` 状态和显式续接原因。version 2 的 `roleplay`／`finish_requested` 和未标版本的旧进度（version 1）读取时适配，保留正文身份、成功工具和脚本副作用；尚未执行的旧交付／收尾只在迁移续接时处理。旧原始轨迹保留供审计，模型回放改为普通正文和业务工具；未知版本拒绝读取。Full Agent 剧情快照仍为 version 4，消息适配的既有键保留。个人数据包同步升为 version 5，以免旧程序误读新轨迹。
+- **13**：`story_progress.payload` 升为 version 3，保存稳定的 `output_id`、`story`（content 与 auxiliary）、原生 `model_completed` 状态和显式续接原因。version 2 的 `roleplay`／`finish_requested` 和未标版本的旧进度（version 1）读取时适配，保留正文身份、成功工具和脚本副作用；尚未执行的旧交付／收尾只在迁移续接时处理。旧原始轨迹保留供审计，模型回放改为普通正文和业务工具；未知版本拒绝读取。剧情快照仍为 version 4，消息适配的既有键保留。个人数据包同步升为 version 5，以免旧程序误读新轨迹。
 - **14**：增加 `sessions.opening_locked`。新对话的首次生成、咨询或上下文整理任务被接收时，在同一事务中永久锁定开场白，失败或取消不回退；手工设定和卡片本地交互不锁定。旧会话默认锁定，分支继承原状态；个人数据包 version 6 保留该字段，旧包导入时锁定。编辑接口见[会话字段与事件](#会话字段与事件)。
 - **15、16**：schema 15 引入的 `context_token_samples` 在 16 改为保存最新请求观测：按所属会话／工作区与用途隔离，保存来源、内容指纹、真实输入、输出、思考及接口返回的可选分项，不复制提示词正文。旧校准样本在备份后失效，旧待续任务中按估值强制换窗的标记同步失效，正文草稿和已完成工具保留，等待新请求。剧情和已有的逐次用量不变，不从日志补造关联。详细日志清理保留观测，删除所属会话／工作区时一并删除；取消和审核拒绝不抹去已发生的用量；被改写的请求快照不能驱动当前剧情窗口。字段见 [Token 计数](../guides/token-counting.md#查看实测与完整预览)。
 - **17**：新增原著文件绑定、调查者、独立进度、消息队列和详细记录表（设置 version 15 同步增加配置，见下）。个人数据包 version 7 支持可选携带原著文件和暂停的调查进度。已有对话默认未开启。授权、分支、恢复与接口见[原著参考](../design/novel-research.md)。
 - **18**：为每个原著调查者保存 `auto_destroy`，旧记录迁移为 `false`，保持手动生命周期。个人数据包 version 8 携带该配置，旧包缺少时按 `false` 导入。只有最终报告可靠送达后才按选项自动销毁；全局设置格式、工具总说明和主 agent 提示词不变。
-- **19**：新增消息的 `story_segments` 与回合的 `draft_breaks`，保存 Full Agent 多段正文的原文、显示及流式预览边界，正文自身只含连接空行。边界使用 UTF-16 偏移，最多两处；个人数据包 version 9 导入时检查边界与正文一致，旧消息和旧包使用空数组。`full_agent_progress` version 5 在 `story.breaks` 保存已接收段边界，段数由边界推导，v1–4 的旧进度正文视为一段。完整回复仍共用一条消息和同一个 H，Full Agent 快照格式仍为 version 4。
-- **20**：引入普通 Full Agent 的交互图形契约。成功的 `present_ui` 调用参数随原有工具轨迹保存，没有独立的可变副本。已有 Full Agent 对话的 `disabled_tools` 显式加入该工具（其他选择保留），新对话也默认关闭。个人数据包 version 10 校验成功图形的组件、动作和引用结构，旧包导入时默认关闭该能力。全局设置不变。
+- **19**：新增消息的 `story_segments` 与回合的 `draft_breaks`，保存剧情模型多段正文的原文、显示及流式预览边界，正文自身只含连接空行。边界使用 UTF-16 偏移，最多两处；个人数据包 version 9 导入时检查边界与正文一致，旧消息和旧包使用空数组。`story_progress` version 5 在 `story.breaks` 保存已接收段边界，段数由边界推导，v1–4 的旧进度正文视为一段。完整回复仍共用一条消息和同一个 H，剧情快照格式仍为 version 4。
+- **20**：引入普通剧情模型的交互图形契约。成功的 `present_ui` 调用参数随原有工具轨迹保存，没有独立的可变副本。已有剧情对话的 `disabled_tools` 显式加入该工具（其他选择保留），新对话也默认关闭。个人数据包 version 10 校验成功图形的组件、动作和引用结构，旧包导入时默认关闭该能力。全局设置不变。
 - **21**：消息新增 `ooc` 列，独立保存用户的场外发言。程序在故事模型文本后附加带 `<ooc>` 标签的场外原文，形成 `model`。已有消息和旧数据包的独立场外字段为空，正文中手写的标签按原样保留。个人数据包 version 11 携带该字段。导入时，非空场外发言必须属于用户消息，并与模型消息末尾的场外原文一致。
 - **22**。原著绑定保存参谋 agent 的独立授权与修订，已有对话默认关闭。个人数据包仍可携带原著，导入后由用户开启参谋授权。
 - **23**：制卡对话新增 `cache_follow` 列，保存本地断点的策略与跟进起点。已有对话默认固定前缀。
-- **24** 为 Full Agent 对话增加默认关闭的 `unicode_story`，`full_agent_progress` version 6 保存原回合的交付格式。个人数据包 version 13 保存对话开关和对应的工具轨迹，旧包缺省时关闭。
-- **25** 将 `full_agent_progress` 升为 version 7，以 `story_format` 记录本轮使用的 `plain`、`unicode_full` 或 `unicode_partial`。旧进度按原版本确定格式，已有正文和工具轨迹保留。个人数据包仍为 version 13，保存会话开关和已提交的工具轨迹。
+- **24** 为剧情对话增加默认关闭的 `unicode_story`，`story_progress` version 6 保存原回合的交付格式。个人数据包 version 13 保存对话开关和对应的工具轨迹，旧包缺省时关闭。
+- **25** 将 `story_progress` 升为 version 7，以 `story_format` 记录本轮使用的 `plain`、`unicode_full` 或 `unicode_partial`。旧进度按原版本确定格式，已有正文和工具轨迹保留。个人数据包仍为 version 13，保存会话开关和已提交的工具轨迹。
+
+- **26** 移除无法转换到现有格式的旧故事及其附属记录，并保留升级前的备份。
+- **27** 将剧情快照、恢复进度、工具轨迹、消息适配和回合事件转为当前字段名。已提交正文、用户变量、待审核草稿和已完成工具结果随迁移保留。
+- **28** 将角色卡、世界书及其结构化副本的条目用途迁移至 `extensions.terrarium.purpose`。涵盖分支快照、回合草稿、续接进度与制卡撤销。个人数据包 version 16 使用同一格式。
 
 ### 设置格式变更
 
 - **2 → 3**：`shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config`；设置导入同样接受旧键名。旧编辑对话保留原身份。
 - **5 → 6**：为 `shared.kemini` 增加 `clear_prompt`、`info_prompt`、`transport_prompt`、`tool_description` 和 `content_description`，新增字段写入可见默认值，已有文本与开关原样保留。Kemini 文本统一从共享设置读取，支持本页撤回及导入导出；不再另外返回只读的 `kemini_protocol`。
 - **6 → 7**：增加 `roleplay_prompt`、`content_prompt`、`output_prompt`，分别对应角色扮演追加要求、正文约束和末尾输出提示。只有 CLEAR、资料起始和自检文本完全等于旧默认值时，才替换其中的独立边界标签、Interleaving 包装和相关引用；小说填充、全部自定义文本和开关原样保留。十三项文本以数据库中的保存值为准。
-- **7 → 8**：为 `half_agent` 增加 `memory_recall_count`（默认 3）与 `memory_recall_filter`（默认关闭），为 `full_agent.tools` 增加 `chapter_tokens` 与 `chapters_total_tokens`。缺少的字段按当前可见出厂默认值补齐，已有保存值和其他设置原样保留，两个范围的修订号各加一。
+- **7 → 8**：补齐 `story.tools.chapter_tokens` 和 `chapters_total_tokens` 的默认值。
 - **8 → 9**：允许显式的 Android `cpu` / `q8_0` GGUF 配置。已有 CUDA 模型、量化、设备、版本和其他设置原样保留；用户在本地模型页选择手机配置后才写入新值。
-- **9 → 10**：增加 `full_agent.tools.max_duration_seconds`，整数秒，范围 30–7200（含两端），默认 900。Full Agent 范围修订号增加，其他设置与提示词原样保留。字段在“工具与记忆”页可编辑，参与范围保存、撤回和个人设置导入导出；运行中的回合继续使用开始时的快照。时限覆盖模型、工具、自动整理和正文回调，不含等待用户审核；显式继续时取得新时限。
-- **10 → 11**：为两种模式的 `retrieval` 增加 `index_timeout`（单条向量索引超时，整数秒，范围 1–3600，默认 60），两个模式的修订号各加一。界面值、运行时值和导入导出值一致；重复迁移保留用户已调整的时限。
+- **9 → 10**：增加 `story.tools.max_duration_seconds`，整数秒，范围 30–7200（含两端），默认 900。游玩设置修订号增加，其他设置与提示词原样保留。字段在“工具与记忆”页可编辑，参与范围保存、撤回和个人设置导入导出；运行中的回合继续使用开始时的快照。时限覆盖模型、工具、自动整理和正文回调，不含等待用户审核；显式继续时取得新时限。
+- **10 → 11**：给 `retrieval` 补齐 `index_timeout`（单条向量索引超时，整数秒，范围 1–3600，默认 60）。重复迁移保留用户已调整的时限。
 - **11 → 12**：把 `shared.local_models.{embedding,reranker}.device` 的 Android Q8_0 设备选择扩展为 `cpu`、`opencl:0`、`hexagon:0`。已有设备值和其他配置原样保留，导入导出使用相同格式。
 - **12 → 13**：把 `shared.kemini.clear_prompt`、`thinking_prompt`、`output_prompt` 的保存值迁移到 Interleaving 输出格式，默认值和自定义值都迁移：保留首尾空白、原有换行和其他自定义内容，优先替换可定位的旧示例和引用；找不到可识别的格式段时，把完整的对应原文模块追加到同一可编辑字段。只对实际修改过的 shared 范围增加一次修订号，之后读取不再迁移。数据库仍为 schema 13，不修改历史回复，不增加开关。
-- **13 → 14**：移除 `half_agent.chunk_max_tokens` 和 `context_pressure_target`；旧 `chunk_mode=tokens` 迁移为 `messages`，`off` 保持关闭，消息 cap 与批量大小保留。half_agent 范围修订号增加一次。保存、导入和恢复使用同一套规则，当前格式中的未知旧字段会明确报错。设置页展示迁移结果和“每次实测只触发一批”的生效规则。
-- **14 → 15**：增加 `full_agent.novel_research`。普通 API/GPT 两个模型字段默认 `null`，明确跟随主模型；默认每个调查者 24 次请求、300 秒。
+- **14 → 15**：增加 `story.novel_research`。普通 API/GPT 两个模型字段默认 `null`，明确跟随主模型；默认每个调查者 24 次请求、300 秒。
 
 - **15 → 16**：增加官方渠道的 `openai_api_key` 认证方式，固定 Responses 与 `/v1`。已有提供商、角色配置和渠道归属保持不变，不自动迁移旧 API Key 连接。
 - **17 → 18**：移除 `shared.reply_locate_start`（回复完成后定位到正文开头）。生成期间改为跟随到正文开头即停，完成时不再跳转，见[阅读、编辑与分支](../guides/story-history.md#定位历史)。保存值存在时删除并使 shared 修订号加一；设置导入同样丢弃该键。
 
 - **16 → 17**：缓存时效增加 `12h`。已有时效、缓存 JSON 和思考档位原样保留；官方 API 在请求前拒绝不适用或冲突的配置，界面提示修正，不自动替换。官方 API 工具传输改用扁平函数列表，旧云端状态按来源协议变化重建，本地正文与工具记录保留。
-- **18 → 19**：五个角色的主提示词迁移至各自第 1 项并启用，显式空值保留，其余选项的名称和文本为空。原有内置默认文本的更新规则只作用于第 1 项。三个设置范围的修订号各加一，个人数据包 version 12 携带完整的选项设置，旧数据包中的设置使用同一迁移规则。
+- **18 → 19**：主提示词迁移至各自第 1 项并启用，保留显式空值。内置默认文本的更新规则作用于第 1 项。个人数据包 version 12 携带完整的选项设置。
 - **19 → 20** 增加 `shared.unicode_story_enabled`，默认 `false`。共享设置修订号加一。
+
+- **20 → 21**：清理过期的检索与实验字段。
+- **21 → 22**：游玩设置、对应修订号使用 `story`，请求前缀调试开关使用 `shared.debug_story_prefix`。
 
 以上升级都在写入前做整库备份。
 
 ### 其他配置迁移
 
-- **模式拆分**：按升级前的实际生效值创建独立设置。继承 Writer 的 Full Agent 模型、继承 Tracker 的制卡 agent 模型都复制为明确配置；共用运行参数复制到两种模式。已有提供商、密钥和自定义文本保留。
-- 旧记忆与设定维护提示词中的自定义原则按用途合并到 `tracker_system_prompt`；默认提示词由程序更新。
+- 旧平铺设置按当时的有效连接恢复剧情模型和制卡 agent 的模型，已有提供商、密钥和共享设置继续使用。
 - 旧提供商中的协议和路径迁移到引用它的模型，模型独立保存接入方式。
-- 缺少缓存模式的配置迁移后，正文使用本地控制，Tracker 和制卡 agent 使用云端策略；已有会话的手动断点及跟进参数保留。
+- 缺少缓存模式的配置迁移后，正文使用本地控制，制卡 agent 使用云端策略；已有会话的手动断点及跟进参数保留。
+- 参谋 agent 的主提示词第 1 项与已知旧出厂文本完全相同时，更新为当前出厂规则。制卡 agent 的所有选项均执行这项检查，提示词中的独立旧游玩资源名也会转为 `story.md`。有变更时，`shared` 修订号增加一次。
 
 迁移覆盖已实现的设置和数据库格式转换，历史行为按对应版本记录核对。
 
@@ -308,4 +318,4 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 | [application/settings_api.py](../../src/tavern/application/settings_api.py) | 页面目录、修订校验、公开视图和撤回 |
 | [storage/store.py](../../src/tavern/storage/store.py) | 数据库版本检查、备份与持久化 |
 | [useSettingsEditor.ts](../../web/composables/useSettingsEditor.ts) | 保存队列、草稿与响应合并 |
-| [test_settings_document.py](../../tests/backend/test_settings_document.py) | 模式隔离、迁移、密钥保护与并发行为 |
+| [test_settings_document.py](../../tests/backend/test_settings_document.py) | 设置范围、迁移、密钥保护与并发行为 |

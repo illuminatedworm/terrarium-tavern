@@ -1,10 +1,9 @@
-"""Resolve the Writer's one explicit cache breakpoint on the active story branch."""
+"""Resolve the story's one explicit cache breakpoint on the active story branch."""
 
 import copy
 
 from tavern.core.cache_policy import fingerprint
 from tavern.core.gemini_capabilities import gemini_controls
-from tavern.memories.memory import window_history
 
 
 def reply_ids(history):
@@ -52,31 +51,12 @@ def planned_message_id(session):
     return advance_follow(session["messages"], follow)["anchor"]
 
 
-def effective_message_id(session, settings):
-    from tavern.conversation.context import get_path
-
-    state = session["snapshot"].get("state", {})
-    full = session.get("agent_mode") == "full_agent"
-    if not full and not any(
-        block.get("source") == "history"
-        and block.get("enabled", True)
-        and (not block.get("condition") or get_path(state, block["condition"]))
-        for block in session.get("recipe", {}).get("blocks", [])
-    ):
-        return None
+def effective_message_id(session):
     candidate = planned_message_id(session)
     if not candidate or candidate not in reply_ids(session["messages"]):
         return None
-    if full:
-        start = session["snapshot"].get("full_agent", {}).get("window", {}).get("start", 0)
-        visible = session["messages"][start:]
-    else:
-        from tavern.conversation.half_compaction import local_window_enabled
-
-        visible = window_history(
-            session["messages"], session["snapshot"], enabled=local_window_enabled(settings)
-        )
-    return candidate if any(message["id"] == candidate for message in visible) else None
+    start = session["snapshot"].get("story", {}).get("window", {}).get("start", 0)
+    return candidate if any(message["id"] == candidate for message in session["messages"][start:]) else None
 
 
 def breakpoint_reason(session, effective_id):
@@ -164,7 +144,7 @@ def is_static(entry):
 def prepare_context(context, session, history, snapshot, settings):
     """One branch/window-aware plan used by preview, runtime, and all serializers."""
     current = {**session, "messages": history, "snapshot": snapshot}
-    target = effective_message_id(current, settings)
+    target = effective_message_id(current)
     trace = context["trace"]
     at = context_breakpoint_index(trace, target)
     explicit = gemini_controls(settings.api_mode, settings.model)[1]
@@ -187,7 +167,7 @@ def prepare_context(context, session, history, snapshot, settings):
         "scope": session["id"],
         "revision": session.get("revision"),
         "window": str(
-            snapshot.get("full_agent", {}).get("window", {}).get("id")
+            snapshot.get("story", {}).get("window", {}).get("id")
             or fingerprint(snapshot.get("context_window", {}))
         ),
     }

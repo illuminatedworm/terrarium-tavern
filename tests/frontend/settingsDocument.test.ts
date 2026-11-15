@@ -3,17 +3,16 @@ import { clone, difference, rebaseSettings, type SettingsDocument } from '../../
 
 const fixture = () =>
   ({
-    version: 20,
-    full_agent: {
+    version: 22,
+    story: {
       model: { model: 'full', reply_tokens: 2048 },
       system_prompt: {
         active: 1,
-        options: [{ text: 'full prompt', name: '' }, ...Array(3).fill({ text: '', name: '' })],
+        options: [{ text: 'story prompt', name: '' }, ...Array(3).fill({ text: '', name: '' })],
       },
     },
-    half_agent: { foreground: { model: 'writer' }, background: { model: 'tracker' } },
     shared: { unicode_story_enabled: false, providers: [{ id: 'p', name: 'Provider', has_api_key: true }] },
-    revisions: { full_agent: 0, half_agent: 0, shared: 0 },
+    revisions: { story: 0, shared: 0 },
     pages: [],
     prompt_definitions: [],
   }) as unknown as SettingsDocument;
@@ -22,15 +21,15 @@ describe('settings acknowledgements', () => {
   it('keeps edits made while a save is in flight and edits in other scopes', () => {
     const saved = fixture();
     const draft = clone(saved);
-    draft.full_agent.model.reply_tokens = 4096;
-    draft.half_agent.background.model = 'new tracker';
+    draft.story.model.reply_tokens = 4096;
+    draft.shared.send_shortcut = 'enter';
     const response = clone(saved);
-    response.full_agent.model.reply_tokens = 3000;
-    response.revisions.full_agent = 1;
-    const rebased = rebaseSettings(saved, draft, response, 'full_agent', { 'model.reply_tokens': 3000 });
-    expect(rebased.full_agent.model.reply_tokens).toBe(4096);
-    expect(rebased.half_agent.background.model).toBe('new tracker');
-    expect(rebased.revisions.full_agent).toBe(1);
+    response.story.model.reply_tokens = 3000;
+    response.revisions.story = 1;
+    const rebased = rebaseSettings(saved, draft, response, 'story', { 'model.reply_tokens': 3000 });
+    expect(rebased.story.model.reply_tokens).toBe(4096);
+    expect(rebased.shared.send_shortcut).toBe('enter');
+    expect(rebased.revisions.story).toBe(1);
   });
   it('does not repeatedly send an acknowledged secret omitted from the response', () => {
     const saved = fixture();
@@ -95,29 +94,29 @@ describe('settings acknowledgements', () => {
   });
   it('keeps edits made while a nullable channel profile is being created', () => {
     const saved = fixture();
-    saved.full_agent.official_model = null;
+    saved.story.official_model = null;
     const draft = clone(saved);
-    draft.full_agent.official_model = { ...draft.full_agent.model, model: 'official' };
-    const sent = difference(saved.full_agent, draft.full_agent);
+    draft.story.official_model = { ...draft.story.model, model: 'official' };
+    const sent = difference(saved.story, draft.story);
     const response = clone(draft);
-    response.revisions.full_agent = 1;
-    draft.full_agent.official_model.reply_tokens = 4096;
-    const rebased = rebaseSettings(saved, draft, response, 'full_agent', sent);
-    expect(rebased.full_agent.official_model).toEqual(draft.full_agent.official_model);
-    expect(rebased.full_agent.model).toEqual(saved.full_agent.model);
-    expect(difference(response.full_agent, rebased.full_agent)).toEqual({
+    response.revisions.story = 1;
+    draft.story.official_model.reply_tokens = 4096;
+    const rebased = rebaseSettings(saved, draft, response, 'story', sent);
+    expect(rebased.story.official_model).toEqual(draft.story.official_model);
+    expect(rebased.story.model).toEqual(saved.story.model);
+    expect(difference(response.story, rebased.story)).toEqual({
       'official_model.reply_tokens': 4096,
     });
   });
-  it('accepts server updates to an untouched mode without copying the edited mode into it', () => {
+  it('accepts server updates to the untouched shared settings', () => {
     const saved = fixture();
     const draft = clone(saved);
-    draft.full_agent.model.model = 'new full';
+    draft.story.model.model = 'new full';
     const response = clone(draft);
-    response.half_agent.foreground.model = 'other-window writer';
-    const rebased = rebaseSettings(saved, draft, response, 'full_agent', { 'model.model': 'new full' });
-    expect(rebased.full_agent.model.model).toBe('new full');
-    expect(rebased.half_agent.foreground.model).toBe('other-window writer');
+    response.shared.providers[0].name = 'Other Provider';
+    const rebased = rebaseSettings(saved, draft, response, 'story', { 'model.model': 'new full' });
+    expect(rebased.story.model.model).toBe('new full');
+    expect(rebased.shared.providers[0].name).toBe('Other Provider');
   });
   it('keeps a preset list edited while an earlier collection save is in flight', () => {
     const saved = fixture();

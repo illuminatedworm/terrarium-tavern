@@ -272,7 +272,7 @@ def retire_estimated_pressure(db):
     replaces the old runtime notice or appends its explicit pressure-clear frame.
     """
     for table, path in (
-        ("full_agent_progress", "$.must_rollover"),
+        ("story_progress", "$.must_rollover"),
         ("card_author_progress", "$.pending_calls.forced"),
         ("card_author_progress", "$.context.frames.pressure.forced"),
         ("card_edit_contexts", "$.frames.pressure.forced"),
@@ -290,7 +290,7 @@ def bind_meter(settings, store, kind, owner):
 
 def meter_lane(settings, purpose="narrative"):
     lane = settings._adapter_lane
-    return lane if purpose in ("narrative", "full_agent", "card_author", "advisor") else lane + ":" + purpose
+    return lane if purpose in ("narrative", "story", "card_author", "advisor") else lane + ":" + purpose
 
 
 def context_usage(messages, settings, tools=None, *, purpose="narrative") -> ContextUsage:

@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
-from tavern.conversation.work_records import background_records
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import uid
 
@@ -45,28 +44,25 @@ def test_event_list_is_compact_paged_and_excludes_narrative_data(tmp_path):
     app, session = story(tmp_path)
     store = app.state.store
     tid, _ = store.create_turn(session["id"], TurnRequest(operation_id="events", expected_revision=0))
-    store.event(tid, "maintenance_started", {})
+    store.event(tid, "context_rollover", {})
     secret_large_content = "FULL_INPUT_DATA" * 10000
     seq = store.event(
         tid,
         "provider_request",
         {
-            "purpose": "maintenance",
+            "purpose": "story",
             "model": "fixture",
             "messages": [{"role": "user", "content": secret_large_content}],
             "tools": [],
         },
     )
     store.event(tid, "activity", {"kind": "tool_started", "message": "read_state"})
-    store.event(tid, "provider_request", {"purpose": "narrative", "messages": []})
-    store.event(tid, "activity", {"kind": "narrative_call"})
     store.event(tid, "text", {"text": "正文片段"})
-    store.event(tid, "usage", {"purpose": "narrative", "usage": {}})
     store.event(tid, "committed", {})
     first = store.work_events(session["id"], tid, limit=2)
     second = store.work_events(session["id"], tid, after=first["next"], limit=2)
     assert [e["kind"] for e in first["items"] + second["items"]] == [
-        "maintenance_started",
+        "context_rollover",
         "provider_request",
         "activity",
         "committed",
@@ -77,31 +73,18 @@ def test_event_list_is_compact_paged_and_excludes_narrative_data(tmp_path):
     assert store.work_event_payload(session["id"], tid, seq)["messages"][0]["content"] == secret_large_content
 
 
-def test_explicit_activity_purpose_and_archive_events_are_classified():
-    events = [
-        {"seq": 1, "kind": "maintenance_started", "payload": {}},
-        {"seq": 2, "kind": "activity", "payload": {"purpose": "narrative"}},
-        {"seq": 3, "kind": "memory_ready", "payload": {"memory": {}}},
-        {"seq": 4, "kind": "memory_proposal", "payload": {"record": {}}},
-        {"seq": 5, "kind": "scene_refresh_ready", "payload": {"purpose": "memory", "result": []}},
-    ]
-    records = list(background_records(events))
-    assert [e["seq"] for e in records] == [1, 3, 4, 5]
-    assert [e["purpose"] for e in records] == ["maintenance", "memory", "memory", "memory"]
-
-
 async def test_work_record_endpoints_reject_foreign_turns_and_bound_page_sizes(tmp_path):
     app, session = story(tmp_path)
     store = app.state.store
     other = store.new_session(SessionCreate(card_id=session["card"]))
     tid, _ = store.create_turn(session["id"], TurnRequest(operation_id="api", expected_revision=0))
-    seq = store.event(tid, "memory_ready", {"memory": {"records": []}})
+    seq = store.event(tid, "started", {"items": []})
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         base = f"/api/sessions/{session['id']}/work-records"
         assert (await client.get(f"{base}?limit=1000")).status_code == 422
         assert (await client.get(base)).json()["items"][0]["id"] == tid
-        assert (await client.get(f"{base}/{tid}/events")).json()["items"][0]["purpose"] == "memory"
-        assert (await client.get(f"{base}/{tid}/events/{seq}")).json()["memory"]["records"] == []
+        assert (await client.get(f"{base}/{tid}/events")).json()["items"][0]["purpose"] == "runtime"
+        assert (await client.get(f"{base}/{tid}/events/{seq}")).json()["items"] == []
         foreign = f"/api/sessions/{other['id']}/work-records/{tid}/events"
         assert (await client.get(foreign)).status_code == 404
         assert (await client.get(f"{foreign}/{seq}")).status_code == 404

@@ -34,7 +34,6 @@ describe('card reference candidates', () => {
     kind: 'draft',
     base_document: {},
     base_revision: null,
-    target_mode: null,
     brief: '',
   }));
   const library = [

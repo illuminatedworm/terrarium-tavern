@@ -13,19 +13,17 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from tavern.android.platform import is_android
-from tavern.application.modes import ModeRuntime
+from tavern.application.service import StoryService
 from tavern.character.cards import append_lorebook, export_card, normalize
-from tavern.conversation.context import compile_context
+from tavern.character.lore_purpose import upgrade_lore_purposes
 from tavern.core.errors import NotFound
 from tavern.core.models import (
     CardSync,
     ContentEdit,
-    ContextRecipe,
     LoreInjectionRemoval,
     OpeningEdit,
     PersonaEdit,
     RevisionRequest,
-    SceneRefreshRequest,
     SessionCacheBreakpoint,
     SessionCreate,
     SessionFork,
@@ -78,13 +76,13 @@ def cancel_producers(app):
     """
     service = app.state.service
     service.japanese_dictionary.stop()
-    service.full.novel.closed = True
-    service.full.novel.notify()
+    service.story.novel.closed = True
+    service.story.novel.notify()
     for owner in (
-        service,
+        service.story,
         app.state.editor,
         app.state.advisor,
-        service.full.novel,
+        service.story.novel,
         service.local_models,
         service.context_operations,
     ):
@@ -99,13 +97,13 @@ def create_app(data_dir=None):
     # A leftover host variable must not change desktop authentication or caching.
     startup_token = os.environ.get("TAVERN_STARTUP_TOKEN", "").encode("utf-8") if android else b""
     store = Store(Path(data_dir or os.environ.get("TAVERN_DATA", "data")))
-    service = ModeRuntime(store)
+    service = StoryService(store)
     from tavern.character.card_author import CardAuthorService
 
     editor = CardAuthorService(store)
     from tavern.advisor.runtime import AdvisorService
 
-    advisor = AdvisorService(store, service.full.retrieval)
+    advisor = AdvisorService(store, service.story.retrieval)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -115,7 +113,7 @@ def create_app(data_dir=None):
             from tavern.storage.maintenance import cleanup
 
             while True:
-                if not any(not t.done() for t in service.tasks.values()) and not any(
+                if not any(not t.done() for t in service.story.tasks.values()) and not any(
                     not t.done() for t in service.local_models.tasks.values()
                 ):
                     try:
@@ -148,7 +146,7 @@ def create_app(data_dir=None):
     register_advisor_routes(app, advisor)
     from tavern.novel.api import register_routes as register_novel_routes
 
-    register_novel_routes(app, service.full.novel, service.full)
+    register_novel_routes(app, service.story.novel, service.story)
     from tavern.chatgpt.api import register_chatgpt_routes
     from tavern.chatgpt.errors import ChatGPTError
 
@@ -162,10 +160,10 @@ def create_app(data_dir=None):
 
     register_editor_routes(app, editor)
     from tavern.application.context_api import register_context_routes
-    from tavern.full_agent.api import register_full_agent_routes
+    from tavern.story.api import register_story_routes
 
     register_context_routes(app, store, service.context_operations)
-    register_full_agent_routes(app, store, service.context_operations)
+    register_story_routes(app, store, service.context_operations)
     from tavern.application.image_api import register_image_routes
 
     register_image_routes(app, store, service.dependencies)
@@ -356,10 +354,7 @@ def create_app(data_dir=None):
                 raise ValueError("请先下载并预热 Embedding 模型，再准备向量索引")
             record["phase"] = "preparing"
             service.retrieval.cache.clear()
-            engine = service.full.retrieval if session["agent_mode"] == "full_agent" else service.retrieval
-            from tavern.memories.memory_archive import read_archive
-
-            await engine.prepare(
+            await service.story.retrieval.prepare(
                 document,
                 session["messages"],
                 "",
@@ -368,7 +363,6 @@ def create_app(data_dir=None):
                 session,
                 "rebuild",
                 index_only=True,
-                archive=read_archive(session["messages"]) if session["agent_mode"] == "half_agent" else None,
             )
             jobs = [
                 task
@@ -385,11 +379,7 @@ def create_app(data_dir=None):
                 if failed:
                     raise ValueError(failed[0].get("error", "索引任务未完成"))
             record["message"] = (
-                (
-                    "世界书与归档经历索引准备完成"
-                    if session["agent_mode"] == "half_agent"
-                    else "世界书索引准备完成"
-                )
+                "世界书索引准备完成"
                 if "embedding" in config.retrieval.channels
                 else "关键词 / BM25 索引已准备；未启用向量通道，不生成向量条目"
             )
@@ -398,29 +388,27 @@ def create_app(data_dir=None):
 
     @app.post("/api/settings/probe")
     async def probe(
-        role: Literal[
-            "foreground", "background", "card_author", "full_agent", "advisor", "novel_research"
-        ] = "foreground",
+        role: Literal["card_author", "story", "advisor", "novel_research"] = "story",
         channel: Literal["standard", "chatgpt"] | None = None,
     ):
-        from tavern.scripting.agent import make_provider
+        from tavern.core.provider import make_provider
 
-        saved_config = store.settings(
-            "full_agent" if role in {"full_agent", "novel_research"} else "half_agent", channel
-        )
+        saved_config = store.settings(channel)
         if role == "novel_research":
-            novel_config = store.settings_document().full_agent.novel_research
+            novel_config = store.settings_document().story.novel_research
             saved_config.novel_research = (
                 novel_config.official_model
                 if saved_config._settings_channel == "chatgpt"
                 else novel_config.model
             )
             if saved_config.novel_research is None:
-                raise ValueError("此渠道正在跟随 Full Agent，请检查 Full Agent 模型连接")
+                raise ValueError("此渠道的调查模型跟随剧情模型，请检查剧情模型连接")
         if role == "advisor":
             advisor_config = store.settings_document().shared.advisor
             saved_config.advisor = (
-                advisor_config.official_model if channel == "chatgpt" else advisor_config.model
+                advisor_config.official_model
+                if saved_config._settings_channel == "chatgpt"
+                else advisor_config.model
             )
             if saved_config.advisor is None:
                 raise ValueError("请先配置此渠道的参谋 agent 模型")
@@ -520,6 +508,7 @@ def create_app(data_dir=None):
     async def import_lore(cid: str, file: UploadFile = File(...)):
         card = store.card(cid)
         book = json.loads(await file.read(4 * 1024 * 1024))
+        upgrade_lore_purposes(book)
         data = card["document"].get("data", card["document"])
         data["character_book"] = append_lorebook(data.get("character_book"), book)
         return store.edit_card(cid, card["document"], card["revision"])
@@ -597,7 +586,7 @@ def create_app(data_dir=None):
     async def new_session(options: SessionCreate):
         session = store.new_session(options)
         try:
-            result = await service.initialize_session(session["id"])
+            result = await service.story.initialize_session(session["id"])
             service.prepare_indexes(session["id"])
             return result
         except BaseException:
@@ -656,9 +645,9 @@ def create_app(data_dir=None):
     @app.delete("/api/sessions/{sid}")
     async def delete_session(sid: str):
         await advisor.cancel_session(sid)
-        for job in service.full.novel.data.jobs(sid):
+        for job in service.story.novel.data.jobs(sid):
             if job["status"] != "destroyed":
-                await service.full.novel.destroy(job["id"])
+                await service.story.novel.destroy(job["id"])
         await service.delete_session(sid)
         return {"deleted": sid}
 
@@ -683,7 +672,7 @@ def create_app(data_dir=None):
     @app.put("/api/sessions/{sid}/messages/{mid}/version")
     async def switch_message_version(sid: str, mid: str, change: RevisionRequest):
         result = store.switch_message_version(sid, mid, change.head, change.expected_revision)
-        await service.full.novel.cancel_invalidated(sid)
+        await service.story.novel.cancel_invalidated(sid)
         return result
 
     @app.delete("/api/sessions/{sid}/lore-injections/{anchor_id}/{entry_id}")
@@ -849,7 +838,7 @@ def create_app(data_dir=None):
     @app.put("/api/sessions/{sid}/head")
     async def switch_branch(sid: str, change: RevisionRequest):
         result = store.update_session(sid, change.expected_revision, head=change.head)
-        await service.full.novel.cancel_invalidated(sid)
+        await service.story.novel.cancel_invalidated(sid)
         return result
 
     @app.put("/api/sessions/{sid}/options")
@@ -862,17 +851,6 @@ def create_app(data_dir=None):
             options.expected_revision,
             **fields,
         )
-
-    @app.put("/api/sessions/{sid}/recipe")
-    async def recipe(sid: str, payload: dict):
-        if store.session(sid)["agent_mode"] == "full_agent":
-            raise ValueError("Full Agent 使用独立工作窗口，不使用 Half Agent 上下文配方")
-        validated = (
-            store.settings().context_recipe.model_copy(deep=True)
-            if payload.get("use_global")
-            else ContextRecipe.model_validate(payload["recipe"])
-        )
-        return store.update_session(sid, payload["expected_revision"], recipe=validated.model_dump_json())
 
     def compile_preview(sid: str, payload: dict):
         # FastAPI runs sync endpoints in its worker pool: token counting and
@@ -887,51 +865,28 @@ def create_app(data_dir=None):
             raise ValueError("场外发言必须为文本")
         ooc = ooc.strip()
         text = with_ooc(text, ooc)
-        if s["agent_mode"] == "full_agent":
-            from tavern.core.message_adapter import bind_adapter
-            from tavern.full_agent.context import compile_window, load_trace
-            from tavern.full_agent.tools import tool_definitions
-
-            full_settings = bind_adapter(
-                store.session_settings(s).for_role("full_agent"), store, "story", sid
-            )
-            result = compile_window(
-                document,
-                s,
-                s["messages"],
-                s["snapshot"],
-                text,
-                full_settings,
-                tool_definitions(
-                    s,
-                    full_settings.full_agent_config,
-                    settings=full_settings,
-                ),
-                trace=load_trace(store, sid, s["messages"]),
-                require_state_patch=payload.get("update_variables") is True,
-                allow_content_edit=payload.get("allow_content_edit") is True,
-            )
-            return result, s, full_settings
-        from tavern.conversation.half_context import load_trace as load_half_trace
         from tavern.core.message_adapter import bind_adapter
+        from tavern.story.context import compile_window, load_trace
+        from tavern.story.tools import tool_definitions
 
-        writer_settings = bind_adapter(store.session_settings(s).for_role("foreground"), store, "story", sid)
-        result = compile_context(
+        story_settings = bind_adapter(store.session_settings(s).for_role("story"), store, "story", sid)
+        result = compile_window(
             document,
             s,
             s["messages"],
             s["snapshot"],
             text,
-            writer_settings,
-            "preview",
-            replay_records=load_half_trace(store, sid, s["messages"]),
-            read_only=True,
-            ooc=ooc,
+            story_settings,
+            tool_definitions(
+                s,
+                story_settings.story_config,
+                settings=story_settings,
+            ),
+            trace=load_trace(store, sid, s["messages"]),
+            require_state_patch=payload.get("update_variables") is True,
+            allow_content_edit=payload.get("allow_content_edit") is True,
         )
-        from tavern.conversation.cache_breakpoint import prepare_context
-
-        prepare_context(result, s, s["messages"], s["snapshot"], writer_settings)
-        return result, s, writer_settings
+        return result, s, story_settings
 
     @app.post("/api/sessions/{sid}/preview")
     def preview(sid: str, payload: dict):
@@ -947,7 +902,6 @@ def create_app(data_dir=None):
                 attach_local_estimate(result, settings)
         result["usage"] = store.latest_usage(sid)
         result["cache_usage"] = store.session_cache_usage(sid)
-        result["memory_warning"] = s["snapshot"].get("memory_warning")
         return result
 
     @app.post("/api/sessions/{sid}/messages-preview")
@@ -960,47 +914,7 @@ def create_app(data_dir=None):
 
     @app.post("/api/sessions/{sid}/turns", status_code=202)
     async def submit(sid: str, req: TurnRequest):
-        return service.submit(sid, req)
-
-    @app.post("/api/sessions/{sid}/scene/{kind}/regenerate", status_code=202)
-    async def regenerate_scene(sid: str, kind: Literal["memory"], req: SceneRefreshRequest):
-        return service.submit(sid, TurnRequest(**req.model_dump(), scene_refresh=kind))
-
-    from tavern.memories.memory_records import RecordEdit
-
-    @app.put("/api/sessions/{sid}/memory/records")
-    async def edit_memory_record(sid: str, edit: RecordEdit):
-        if store.session(sid)["agent_mode"] == "full_agent":
-            raise ValueError("Full Agent 使用独立笔记，不使用 Half Agent 分类记忆")
-        return store.edit_memory_record(sid, edit)
-
-    @app.get("/api/sessions/{sid}/memory/rebuild-estimate")
-    async def memory_rebuild_estimate(sid: str):
-        if store.session(sid)["agent_mode"] == "full_agent":
-            raise ValueError("Full Agent 由模型管理笔记，不使用后台记忆重建")
-        from tavern.memories.memory_engine import estimate_batches
-        from tavern.memories.memory_records import new_memory, read_memory
-
-        session = store.session(sid)
-        cfg = store.session_settings(session).for_role("background")
-        document = (session["snapshot"].get("content") or {}).get(
-            "document", store.session_card(sid)["document"]
-        )
-        base = new_memory(r for r in read_memory(session["snapshot"])["records"] if r.get("manual"))
-        import asyncio
-
-        count = await asyncio.to_thread(
-            estimate_batches, session["messages"], base, document, session["persona"], cfg
-        )
-        return {
-            "estimated_batches": count,
-            "review_max_calls": 1 if cfg.memory_review_enabled else 0,
-            "message": "按现有手工记忆估算；新增记忆可能增加批次数，完成前可取消，全部成功后替换。",
-        }
-
-    @app.post("/api/sessions/{sid}/interaction")
-    async def interaction(sid: str, payload: dict):
-        return await service.interaction(sid, payload)
+        return service.story.submit(sid, req)
 
     @app.get("/api/turns/{tid}")
     async def turn(tid: str):
@@ -1022,12 +936,12 @@ def create_app(data_dir=None):
 
     @app.post("/api/turns/{tid}/cancel")
     async def cancel(tid: str):
-        await service.cancel(tid)
+        await service.story.cancel(tid)
         return store.turn(tid)
 
     @app.post("/api/turns/{tid}/review")
     async def review(tid: str, payload: dict):
-        return service.review(tid, bool(payload.get("accept")))
+        return store.review_turn(tid, bool(payload.get("accept")))
 
     @app.get("/api/turns/{tid}/events")
     async def event_stream(tid: str, request: Request, after: int = 0):

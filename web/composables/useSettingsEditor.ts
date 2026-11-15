@@ -276,7 +276,7 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
   function acceptRefresh(response: SettingsDocument) {
     if (!saved.value || !draft.value) return;
     applying = true;
-    draft.value = rebaseSettings(saved.value, draft.value, response, 'full_agent', {});
+    draft.value = rebaseSettings(saved.value, draft.value, response, 'story', {});
     saved.value = clone(response);
     applying = false;
     updated(response);

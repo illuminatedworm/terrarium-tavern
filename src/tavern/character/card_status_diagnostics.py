@@ -110,6 +110,6 @@ def status_display_warnings(document):
             )
         if not rules:
             warnings.append(
-                "状态展示未发现有效且非空的 tracker_mvu 更新规则；请确认是否需要持续追踪，静态说明不必创建变量"
+                "状态展示未发现有效且非空的 mvu_rules 更新规则；请确认是否需要持续追踪，静态说明不必创建变量"
             )
     return warnings

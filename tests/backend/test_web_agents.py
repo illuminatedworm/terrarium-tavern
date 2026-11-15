@@ -132,10 +132,10 @@ async def test_shared_web_pages_reach_model_intact_and_off_is_enforced(tmp_path,
 
 
 @pytest.mark.parametrize("mode", ["auto", "local", "off"])
-async def test_previews_use_actual_agent_mode_and_never_expose_shared_credentials(tmp_path, mode):
+async def test_previews_use_configured_web_mode_and_never_expose_shared_credentials(tmp_path, mode):
     store, _, _ = connected_store(tmp_path)
     doc = store.settings_document()
-    doc.shared.advisor.official_model = doc.full_agent.official_model.model_copy(deep=True)
+    doc.shared.advisor.official_model = doc.story.official_model.model_copy(deep=True)
     doc.shared.advisor.web.mode = doc.shared.card_author_config.web.mode = mode
     doc.shared.web.exa.api_key = "never-in-preview"
     store.save_settings(doc)
@@ -169,7 +169,7 @@ async def test_cloud_fallback_in_agent_preserves_prior_mutation_and_native_sourc
     store, _, _ = connected_store(tmp_path)
     card, session = story(store)
     doc = store.settings_document()
-    doc.shared.advisor.official_model = doc.full_agent.official_model.model_copy(deep=True)
+    doc.shared.advisor.official_model = doc.story.official_model.model_copy(deep=True)
     doc.shared.web.exa.enabled = False
     doc.shared.web.duckduckgo.enabled = False
     store.save_settings(doc)

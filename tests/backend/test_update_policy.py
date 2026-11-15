@@ -9,15 +9,14 @@ import pytest
 from tavern.conversation.update_review import review_changes
 from tavern.core.model_view import ModelView
 from tavern.core.models import SessionCreate, Settings, TurnRequest
-from tavern.core.settings import FullSettings
-from tavern.full_agent.protocol import ToolError
-from tavern.full_agent.tools import AgentTools, tool_definitions
+from tavern.core.settings import StorySettings
 from tavern.storage.store import Store
-from tavern.tracker.workflow import after_story
-from tests.backend import test_full_agent
-from tests.backend.test_full_agent import Model, runtime, turn
+from tavern.story.protocol import ToolError
+from tavern.story.tools import AgentTools, tool_definitions
+from tests.backend import test_story
+from tests.backend.test_story import Model, runtime, turn
 
-story = test_full_agent.story
+story = test_story.story
 
 
 @pytest.mark.parametrize(
@@ -29,7 +28,7 @@ story = test_full_agent.story
     ],
 )
 def test_legacy_policy_migrates_without_losing_review(tmp_path, legacy, expected):
-    assert Settings(policy=legacy).policy == FullSettings(policy=legacy).policy == expected
+    assert Settings(policy=legacy).policy == StorySettings(policy=legacy).policy == expected
     store = Store(tmp_path)
     card = store.import_card(b'{"name":"Guide","first_mes":"Hello"}')
     session = store.new_session(SessionCreate(card_id=card["id"]))
@@ -47,13 +46,12 @@ def test_review_compares_real_values_and_content_not_metadata():
         "state": {"stat_data": {}, "schema": {"type": "object"}, "initialized_lorebooks": {"x": True}},
         "scopes": {"chat": {}},
         "content": {"document": card, "reason": "read", "turn": "new"},
-        "full_agent": {
+        "story": {
             "notes": {"timeline": {"content": "A new note"}},
             "model_references": {"@D1": "opaque"},
         },
         "lore": {"1": {"present": True}},
         "lore_injections": [{"id": "1"}],
-        "memory_document": {"records": [{"content": "New memory"}]},
     }
     assert review_changes(before, after, card) == []
     after["state"]["stat_data"] = {"hp": 3, "$meta": {"changed": True}}
@@ -73,7 +71,7 @@ def test_review_compares_real_values_and_content_not_metadata():
 
 
 @pytest.mark.parametrize("policy", ["automatic", "review", "evolving", "preview"])
-async def test_policy_never_grants_full_or_half_content_permission(policy):
+async def test_policy_never_grants_content_permission(policy):
     request = TurnRequest(operation_id="check", expected_revision=0)
     session = {"policy_effective": policy}
     definitions = tool_definitions(session)
@@ -82,32 +80,13 @@ async def test_policy_never_grants_full_or_half_content_permission(policy):
     with pytest.raises(ToolError) as denied:
         await tools.execute("revise_content", "{}")
     assert denied.value.result["error"]["code"] == "PERMISSION_DENIED"
-    request.update_variables = True
-    calls = []
-
-    async def run_task(*args, **kwargs):
-        calls.append(kwargs)
-        return SimpleNamespace(snapshot={}, document={}, patch=[])
-
-    await after_story(
-        None,
-        "turn",
-        Settings(),
-        [{"role": "assistant", "model": "Story"}],
-        {},
-        request,
-        {},
-        run_task,
-        committed_history=[],
-    )
-    assert calls[0]["variables"] is True and calls[0]["content"] is False
 
 
 async def test_no_mvu_card_notes_and_retrieval_commit_without_review(story):
     store, session = story
     session = store.update_session(session["id"], session["revision"], policy="review")
     cfg = store.settings()
-    cfg.full_agent_config.auto_retrieval = True
+    cfg.story_config.auto_retrieval = True
     store.save_settings(cfg)
     service = runtime(store)
     try:
@@ -121,7 +100,7 @@ async def test_no_mvu_card_notes_and_retrieval_commit_without_review(story):
         )
         assert result["status"] == "committed", result["error"]
         assert current["snapshot"]["state"] == session["snapshot"]["state"]
-        assert current["snapshot"]["full_agent"]["notes"]["timeline/autumn"]["content"] == "Meet tomorrow"
+        assert current["snapshot"]["story"]["notes"]["timeline/autumn"]["content"] == "Meet tomorrow"
         assert not any(e["kind"] == "awaiting_review" for e in store.events(result["id"]))
     finally:
         await service.close()
@@ -154,10 +133,10 @@ async def test_content_review_holds_entire_turn_and_survives_reload(story, accep
         assert current["snapshot"] == session["snapshot"] and current["head"] == session["head"]
         # Reading a pending turn (also used on reopen) must expose only real review targets.
         assert [c["kind"] for c in store.turn(result["id"])["pending"]["review_changes"]] == ["character"]
-        service.review(result["id"], accept)
+        service.store.review_turn(result["id"], accept)
         current = store.session(session["id"])
         assert (current["head"] != session["head"]) == accept
-        assert bool(current["snapshot"]["full_agent"]["notes"]) == accept
+        assert bool(current["snapshot"]["story"]["notes"]) == accept
         assert (current["snapshot"].get("content") != session["snapshot"].get("content")) == accept
     finally:
         await service.close()

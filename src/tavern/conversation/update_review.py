@@ -44,7 +44,7 @@ def review_changes(before, after, document=None):
 
 
 def finish_turn(store, tid, session, pending, snapshot, *, draft=None):
-    """Shared review boundary for both agents, script actions and manual edits.
+    """Review boundary for story turns and manual edits.
 
     Notes, retrieval bookkeeping and schema/cache maintenance are saved with the
     turn but cannot trigger review. Pending turns still commit or reject as one

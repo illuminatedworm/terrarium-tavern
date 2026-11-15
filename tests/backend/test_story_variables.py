@@ -1,0 +1,398 @@
+"""MVU rule delivery, durable snapshots and shared authoring contracts."""
+
+import copy
+import json
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
+
+from tavern.application.api import create_app
+from tavern.application.service import StoryService
+from tavern.conversation.variable_rules import collect_variable_rules
+from tavern.core.models import SessionCreate, Settings, TurnRequest
+from tavern.storage.store import Store
+from tavern.story.content import ContentRevision
+from tavern.story.context import compile_window, load_trace
+from tavern.story.state import new_state
+from tavern.story.tools import StatePatch
+from tests.backend.test_story import Model, handoff, runtime, turn
+from tests.backend.test_story_alignment import strip_local
+
+
+def document():
+    return {
+        "name": "Rule fixture",
+        "first_mes": "Opening",
+        "character_book": {
+            "entries": [
+                {"id": "story", "content": "NARRATIVE_ONLY", "constant": True},
+                {
+                    "id": "rule",
+                    "content": "RULE_A {{user}}",
+                    "constant": True,
+                    "extensions": {"terrarium": {"purpose": "mvu_rules"}},
+                },
+                {
+                    "id": "conditional",
+                    "content": "HP_AT_START={{getvar::stat_data.hp}}",
+                    "keys": ["unmatched"],
+                    "probability": 0,
+                    "useProbability": True,
+                    "extensions": {"terrarium": {"purpose": "mvu_rules"}},
+                },
+                {
+                    "id": "disabled",
+                    "content": "DISABLED_RULE",
+                    "enabled": False,
+                    "extensions": {"terrarium": {"purpose": "mvu_rules"}},
+                },
+                {"id": "init", "comment": "[InitVar]", "content": "hp: 8"},
+            ]
+        },
+    }
+
+
+def game(tmp_path, *, real=False):
+    store = Store(tmp_path)
+    card = store.import_card(json.dumps(document()).encode())
+    settings = store.settings()
+    settings.story_config.auto_retrieval = False
+    settings.retrieval.channels = ["keyword"]
+    store.save_settings(settings)
+    session = store.new_session(SessionCreate(card_id=card["id"]))
+    return store, StoryService(store) if real else runtime(store), session
+
+
+def frames(messages):
+    return [m["content"] for m in messages if m.get("content", "").startswith("<mvu_rules>\n")]
+
+
+def empty_patch():
+    return ("patch_state", {"operations": [], "comment": "No changes in this turn"})
+
+
+@pytest.mark.parametrize("object_entries", [False, True])
+def test_rules_are_complete_authorized_and_independent_of_lore_admission(object_entries):
+    doc = document()
+    long_rule = "Long rule " * 3000 + "END_RULE"
+    doc["character_book"]["entries"][1]["content"] += " " + long_rule
+    if object_entries:
+        doc["character_book"]["entries"] = {
+            str(i): row for i, row in enumerate(doc["character_book"]["entries"])
+        }
+    settings = Settings()
+    session = {"id": "fixture", "persona": "Reader"}
+    snapshot = {"state": {"stat_data": {"hp": 8}}, "story": new_state()}
+    before = copy.deepcopy(snapshot)
+    plain = compile_window(doc, session, [], snapshot, "Continue", settings, [])
+    assert not frames(plain["messages"])
+    assert "RULE_A" not in json.dumps(plain["messages"])
+    loaded = compile_window(doc, session, [], snapshot, "Continue", settings, [], require_state_patch=True)
+    [rules] = frames(loaded["messages"])
+    assert "RULE_A Reader " + long_rule in rules and "HP_AT_START=8" in rules
+    assert all(value not in rules for value in ("NARRATIVE_ONLY", "DISABLED_RULE", "hp: 8"))
+    assert snapshot == before  # preview compilation must not persist injection state
+
+
+async def test_delayed_injection_deduplicates_across_tools_and_turns_without_granting_permission(tmp_path):
+    store, service, session = game(tmp_path)
+    try:
+        ordinary = Model("First narrative")
+        _, session = await turn(service, session, ordinary)
+        assert not frames(ordinary.requests[0]["messages"])
+        required = Model(("read_state", {}), empty_patch(), empty_patch(), "Second narrative")
+        result, session = await turn(service, session, required, update_variables=True)
+        assert result["status"] == "committed", result["error"]
+        requests = [strip_local(r["messages"]) for r in required.requests]
+        assert all(len(frames(r)) == 1 for r in requests)
+        for first, second in zip(requests, requests[1:]):
+            assert first == second[: len(first)]
+        returns = [json.loads(m["content"]) for m in requests[-1] if m["role"] == "tool"]
+        assert all(item["data"]["saved_to_draft"] for item in returns[-2:])
+
+        unrequested = Model(empty_patch(), "Third narrative")
+        result, session = await turn(service, session, unrequested)
+        assert result["status"] == "committed", result["error"]
+        assert len(frames(unrequested.requests[-1]["messages"])) == 1
+        assert (
+            "未要求更新"
+            in [m["content"] for m in unrequested.requests[-1]["messages"] if m["role"] == "tool"][-1]
+        )
+        repeated = Model(("read_state", {}), empty_patch(), "Fourth narrative")
+        result, session = await turn(service, session, repeated, update_variables=True)
+        assert result["status"] == "committed", result["error"]
+        assert len(frames(repeated.requests[0]["messages"])) == 1
+        assert (
+            len(
+                [
+                    r
+                    for r in load_trace(store, session["id"], session["messages"])
+                    if r["message"].get("source") == "mvu_rules"
+                ]
+            )
+            == 1
+        )
+    finally:
+        await service.close()
+
+
+async def test_rollover_reloads_rules_and_regeneration_and_forks_use_their_own_trace(tmp_path):
+    store, service, session = game(tmp_path)
+    opening = session["head"]
+    try:
+        result, session = await turn(
+            service, session, Model(("read_state", {}), empty_patch(), "First"), update_variables=True
+        )
+        assert result["status"] == "committed", result["error"]
+        branch = store.fork_session(session["id"], opening, session["revision"])
+        isolated = Model("Branch without variable update")
+        _, branch = await turn(service, branch, isolated)
+        assert not frames(isolated.requests[0]["messages"])
+
+        regenerated = Model(("read_state", {}), empty_patch(), "Replacement")
+        result, session = await turn(service, session, regenerated, mode="regenerate", update_variables=True)
+        assert result["status"] == "committed", result["error"]
+        assert len(frames(regenerated.requests[0]["messages"])) == 1
+        switched = Model(
+            ("new_context", {"handoff": handoff("Keep current facts"), "keep_recent": 0}),
+            ("read_state", {}),
+            empty_patch(),
+            "After rollover",
+        )
+        result, session = await turn(service, session, switched, update_variables=True)
+        assert result["status"] == "committed", result["error"]
+        assert all(len(frames(r["messages"])) == 1 for r in switched.requests)
+        assert not any(m["role"] == "tool" for m in switched.requests[1]["messages"])
+        assert (
+            len(
+                {
+                    r["window_id"]
+                    for r in load_trace(store, session["id"], session["messages"])
+                    if r["message"].get("source") == "mvu_rules"
+                }
+            )
+            == 2
+        )
+    finally:
+        await service.close()
+
+
+async def test_story_cannot_edit_variable_rules_or_initialization(tmp_path):
+    store, service, session = game(tmp_path)
+    try:
+        model = Model(
+            ("read_character", {"ref": "character_book"}),
+            (
+                "revise_content",
+                {
+                    "operations": [
+                        {
+                            "op": "add_lore",
+                            "entry": {
+                                "title": "Rule change",
+                                "content": "RULE_NEW",
+                                "extensions": {"terrarium": {"purpose": "mvu_rules"}},
+                            },
+                        }
+                    ],
+                    "comment": "Forbidden runtime configuration",
+                },
+            ),
+            ("read_state", {}),
+            empty_patch(),
+            "Narrative",
+        )
+        result, session = await turn(service, session, model, update_variables=True, allow_content_edit=True)
+        assert result["status"] == "committed", result["error"]
+        errors = [
+            e
+            for e in store.events(result["id"])
+            if e["kind"] == "story_tool" and "error" in e["payload"]["result"]
+        ]
+        assert len(errors) == 2
+        assert "content" not in session["snapshot"] or session["snapshot"]["content"] is None
+        follow = Model(("read_state", {}), empty_patch(), "Next narrative")
+        result, session = await turn(service, session, follow, update_variables=True, allow_content_edit=True)
+        assert result["status"] == "committed", result["error"]
+        assert "RULE_A" in frames(follow.requests[0]["messages"])[-1]
+        assert "RULE_NEW" not in frames(follow.requests[0]["messages"])[-1]
+    finally:
+        await service.close()
+
+
+async def test_frozen_macros_and_rules_survive_real_mvu_rollover_reopen_and_model_change(tmp_path):
+    store, service, session = game(tmp_path, real=True)
+    try:
+        session = await service.story.initialize_session(session["id"])
+        assert session["snapshot"]["state"]["stat_data"]["hp"] == 8
+        model = Model(
+            ("read_state", {}),
+            (
+                "patch_state",
+                {"operations": [{"op": "replace", "path": "/hp", "value": 5}], "comment": "Injury"},
+            ),
+            ("read_lore_entry", {"ref": "L1"}),
+            (
+                "revise_content",
+                {
+                    "operations": [
+                        {"op": "update_lore", "ref": "L1", "changes": {"content": "NEW_NARRATIVE_SETTING"}}
+                    ],
+                    "comment": "Narrative setting",
+                },
+            ),
+            ("new_context", {"handoff": handoff("Injury applied, continue narrative"), "keep_recent": 0}),
+            RuntimeError("Disconnected"),
+        )
+        failed, unchanged = await turn(
+            service, session, model, update_variables=True, allow_content_edit=True
+        )
+        assert failed["status"] == "error", failed
+        assert unchanged["snapshot"]["state"]["stat_data"]["hp"] == 8
+        for request in model.requests:
+            [rules] = frames(request["messages"])
+            assert "HP_AT_START=8" in rules and "RULE_A" in rules and "RULE_B" not in rules
+        progress = store.story_progress(failed["id"])
+        assert "HP_AT_START=8" in progress["variable_rules"]
+    finally:
+        await service.close()
+
+    reopened = Store(store.root)
+    settings = reopened.settings_document()
+    settings.story.model.model = "another-local-model"
+    reopened.save_settings(settings)
+    service = StoryService(reopened)
+    try:
+        resumed_model = Model("Narrative after recovery")
+        service.story.provider_factory = lambda: resumed_model
+        resumed = service.story.submit(
+            session["id"],
+            TurnRequest(
+                text=failed["request"]["text"],
+                operation_id="resume-rules",
+                expected_revision=session["revision"],
+                update_variables=True,
+                allow_content_edit=True,
+                resume_turn_id=failed["id"],
+            ),
+        )
+        await service.story.tasks[resumed["id"]]
+        result = reopened.turn(resumed["id"])
+        assert result["status"] == "committed", result["error"]
+        [rules] = frames(resumed_model.requests[0]["messages"])
+        assert "HP_AT_START=8" in rules and "RULE_A" in rules and "RULE_B" not in rules
+        current = reopened.session(session["id"])
+        assert current["snapshot"]["state"]["stat_data"]["hp"] == 5
+        following = Model(("read_state", {}), empty_patch(), "Next narrative")
+        result, current = await turn(
+            service, current, following, update_variables=True, allow_content_edit=True
+        )
+        assert result["status"] == "committed", result["error"]
+        rules = frames(following.requests[0]["messages"])[-1]
+        assert "HP_AT_START=5" in rules and "RULE_A" in rules and "RULE_B" not in rules
+        assert (
+            current["snapshot"]["content"]["document"]["character_book"]["entries"][0]["content"]
+            == "NEW_NARRATIVE_SETTING"
+        )
+        assert current["snapshot"]["state"]["stat_data"]["hp"] == 5
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("allow_content_edit", [False, True])
+@pytest.mark.parametrize("update_variables", [False, True])
+async def test_preview_matches_first_request_without_consuming_rule_injection(
+    tmp_path, allow_content_edit, update_variables
+):
+    store, service, session = game(tmp_path)
+    app = create_app(store.root)
+    try:
+        async with AsyncClient(transport=ASGITransport(app), base_url="http://testserver") as client:
+            url = f"/api/sessions/{session['id']}/preview"
+            plain = await client.post(url, json={"text": "Continue"})
+            assert plain.status_code == 200 and not frames(plain.json()["messages"])
+            assert not any(m["source"] == "turn_instruction" for m in plain.json()["trace"])
+            payload = {
+                "text": "Continue",
+                "update_variables": update_variables,
+                "allow_content_edit": allow_content_edit,
+            }
+            loaded = await client.post(url, json=payload)
+            assert loaded.status_code == 200
+            instructions = [m["content"] for m in loaded.json()["trace"] if m["source"] == "turn_instruction"]
+            assert instructions == (
+                [f"允许修改设定：{allow_content_edit}。"] if update_variables or allow_content_edit else []
+            )
+            repeated = await client.post(url, json=payload)
+            assert frames(repeated.json()["messages"]) == frames(loaded.json()["messages"])
+        assert load_trace(store, session["id"], session["messages"]) == []
+        model = Model(*([("read_state", {}), empty_patch()] if update_variables else []), "Narrative")
+        result, session = await turn(
+            service, session, model, update_variables=update_variables, allow_content_edit=allow_content_edit
+        )
+        assert result["status"] == "committed", result["error"]
+        assert frames(model.requests[0]["messages"]) == frames(loaded.json()["messages"])
+        assert [
+            m["content"] for m in result["preview"]["trace"] if m["source"] == "turn_instruction"
+        ] == instructions
+        for request in model.requests:
+            assert [
+                m["content"] for m in request["messages"] if m.get("content", "").startswith("允许修改设定：")
+            ] == instructions
+        tools = {tool["function"]["name"] for tool in model.requests[0]["extra_body"]["tools"]}
+        assert "revise_content" in tools
+        assert model.requests[0]["extra_body"]["tools"] == plain.json()["tools"]
+        async with AsyncClient(transport=ASGITransport(app), base_url="http://testserver") as client:
+            unchecked = await client.post(url, json={"text": "我答应明天在钟楼见面。"})
+            assert unchecked.status_code == 200
+            retained = [m["content"] for m in unchecked.json()["trace"] if m["source"] == "turn_instruction"]
+            # Revoking per-turn authorization preserves the tool definitions
+            # and prior frames, appending only the revocation.
+            assert retained == instructions + (
+                ["此前的额外回合要求已撤销；遵守当前工具权限。"] if instructions else []
+            )
+        unchecked_model = Model("Next narrative")
+        result, _ = await turn(service, session, unchecked_model)
+        assert result["status"] == "committed", result["error"]
+        assert [
+            m["content"] for m in result["preview"]["trace"] if m["source"] == "turn_instruction"
+        ] == retained
+        assert strip_local(unchecked.json()["messages"]) == strip_local(
+            unchecked_model.requests[0]["messages"]
+        )
+        assert unchecked_model.requests[0]["extra_body"]["tools"] == model.requests[0]["extra_body"]["tools"]
+        previous = strip_local(model.requests[-1]["messages"])
+        assert strip_local(unchecked_model.requests[0]["messages"])[: len(previous)] == previous
+    finally:
+        await service.close()
+        await app.state.editor.close()
+        await app.state.service.close()
+
+
+def test_empty_patch_is_specific_to_variable_updates():
+    assert StatePatch(operations=[], comment="No change").operations == []
+    with pytest.raises(ValidationError):
+        ContentRevision(operations=[], comment="No content edit")
+    rules = collect_variable_rules(document(), "Reader", {"stat_data": {"hp": 8}})
+    assert rules == ["RULE_A Reader", "HP_AT_START=8"]
+
+
+def test_variable_parent_replace_restores_hidden_metadata():
+    from tavern.scripting.state_patch import stage
+
+    original = {"bag": {"id": "a" * 32, "count": 1, "checksum": "b" * 64, "$meta": {"readonly": True}}}
+    operations, updated = stage(original, [{"op": "replace", "path": "/bag", "value": {"count": 2}}])
+    assert updated["bag"] == {**original["bag"], "count": 2}
+    assert operations[0]["value"] == updated["bag"]
+    for path in ("/bag/$meta", "/bag/checksum", "/constructor"):
+        with pytest.raises(ValueError):
+            stage(original, [{"op": "replace", "path": path, "value": {}}])
+    with pytest.raises(ValueError):
+        stage({}, [{"op": "add", "path": "/bag", "value": {"$internal": "injected"}}])
+    assert original["bag"]["count"] == 1
+    keyed = {"items": [{"id": "a", "checksum": "A"}, {"id": "b", "checksum": "B"}]}
+    _, reordered = stage(keyed, [{"op": "replace", "path": "/items", "value": [{"id": "b"}, {"id": "a"}]}])
+    assert [item["checksum"] for item in reordered["items"]] == ["B", "A"]
+    _, replaced = stage(keyed, [{"op": "replace", "path": "/items", "value": [{"name": "new"}]}])
+    assert replaced["items"] == [{"name": "new"}]

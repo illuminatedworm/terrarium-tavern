@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.core.kemini_prompts import (
     CLEAR_PROMPT,
-    CONTENT_DESCRIPTION,
     CONTENT_PROMPT,
     DISCLAIMER_PROMPT,
     IDENTITY_PROMPT,
@@ -14,15 +13,12 @@ from tavern.core.kemini_prompts import (
     OUTPUT_PROMPT,
     ROLEPLAY_PROMPT,
     THINKING_PROMPT,
-    TOOL_DESCRIPTION,
-    TRANSPORT_TEMPLATE,
 )
 from tavern.core.story_segments import MAX_SEGMENTS
 
 TOOL_NAME = "kemini_emit_story"
-TRANSPORT_PROMPT = TRANSPORT_TEMPLATE.replace("${toolName}", TOOL_NAME)
-FULL_AGENT_TRANSPORT_HEADING = "## 本轮正文交付与结束"
-FULL_AGENT_TRANSPORT_PROMPT = FULL_AGENT_TRANSPORT_HEADING + (
+STORY_TRANSPORT_HEADING = "## 本轮正文交付与结束"
+STORY_TRANSPORT_PROMPT = STORY_TRANSPORT_HEADING + (
     "\n\n"
     "- 根据回应本轮用户输入的需要，自行决定交付次数。"
     "只有本轮回应仍需补充正文时，才继续交付。写到可以把下一步交还给用户的自然停顿，就结束正文交付。"
@@ -50,9 +46,6 @@ class KeminiConfig(BaseModel):
     output_prompt: str = OUTPUT_PROMPT
     filler_text: str = ""
     disclaimer_text: str = DISCLAIMER_PROMPT
-    transport_prompt: str = TRANSPORT_PROMPT
-    tool_description: str = TOOL_DESCRIPTION
-    content_description: str = CONTENT_DESCRIPTION
 
 
 class AuxiliaryPart(BaseModel):
@@ -62,7 +55,7 @@ class AuxiliaryPart(BaseModel):
 
 
 def prefix_frames(config: KeminiConfig) -> list[dict]:
-    """An absolute preamble, outside recipe, worldbook and script depth indexing."""
+    """An absolute preamble, before the story context."""
     if not config.enabled:
         return []
     return [
@@ -77,17 +70,17 @@ def prefix_frames(config: KeminiConfig) -> list[dict]:
     ]
 
 
-def control_text(config: KeminiConfig, *, full_agent=False, story_limit_reached: bool = False) -> str:
+def control_text(config: KeminiConfig, *, story_limit_reached: bool = False) -> str:
     if not config.enabled:
         return ""
     parts = [config.thinking_prompt, config.content_prompt]
     if config.normal_disclaimer_enabled:
         parts.append(config.disclaimer_text)
-    transport_prompt = FULL_AGENT_TRANSPORT_PROMPT if full_agent else config.transport_prompt
-    if full_agent and story_limit_reached:
+    transport_prompt = STORY_TRANSPORT_PROMPT
+    if story_limit_reached:
         transport_prompt = transport_prompt.replace(
-            FULL_AGENT_TRANSPORT_HEADING,
-            f"{FULL_AGENT_TRANSPORT_HEADING}\n\n本轮已成功调用 {MAX_SEGMENTS} 次，剩余 0 次。",
+            STORY_TRANSPORT_HEADING,
+            f"{STORY_TRANSPORT_HEADING}\n\n本轮已成功调用 {MAX_SEGMENTS} 次，剩余 0 次。",
             1,
         )
     # The ST script inserts transport instructions immediately before its
@@ -96,30 +89,7 @@ def control_text(config: KeminiConfig, *, full_agent=False, story_limit_reached:
     return "\n\n".join(part for part in parts if part.strip())
 
 
-def transport_tools(
-    tools: list[dict] | None, config: KeminiConfig, choice: str | dict = "auto"
-) -> list[dict] | None:
-    """The caller's forced maintenance tool always wins; never widen that request."""
-    if not config.enabled or choice != "auto":
-        return tools
-    return [
-        *(tools or []),
-        {
-            "type": "function",
-            "function": {
-                "name": TOOL_NAME,
-                "description": config.tool_description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {"content": {"type": "string", "description": config.content_description}},
-                    "required": ["content"],
-                },
-            },
-        },
-    ]
-
-
-def turn_frames(config: KeminiConfig, *, full_agent=False, story_limit_reached: bool = False) -> list[dict]:
+def turn_frames(config: KeminiConfig, *, story_limit_reached: bool = False) -> list[dict]:
     """Request-local requirements, never historical dialogue or durable updates."""
     if not config.enabled:
         return []
@@ -130,17 +100,9 @@ def turn_frames(config: KeminiConfig, *, full_agent=False, story_limit_reached: 
             ("assistant", config.acknowledgement, "kemini_acknowledgement"),
             (
                 "user",
-                control_text(config, full_agent=full_agent, story_limit_reached=story_limit_reached),
+                control_text(config, story_limit_reached=story_limit_reached),
                 "kemini_control",
             ),
         )
         if text.strip()
     ]
-
-
-def inject_half(messages: list[dict], config: KeminiConfig) -> list[dict]:
-    if not config.enabled:
-        return messages
-    # All recipe/worldbook/script placement is already complete. The four
-    # preamble blocks cannot count as dialogue or admit application blocks.
-    return [*prefix_frames(config), *messages, *turn_frames(config)]

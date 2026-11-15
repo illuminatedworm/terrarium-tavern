@@ -35,7 +35,10 @@ const fieldNames: Record<string, string> = {
 const changes = { add: '新增', update: '覆盖', remove: '删除' };
 const origins = {
   card: { label: '书架卡更新', help: '只有书架角色卡改过，同步不会丢失对话内的变化。' },
-  story: { label: '对话内改动', help: '只有对话改过（Tracker、脚本或手工编辑），同步会还原为书架卡内容。' },
+  story: {
+    label: '对话内改动',
+    help: '只有对话改过（模型、脚本或手工编辑），同步会还原为书架卡内容。',
+  },
   both: { label: '双方都改过', help: '书架卡和对话都与开局时不同，同步会以书架卡为准。' },
 };
 

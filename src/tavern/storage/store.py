@@ -4,25 +4,26 @@ import copy
 import hashlib
 import json
 import secrets
+import shutil
 import sqlite3
 import time
 import uuid
 from contextlib import closing, contextmanager
 from pathlib import Path
 
-from tavern.character.cards import normalize, parse_card
+from tavern.character.cards import normalize, parse_card, upgrade_card_purposes
 from tavern.core.errors import NotFound
 from tavern.core.history_refs import message_ref
-from tavern.core.models import ContextRecipe, TurnRequest
+from tavern.core.models import TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime
 from tavern.core.usage import aggregate_cache_usage
-from tavern.full_agent.recovery import load_progress, resume_progress
-from tavern.memories.memory_records import new_memory
-from tavern.storage.message_adapters import MessageAdapters, recipe_types
+from tavern.storage.message_adapters import MessageAdapters
 from tavern.storage.schema import SCHEMA_VERSION as SCHEMA_VERSION
 from tavern.storage.schema import SETTINGS_VERSIONS as SETTINGS_VERSIONS
 from tavern.storage.schema import initialize_database
+from tavern.storage.session_deletion import delete_session_rows
 from tavern.storage.turn_retry import retry_head
+from tavern.story.recovery import load_progress, resume_progress
 
 
 def uid():
@@ -33,49 +34,10 @@ def dump(value):
     return json.dumps(value, ensure_ascii=False)
 
 
-def new_snapshot(agent_mode: str) -> dict:
-    snapshot = {"state": {}, "lore": {}, "scopes": {}, "content": None}
-    if agent_mode == "full_agent":
-        from tavern.full_agent.state import new_state
+def new_snapshot() -> dict:
+    from tavern.story.state import new_state
 
-        snapshot["full_agent"] = new_state()
-    else:
-        snapshot["memory_document"] = new_memory()
-    return snapshot
-
-
-def settle_message_archive(db, sid, parent, snapshot):
-    """Reduce a snapshot's archive delta to its own entries against ``parent``'s chain."""
-    from tavern.memories.memory_archive import ARCHIVE, RETIRING, settle_archive
-
-    remaining = {entry["id"] for key in (ARCHIVE, RETIRING) for entry in snapshot.get(key, [])}
-    if not remaining:
-        return settle_archive(snapshot, {})
-    # Walk nearest ancestors first; the join alone does not guarantee row order,
-    # so sort by depth. Only the candidates in this delta need comparison; stop
-    # once their latest versions are known. Empty deltas (including Full Agent
-    # turns) never read the chain.
-    rows = db.execute(
-        f"""WITH RECURSIVE chain(id, parent, depth) AS (
-            SELECT id, parent, 0 FROM messages WHERE session=? AND id=?
-            UNION ALL
-            SELECT m.id, m.parent, chain.depth + 1 FROM messages m JOIN chain ON m.id = chain.parent
-            WHERE m.session=?
-        )
-        SELECT json_extract(m.snapshot,'$.{ARCHIVE}') AS delta
-        FROM chain JOIN messages m ON m.id = chain.id
-        ORDER BY chain.depth""",
-        (sid, parent, sid),
-    )
-    inherited = {}
-    for row in rows:
-        for entry in json.loads(row["delta"]) if row["delta"] else []:
-            if entry["id"] in remaining:
-                inherited[entry["id"]] = entry
-                remaining.remove(entry["id"])
-        if not remaining:
-            break
-    return settle_archive(snapshot, inherited)
+    return {"state": {}, "lore": {}, "scopes": {}, "content": None, "story": new_state()}
 
 
 def insert_row(db, table, row):
@@ -191,6 +153,7 @@ class Store(MessageAdapters):
         document, container, resources, report = parse_card(data)
         from tavern.character.card_workflow import validate_document
 
+        upgrade_card_purposes(document)
         validate_document(document)
         card = uid()
         with self.connection() as db:
@@ -449,27 +412,25 @@ class Store(MessageAdapters):
                 db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
             )
 
-    def settings(self, mode="half_agent", channel=None):
-        settings = self.settings_document().runtime(mode, channel)
+    def settings(self, channel=None):
+        settings = self.settings_document().runtime(channel)
         generations = {
             provider.chatgpt_account_id: self.chatgpt.generation(provider.chatgpt_account_id)
             for provider in settings.providers
             if provider.auth_mode == "chatgpt_subscription" and provider.chatgpt_account_id
         }
-        for config in (settings, settings._full_runtime):
-            if config is not None:
-                config._data_root = self.root
-                config._chatgpt = self.chatgpt
-                config._auth_generations = generations.copy()
-                if config.auth_mode == "chatgpt_subscription":
-                    config._auth_generation = generations.get(config.chatgpt_account_id, "")
+        settings._data_root = self.root
+        settings._chatgpt = self.chatgpt
+        settings._auth_generations = generations
+        if settings.auth_mode == "chatgpt_subscription":
+            settings._auth_generation = generations.get(settings.chatgpt_account_id, "")
         return settings
 
     def session_settings(self, session, *, require_origin=True):
         if isinstance(session, str):
             with self.connection() as db:
                 row = db.execute(
-                    "SELECT agent_mode,channel_origin,context_strategy,compact_auto,model_selection,kemini "
+                    "SELECT channel_origin,context_strategy,compact_auto,model_selection,kemini "
                     "FROM sessions WHERE id=?",
                     (session,),
                 ).fetchone()
@@ -479,7 +440,7 @@ class Store(MessageAdapters):
         channel = session.get("channel_origin")
         if not channel and require_origin:
             raise ValueError("请先确认此旧对话的渠道归属")
-        settings = self.settings(session["agent_mode"], channel or "standard")
+        settings = self.settings(channel or "standard")
         settings.context_strategy = session.get("context_strategy", "new_context")
         settings.compact_auto = bool(session.get("compact_auto", True))
         if settings.context_strategy == "openai_compact" and channel != "chatgpt":
@@ -490,17 +451,9 @@ class Store(MessageAdapters):
         if selection:
             from tavern.core.model_selection import select_runtime
 
-            settings = select_runtime(
-                settings,
-                "full_agent" if session["agent_mode"] == "full_agent" else "foreground",
-                selection,
-                channel,
-            )
+            settings = select_runtime(settings, "story", selection, channel)
         if session["kemini"]:
-            # A Kemini conversation's identity is fixed at creation, like its channel.
-            for config in (settings, settings._full_runtime):
-                if config is not None:
-                    config.kemini.enabled = True
+            settings.kemini.enabled = True
         return settings
 
     @property
@@ -528,7 +481,7 @@ class Store(MessageAdapters):
 
     def new_session(self, options):
         document = self.settings_document()
-        channel = options.channel_origin or getattr(document, options.agent_mode).default_channel
+        channel = options.channel_origin or document.story.default_channel
         if options.kemini and not document.shared.kemini.enabled:
             raise ValueError("请先在全局设置 → 杂项启用 Kemini 式实验功能")
         if options.kemini and channel != "standard":
@@ -539,13 +492,12 @@ class Store(MessageAdapters):
         if not 0 <= options.greeting < len(greetings):
             raise ValueError("开场白不存在")
         sid, mid = uid(), uid()
-        snapshot = new_snapshot(options.agent_mode)
+        snapshot = new_snapshot()
         from tavern.character.card_workflow import validate_document
 
         validate_document(card["document"])
         raw = greetings[options.greeting]
         persona_data = self.persona(options.persona_id) if options.persona_id else {}
-        settings = self.settings()
         dependencies = self.card_manifest(card)
         now = time.time()
         with self.connection() as db:
@@ -574,15 +526,9 @@ class Store(MessageAdapters):
                     "persona": persona_data.get("name", options.persona),
                     "persona_data": dump(persona_data),
                     "policy": options.policy,
-                    "recipe": settings.context_recipe.model_dump_json(),
                     "created": now,
                     "title": card["name"],
-                    "agent_mode": options.agent_mode,
-                    "disabled_tools": dump(["present_ui"] if options.agent_mode == "full_agent" else []),
-                    # Full Agent keeps worldbook entries inside the conversation it manages.
-                    "lore_injection_mode": (
-                        "conversation" if options.agent_mode == "full_agent" else settings.lore_injection_mode
-                    ),
+                    "disabled_tools": dump(["present_ui"]),
                     "card_data": dump({**card, "session_id": sid, "dependencies": dependencies}),
                     "channel_origin": channel,
                     "kemini": int(options.kemini),
@@ -604,7 +550,7 @@ class Store(MessageAdapters):
                     "created": now,
                 },
             )
-            self.create_message_adapter(db, "story", sid, options.agent_mode)
+            self.create_message_adapter(db, "story", sid)
         return self.session(sid)
 
     def fork_session(self, sid, head, expected_revision, *, confirm_novel=False):
@@ -662,12 +608,10 @@ class Store(MessageAdapters):
                 title, suffix = f"{base_title} · 副本 {suffix}", suffix + 1
             ids = {m["id"]: uid() for m in prefix}
             copies = []
-            for position, message in enumerate(prefix):
+            for message in prefix:
                 cloned = copy.deepcopy(message)
                 cloned.update(id=ids[message["id"]], session=new_sid, parent=ids.get(message["parent"]))
-                remap_snapshot(
-                    cloned["snapshot"], ids, prefix[: position + 1], copies + [cloned], new_story=True
-                )
+                remap_snapshot(cloned["snapshot"], ids)
                 copies.append(cloned)
             # Every story setting carries over; only identity, progress and references are rewritten.
             insert_row(
@@ -727,7 +671,6 @@ class Store(MessageAdapters):
                 )
             ]
             result = dict(row)
-            result["recipe"] = recipe_types(ContextRecipe.model_validate_json(result["recipe"]).model_dump())
             result["model_selection"] = json.loads(result["model_selection"])
             result["persona_data"] = json.loads(result["persona_data"])
             result["disabled_tools"] = json.loads(result["disabled_tools"])
@@ -742,9 +685,7 @@ class Store(MessageAdapters):
             ).fetchone()[0]
         result["messages"] = self.history(sid, result["head"])
         result["snapshot"] = (
-            copy.deepcopy(result["messages"][-1]["snapshot"])
-            if result["messages"]
-            else new_snapshot(result["agent_mode"])
+            copy.deepcopy(result["messages"][-1]["snapshot"]) if result["messages"] else new_snapshot()
         )
         result["opening_editable"] = (
             not result["opening_locked"]
@@ -753,10 +694,9 @@ class Store(MessageAdapters):
             and result["messages"][0]["parent"] is None
             and not any(t["status"] in ("queued", "running", "awaiting_review") for t in turns)
         )
-        if result["agent_mode"] == "full_agent":
-            from tavern.full_agent.state import read_full_state
+        from tavern.story.state import read_story_state
 
-            read_full_state(result["snapshot"])
+        read_story_state(result["snapshot"])
         settings = self.session_settings(result, require_origin=False)
         result["compact_auto"] = bool(result["compact_auto"])
         result["plot_enabled"] = bool(result["plot_enabled"])
@@ -776,15 +716,8 @@ class Store(MessageAdapters):
         result["cache_breakpoint_follow"] = advance_follow(
             result["messages"], json.loads(result["cache_breakpoint_follow"])
         )
-        result["cache_breakpoint_effective_id"] = effective_message_id(
-            result, settings.for_role("full_agent" if result["agent_mode"] == "full_agent" else "foreground")
-        )
+        result["cache_breakpoint_effective_id"] = effective_message_id(result)
         result["cache_breakpoint_reason"] = breakpoint_reason(result, result["cache_breakpoint_effective_id"])
-        from tavern.memories.memory_archive import read_archive, with_archive_status
-        from tavern.memories.memory_records import read_memory, with_source_status
-
-        result["memory_view"] = with_source_status(read_memory(result["snapshot"]), result["messages"])
-        result["archived_memory"] = with_archive_status(read_archive(result["messages"]), result["messages"])
         return result
 
     def sessions(self):
@@ -813,27 +746,22 @@ class Store(MessageAdapters):
             db.execute("BEGIN IMMEDIATE")
             if not db.execute("SELECT 1 FROM sessions WHERE id=?", (sid,)).fetchone():
                 raise NotFound("会话不存在")
-            db.execute("DELETE FROM changes WHERE turn IN (SELECT id FROM turns WHERE session=?)", (sid,))
-            db.execute("DELETE FROM events WHERE turn IN (SELECT id FROM turns WHERE session=?)", (sid,))
-            db.execute("DELETE FROM turns WHERE session=?", (sid,))
-            db.execute("DELETE FROM full_agent_trace WHERE session=?", (sid,))
-            db.execute("DELETE FROM context_operations WHERE session=?", (sid,))
-            db.execute("DELETE FROM messages WHERE session=?", (sid,))
-            db.execute(
-                "DELETE FROM context_token_samples WHERE owner IN "
-                "(SELECT 'novel:' || id FROM novel_jobs WHERE session=?)",
-                (sid,),
-            )
-            db.execute("DELETE FROM sessions WHERE id=?", (sid,))
-            db.execute("DELETE FROM sent_cache_breakpoints WHERE owner=?", (sid,))
-            db.execute(
-                "DELETE FROM context_token_samples WHERE owner IN (?,?)", ("story:" + sid, "advisor:" + sid)
-            )
-            from tavern.storage.retrieval_cleanup import prune_orphan_retrieval
-
-            prune_orphan_retrieval(db)
+            delete_session_rows(db, "id=?", (sid,))
         if card:
             self.prune_card_assets(card, manifest)
+
+    def prune_turn_runs(self, turn_ids):
+        """Remove derived run diagnostics after the owning story is gone."""
+        runs = (self.root / "runs").resolve()
+        for tid in turn_ids:
+            for path in runs.glob(f"{tid}*"):
+                resolved = path.resolve()
+                if resolved.parent != runs:
+                    raise ValueError("会话运行文件路径无效")
+                if resolved.is_dir():
+                    shutil.rmtree(resolved)
+                else:
+                    resolved.unlink(missing_ok=True)
 
     def history(self, sid, head):
         with self.connection() as db:
@@ -985,7 +913,6 @@ class Store(MessageAdapters):
                 "head",
                 "persona",
                 "policy",
-                "recipe",
                 "persona_data",
                 "turn_preference",
                 "update_variables",
@@ -1091,53 +1018,6 @@ class Store(MessageAdapters):
         )
         db.execute("UPDATE sessions SET cache_breakpoint_follow=? WHERE id=?", (dump(follow), sid))
 
-    def edit_memory_record(self, sid, edit):
-        from tavern.memories.memory_records import install_memory, manual_edit, read_memory
-
-        session = self.session(sid)
-        if not session["head"]:
-            raise ValueError("当前分支没有可保存档案的消息")
-        snapshot = copy.deepcopy(session["snapshot"])
-        memory = read_memory(snapshot)
-        if edit.action != "add" and not any(r["id"] == edit.id for r in memory["records"]):
-            from tavern.memories.memory_archive import edit_archive
-
-            edit_archive(snapshot, session["messages"], edit)
-            return self._save_memory_snapshot(sid, session, snapshot, edit.expected_revision)
-        memory = manual_edit(memory, edit)
-        if edit.action != "delete":
-            from tavern.memories.memory_retention import retain_memory
-
-            memory = retain_memory(memory, session["messages"], self.settings().for_role("background"))
-        install_memory(snapshot, memory)
-        return self._save_memory_snapshot(sid, session, snapshot, edit.expected_revision)
-
-    def _save_memory_snapshot(self, sid, session, snapshot, expected_revision):
-        with self.connection() as db:
-            db.execute("BEGIN IMMEDIATE")
-            if db.execute(
-                "SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)
-            ).fetchone():
-                raise Conflict("请先完成或取消上下文整理")
-            if db.execute(
-                "SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')",
-                (sid,),
-            ).fetchone():
-                raise Conflict("请先完成或取消当前回合")
-            result = db.execute(
-                "UPDATE sessions SET revision=revision+1 WHERE id=? AND revision=? AND head=?",
-                (sid, expected_revision, session["head"]),
-            )
-            if result.rowcount != 1:
-                raise Conflict("会话已改变，请刷新后重试")
-            head = db.execute("SELECT parent FROM messages WHERE id=?", (session["head"],)).fetchone()
-            settle_message_archive(db, sid, head["parent"], snapshot)
-            db.execute(
-                "UPDATE messages SET snapshot=? WHERE id=? AND session=?",
-                (dump(snapshot), session["head"], sid),
-            )
-        return self.session(sid)
-
     def save_opening(self, session, greeting):
         """Publish text and its initialized state together, after the async sandbox finishes."""
         sid = session["id"]
@@ -1186,14 +1066,10 @@ class Store(MessageAdapters):
                 if TurnRequest.model_validate_json(existing["request"]).model_dump() != request.model_dump():
                     raise Conflict("相同 operation_id 不能用于不同请求")
                 return existing["id"], False
-            session = db.execute(
-                "SELECT revision,agent_mode,kemini,head FROM sessions WHERE id=?", (sid,)
-            ).fetchone()
+            session = db.execute("SELECT revision,kemini,head FROM sessions WHERE id=?", (sid,)).fetchone()
             if not session:
                 raise NotFound("会话不存在")
-            # Kemini conversations never fall back to ordinary requests. Scene
-            # refresh runs only Tracker, which the experiment never touches.
-            if session["kemini"] and not experiment_allowed and not request.scene_refresh:
+            if session["kemini"] and not experiment_allowed:
                 raise ValueError("Kemini 式实验功能已在全局设置 → 杂项关闭；重新启用后才能继续此对话")
             if session[0] != request.expected_revision:
                 raise Conflict("会话已改变，请刷新后重试")
@@ -1212,8 +1088,6 @@ class Store(MessageAdapters):
                 if target != session["head"] or user is None:
                     raise ValueError("只能修改当前分支最新一轮的用户输入并重试")
             if request.resume_turn_id:
-                if session["agent_mode"] != "full_agent":
-                    raise Conflict("只有 Full Agent 回合可续接工具调用")
                 source = db.execute(
                     "SELECT session,status,request FROM turns WHERE id=?", (request.resume_turn_id,)
                 ).fetchone()
@@ -1228,7 +1102,7 @@ class Store(MessageAdapters):
                 ):
                     raise Conflict("只能续接当前会话最新的失败或中断回合")
                 if not db.execute(
-                    "SELECT 1 FROM full_agent_progress WHERE turn=?", (request.resume_turn_id,)
+                    "SELECT 1 FROM story_progress WHERE turn=?", (request.resume_turn_id,)
                 ).fetchone():
                     raise Conflict("此回合没有可续接进度；已拒绝的审核草稿不能恢复，请重新开始")
                 previous = TurnRequest.model_validate_json(source["request"])
@@ -1240,8 +1114,6 @@ class Store(MessageAdapters):
                     "message_id",
                     "allow_content_edit",
                     "update_variables",
-                    "generate",
-                    "scene_refresh",
                     "regenerate_include_reply",
                     "replacement_text",
                 )
@@ -1255,10 +1127,8 @@ class Store(MessageAdapters):
             restarts_attempt = bool(
                 prior_attempt and prior_attempt["status"] in {"error", "cancelled", "interrupted"}
             )
-            if (
-                session["agent_mode"] == "full_agent"
-                and not request.resume_turn_id
-                and (request.mode == "regenerate" or request.replacement_text is not None or restarts_attempt)
+            if not request.resume_turn_id and (
+                request.mode == "regenerate" or request.replacement_text is not None or restarts_attempt
             ):
                 from tavern.novel.storage import invalidate as invalidate_novel
 
@@ -1272,20 +1142,18 @@ class Store(MessageAdapters):
                 db.execute("UPDATE sessions SET opening_locked=1 WHERE id=?", (sid,))
             if request.resume_turn_id:
                 row = db.execute(
-                    "SELECT payload FROM full_agent_progress WHERE turn=?", (request.resume_turn_id,)
+                    "SELECT payload FROM story_progress WHERE turn=?", (request.resume_turn_id,)
                 ).fetchone()
                 if row:
                     progress = resume_progress(json.loads(row["payload"]))
-                    db.execute(
-                        "INSERT INTO full_agent_progress(turn,payload) VALUES (?,?)", (tid, dump(progress))
-                    )
+                    db.execute("INSERT INTO story_progress(turn,payload) VALUES (?,?)", (tid, dump(progress)))
                     trace = progress["new_trace"]
                     for index, item in enumerate(trace):
                         message = item["message"]
                         if (
                             message["role"] != "assistant"
-                            or message.get("_full_agent_final")
-                            or message.get("_full_agent_rejected")
+                            or message.get("_story_final")
+                            or message.get("_story_rejected")
                         ):
                             continue
                         assistant_seq = index + 1
@@ -1294,7 +1162,7 @@ class Store(MessageAdapters):
                                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
                                 (
                                     tid,
-                                    "full_agent_assistant",
+                                    "story_assistant",
                                     dump(
                                         {
                                             "activity_id": f"text-{assistant_seq}",
@@ -1325,7 +1193,7 @@ class Store(MessageAdapters):
                                 continue
                             db.execute(
                                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
-                                (tid, "full_agent_tool_started", dump(activity), time.time()),
+                                (tid, "story_tool_started", dump(activity), time.time()),
                             )
                             if call["id"] in message.get("_unicode_story_arguments", {}):
                                 activity["decoded_arguments"] = message["_unicode_story_arguments"][
@@ -1335,51 +1203,56 @@ class Store(MessageAdapters):
                                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
                                 (
                                     tid,
-                                    "full_agent_tool",
+                                    "story_tool",
                                     dump({**activity, "result": json.loads(result)}),
                                     time.time(),
                                 ),
                             )
         return tid, True
 
-    def full_agent_progress(self, tid):
+    def story_progress(self, tid):
         with self.connection() as db:
-            row = db.execute("SELECT payload FROM full_agent_progress WHERE turn=?", (tid,)).fetchone()
+            row = db.execute("SELECT payload FROM story_progress WHERE turn=?", (tid,)).fetchone()
         return load_progress(json.loads(row["payload"])) if row else None
+
+    def review_turn(self, tid, accept):
+        turn = self.turn(tid)
+        if turn["status"] != "awaiting_review":
+            raise Conflict("此回合没有待审核变更")
+        if accept:
+            self.commit_turn(tid, turn["pending"])
+        else:
+            self.reject_review(tid)
+        return self.turn(tid)
 
     def reject_review(self, tid):
         """Explicit rejection retires executable work but preserves its audit trail."""
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                "SELECT s.agent_mode FROM turns t JOIN sessions s ON s.id=t.session WHERE t.id=?", (tid,)
-            ).fetchone()
-            clear_draft = ",draft='',preview=NULL" if row and row["agent_mode"] == "full_agent" else ""
             result = db.execute(
-                f"UPDATE turns SET status='cancelled',pending=NULL{clear_draft} "
+                "UPDATE turns SET status='cancelled',pending=NULL,draft='',preview=NULL "
                 "WHERE id=? AND status='awaiting_review'",
                 (tid,),
             )
             if result.rowcount != 1:
                 raise Conflict("此回合没有待审核变更")
-            db.execute("DELETE FROM full_agent_progress WHERE turn=?", (tid,))
-            if clear_draft:
-                db.execute(
-                    "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
-                    (tid, "text_reset", dump({"text": ""}), time.time()),
-                )
+            db.execute("DELETE FROM story_progress WHERE turn=?", (tid,))
+            db.execute(
+                "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
+                (tid, "text_reset", dump({"text": ""}), time.time()),
+            )
             db.execute(
                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
                 (tid, "cancelled", dump({"reason": "review_rejected", "resumable": False}), time.time()),
             )
         return self.turn(tid)
 
-    def save_full_agent_progress(self, tid, progress):
+    def save_story_progress(self, tid, progress):
         destroyed = set()
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
-                "INSERT OR REPLACE INTO full_agent_progress(turn,payload) VALUES (?,?)", (tid, dump(progress))
+                "INSERT OR REPLACE INTO story_progress(turn,payload) VALUES (?,?)", (tid, dump(progress))
             )
             deliveries = [
                 item["message"]["_novel_mail"]
@@ -1424,7 +1297,7 @@ class Store(MessageAdapters):
             if r is None:
                 raise NotFound("回合不存在")
             resumable = r["status"] in ("error", "cancelled", "interrupted") and bool(
-                db.execute("SELECT 1 FROM full_agent_progress WHERE turn=?", (tid,)).fetchone()
+                db.execute("SELECT 1 FROM story_progress WHERE turn=?", (tid,)).fetchone()
             )
             # Consecutive failed continuations replay the same saved context, so
             # the page can suggest a fresh start. Only the latest failed turn can
@@ -1446,7 +1319,7 @@ class Store(MessageAdapters):
             from tavern.conversation.update_review import review_changes
 
             pending = result["pending"]
-            after = (pending.get("scene") or (pending.get("messages") or [{}])[-1]).get("snapshot", {})
+            after = pending["messages"][-1]["snapshot"]
             pending["review_changes"] = review_changes(
                 pending.get("before", {}), after, self.session_card(result["session"])["document"]
             )
@@ -1525,7 +1398,7 @@ class Store(MessageAdapters):
         items = []
         for row in rows[:limit]:
             req = json.loads(row["request"])
-            kind = req.get("scene_refresh") or ("maintenance" if req.get("allow_content_edit") else "send")
+            kind = "maintenance" if req.get("allow_content_edit") else "send"
             items.append(
                 {
                     "id": row["id"],
@@ -1540,12 +1413,12 @@ class Store(MessageAdapters):
         return {"items": items, "total": total, "next": items[-1]["id"] if len(rows) > limit else None}
 
     def work_events(self, sid, tid, after=0, limit=50):
-        from tavern.conversation.work_records import background_records, compact_record
+        from tavern.conversation.work_records import compact_record, work_records
 
         turn = self.turn(tid)
         if turn["session"] != sid:
             raise NotFound("回合不属于当前会话")
-        records = [event for event in background_records(self.events(tid)) if event["seq"] > after]
+        records = [event for event in work_records(self.events(tid)) if event["seq"] > after]
         items = [compact_record(event) for event in records[:limit]]
         return {"items": items, "next": items[-1]["seq"] if len(records) > limit else None}
 
@@ -1607,39 +1480,15 @@ class Store(MessageAdapters):
             ).fetchone()
             if "anchor" not in json.loads(current["cache_breakpoint_follow"]):
                 self._update_cache_follow(db, turn["session"], current["head"])
-            scene = pending.get("scene")
-            if scene and not req.get("scene_refresh"):
-                raise ValueError("当前回合不允许更新场景档案")
-            last = scene["message_id"] if scene else pending["messages"][-1]["id"]
-            # Every persisted snapshot keeps only its own archive delta; drafts
-            # carry copies of their parent's delta (see memory_archive).
-            if scene:
-                target = db.execute("SELECT parent FROM messages WHERE id=?", (last,)).fetchone()
-                scene = {
-                    **scene,
-                    "snapshot": settle_message_archive(
-                        db,
-                        turn["session"],
-                        target["parent"] if target else None,
-                        copy.deepcopy(scene["snapshot"]),
-                    ),
-                }
-            after = scene["snapshot"] if scene else pending["messages"][-1]["snapshot"]
+            last = pending["messages"][-1]["id"]
+            after = pending["messages"][-1]["snapshot"]
             r = db.execute(
                 "UPDATE sessions SET head=?,revision=revision+1 WHERE id=? AND revision=?",
                 (last, turn["session"], req["expected_revision"]),
             )
             if r.rowcount != 1:
                 raise Conflict("会话版本冲突；草稿未提交")
-            if scene:
-                r = db.execute(
-                    "UPDATE messages SET snapshot=? WHERE id=? AND session=?",
-                    (dump(after), last, turn["session"]),
-                )
-                if r.rowcount != 1:
-                    raise Conflict("场景档案的目标消息不存在")
-            for m in pending.get("messages", []):
-                settle_message_archive(db, turn["session"], m["parent"], m["snapshot"])
+            for m in pending["messages"]:
                 db.execute(
                     "INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created,"
                     "retrieval_query,auxiliary,story_segments,ooc) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -1660,17 +1509,12 @@ class Store(MessageAdapters):
                     ),
                 )
             self._update_cache_follow(
-                db, turn["session"], last, advance=not scene and req.get("mode", "send") != "regenerate"
+                db, turn["session"], last, advance=req.get("mode", "send") != "regenerate"
             )
-            for seq, item in enumerate(pending.get("full_agent_trace", []), 1):
+            for seq, item in enumerate(pending.get("story_trace", []), 1):
                 db.execute(
-                    "INSERT INTO full_agent_trace VALUES (?,?,?,?,?)",
+                    "INSERT INTO story_trace VALUES (?,?,?,?,?)",
                     (turn["session"], last, seq, item["window_id"], dump(item["message"])),
-                )
-            if record := pending.get("half_agent_record"):
-                db.execute(
-                    "INSERT INTO half_agent_trace VALUES (?,?,?,?,?)",
-                    (turn["session"], last, 1, record["window"], dump(record)),
                 )
             if original := pending.get("version_of"):
                 from tavern.storage.message_copy import copy_traces
@@ -1689,7 +1533,7 @@ class Store(MessageAdapters):
                 ),
             )
             db.execute("UPDATE turns SET status='committed',pending=NULL WHERE id=?", (tid,))
-            db.execute("DELETE FROM full_agent_progress WHERE turn=?", (tid,))
+            db.execute("DELETE FROM story_progress WHERE turn=?", (tid,))
             # The terminal event and authoritative state share one transaction.
             # An observer must never see committed state without its final event.
             db.execute(

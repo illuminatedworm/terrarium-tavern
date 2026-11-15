@@ -1,5 +1,4 @@
 import asyncio
-import copy
 import json
 import zipfile
 
@@ -7,7 +6,7 @@ import httpx
 import pytest
 
 from tavern.application.api import create_app
-from tavern.application.modes import ModeRuntime
+from tavern.application.service import StoryService
 from tavern.character.card_author import CardAuthorService
 from tavern.chatgpt import API_ROOT
 from tavern.chatgpt.errors import ChatGPTError
@@ -15,7 +14,6 @@ from tavern.core.models import CardAuthorRequest, SessionCreate, TurnRequest
 from tavern.storage.backup import backup, restore
 from tavern.storage.store import Store, uid
 from tavern.storage.transfer import ExportSelection, export_package, read_package
-from tavern.tracker.task import TrackerTask
 from tests.backend.chatgpt_fixtures import (
     ACCESS,
     CLIENT,
@@ -41,37 +39,29 @@ def connected_store(root):
         False,
     )
     doc.shared.network.api_proxy = False
-    doc.full_agent.default_channel = doc.half_agent.default_channel = "chatgpt"
-    doc.full_agent.official_model = doc.full_agent.model.model_copy(deep=True)
-    doc.half_agent.official_foreground = doc.half_agent.foreground.model_copy(deep=True)
-    doc.half_agent.official_background = doc.half_agent.background.model_copy(deep=True)
+    doc.story.default_channel = "chatgpt"
+    doc.story.official_model = doc.story.model.model_copy(deep=True)
     for profile, name in (
-        (doc.full_agent.official_model, "fixture-full"),
-        (doc.half_agent.official_foreground, "fixture-writer"),
-        (doc.half_agent.official_background, "fixture-tracker"),
+        (doc.story.official_model, "fixture-full"),
         (doc.shared.card_author, "fixture-editor"),
     ):
         profile.provider_id = provider.id
         profile.model = name
-    doc.full_agent.tools.auto_retrieval = False
-    doc.half_agent.chunk_mode = "off"
-    doc.half_agent.memory_interval_turns = 100
-    doc.half_agent.retrieval.channels = ["keyword"]
+    doc.story.tools.auto_retrieval = False
     store.save_settings(doc)
     return store, identity, account_id
 
 
-def story(store, mode="half_agent"):
+def story(store):
     card = store.import_card(
         json.dumps({"name": "旅人", "first_mes": "你站在门前。", "description": "完整的人物设定"}).encode(),
     )
-    return card, store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
+    return card, store.new_session(SessionCreate(card_id=card["id"]))
 
 
-@pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
-async def test_real_story_engines_use_subscription_and_commit_only_completed_rounds(tmp_path, mode):
+async def test_story_uses_subscription_and_commits_only_completed_rounds(tmp_path):
     store, _, _ = connected_store(tmp_path)
-    _, session = story(store, mode)
+    _, session = story(store)
     calls = []
     fail = False
 
@@ -91,52 +81,43 @@ async def test_real_story_engines_use_subscription_and_commit_only_completed_rou
                     },
                 ]
             )
-        if mode == "full_agent":
-            if len(calls) == 1:
-                return sse(completed("", [("read_history", {"ref": "H1"})]))
-            if len(calls) == 2:
-                return sse(completed("", [("submit_story", {"content": "她推开门，完整的故事继续。"})]))
-            return sse(completed(""))
-        return sse(completed("她推开门，完整的故事继续。"))
+        if len(calls) == 1:
+            return sse(completed("", [("read_history", {"ref": "H1"})]))
+        if len(calls) == 2:
+            return sse(completed("", [("submit_story", {"content": "她推开门，完整的故事继续。"})]))
+        return sse(completed(""))
 
     store.chatgpt.http_transport = httpx.MockTransport(model)
-    runtime = ModeRuntime(store)
+    runtime = StoryService(store)
     try:
-        turn = runtime.submit(
+        turn = runtime.story.submit(
             session["id"], TurnRequest(text="我走进门。", operation_id="success", expected_revision=0)
         )
-        await runtime.tasks[turn["id"]]
+        await runtime.story.tasks[turn["id"]]
         saved = store.turn(turn["id"])
         assert saved["status"] == "committed", saved.get("error")
         current = store.session(session["id"])
         assert current["messages"][-1]["raw"] == "她推开门，完整的故事继续。"
-        assert all(
-            body["model"] == ("fixture-full" if mode == "full_agent" else "fixture-writer") for body in calls
+        assert all(body["model"] == "fixture-full" for body in calls)
+        assert len(calls) == 3
+        for body in calls:
+            assert [item["role"] for item in body["input"][:3]] == ["developer"] * 3
+            assert body["input"][0]["content"] == store.settings().story_system_prompt
+            assert body["input"][1]["content"].startswith("# 剧情工具协议")
+            assert body["input"][2]["content"].startswith("本次上下文窗口上限为")
+            assert body["tools"][0]["type"] == "namespace"
+            assert body["tools"][0]["name"] == "tavern"
+            assert all("tools" not in item for item in body["input"])
+        assert any(
+            item.get("type") == "function_call_output" and item.get("namespace") == "tavern"
+            for item in calls[1]["input"]
         )
-        if mode == "half_agent":
-            assert (
-                store.root / "runs" / f"{turn['id']}.kohakutr"
-            ).exists()  # Real Terrarium, not ScriptedLLM.
-        else:
-            assert len(calls) == 3
-            for body in calls:
-                assert [item["role"] for item in body["input"][:3]] == ["developer"] * 3
-                assert body["input"][0]["content"] == store.settings().full_agent_system_prompt
-                assert body["input"][1]["content"].startswith("# Full Agent 工具协议")
-                assert body["input"][2]["content"].startswith("本次上下文窗口上限为")
-                assert body["tools"][0]["type"] == "namespace"
-                assert body["tools"][0]["name"] == "tavern"
-                assert all("tools" not in item for item in body["input"])
-            assert any(
-                item.get("type") == "function_call_output" and item.get("namespace") == "tavern"
-                for item in calls[1]["input"]
-            )
         fail = True
-        failed = runtime.submit(
+        failed = runtime.story.submit(
             session["id"],
             TurnRequest(text="下一步。", operation_id="failure", expected_revision=current["revision"]),
         )
-        await runtime.tasks[failed["id"]]
+        await runtime.story.tasks[failed["id"]]
         assert store.turn(failed["id"])["status"] != "committed"
         assert store.session(session["id"])["head"] == current["head"]
         assert store.session(session["id"])["snapshot"] == current["snapshot"]
@@ -153,37 +134,7 @@ async def test_real_story_engines_use_subscription_and_commit_only_completed_rou
         await runtime.close()
 
 
-async def test_tracker_uses_namespace_tools_and_returns_complete_result(tmp_path):
-    store, _, _ = connected_store(tmp_path)
-    card, session = story(store)
-    requests = []
-
-    def model(request):
-        body = json.loads(request.content)
-        requests.append(body)
-        if len(requests) == 1:
-            name = next(tool["name"] for tool in body["tools"][0]["tools"] if tool["name"] == "read_state")
-            return sse(completed("", [(name, {})]))
-        return sse(completed("已核对当前资料。"))
-
-    store.chatgpt.http_transport = httpx.MockTransport(model)
-    task = TrackerTask(
-        store,
-        "tracker-test",
-        store.settings(),
-        session,
-        card["document"],
-        session["messages"],
-        session["snapshot"],
-        phase="post",
-    )
-    await task.run()
-    assert task.completed and task.summary == "已核对当前资料。"
-    assert len(requests) == 2 and all(request["model"] == "fixture-tracker" for request in requests)
-    assert requests[1]["input"][-1]["type"] == "function_call_output"
-
-
-async def test_card_author_and_nested_script_requests_share_account_resolution(tmp_path, monkeypatch):
+async def test_card_author_uses_its_configured_subscription_account(tmp_path):
     store, _, _ = connected_store(tmp_path)
     requests = []
 
@@ -211,28 +162,6 @@ async def test_card_author_and_nested_script_requests_share_account_resolution(t
         assert requests[0]["model"] == "fixture-editor" and requests[0]["tools"][0]["name"] == "tavern"
     finally:
         await editor.close()
-    _, session = story(store)
-    runtime = ModeRuntime(store)
-    original_open = runtime.half.runtime.open
-
-    async def open_with_script(document, history, snapshot, permission, host, *args, **kwargs):
-        original = copy.deepcopy(snapshot)
-        assert await host("generate", {"user_input": "脚本嵌套请求"}) == "嵌套与正文回复。"
-        assert original == snapshot
-        return await original_open(document, history, snapshot, permission, host, *args, **kwargs)
-
-    monkeypatch.setattr(runtime.half.runtime, "open", open_with_script)
-    try:
-        task = runtime.submit(
-            session["id"], TurnRequest(text="继续。", operation_id=uid(), expected_revision=0)
-        )
-        await runtime.tasks[task["id"]]
-        assert store.turn(task["id"])["status"] == "committed", store.turn(task["id"])["error"]
-        records = [item["payload"] for item in store.events(task["id"]) if item["kind"] == "provider_request"]
-        assert {item["purpose"] for item in records} >= {"script", "narrative"}
-        assert all(body["stream"] for body in requests)
-    finally:
-        await runtime.close()
 
 
 async def test_catalog_probe_and_local_api_do_not_leak_credentials(tmp_path):
@@ -252,10 +181,10 @@ async def test_catalog_probe_and_local_api_do_not_leak_credentials(tmp_path):
         False,
     )
     doc.shared.network.api_proxy = False
-    doc.half_agent.official_foreground = doc.half_agent.foreground.model_copy(
+    doc.story.official_model = doc.story.model.model_copy(
         update={"provider_id": "official", "model": "fixture"}
     )
-    doc.half_agent.default_channel = "chatgpt"
+    doc.story.default_channel = "chatgpt"
     store.save_settings(doc)
     identity.catalog = [
         {"slug": "z-last-alphabetically", "display_name": "首选模型", "visibility": "list"},
@@ -292,7 +221,7 @@ async def test_catalog_probe_and_local_api_do_not_leak_credentials(tmp_path):
         assert (
             await api.get("/api/settings/models", params={"provider_id": "official"})
         ).json() == catalog.json()
-        probe = await api.post("/api/settings/probe?role=foreground", json={})
+        probe = await api.post("/api/settings/probe?role=story", json={})
         assert probe.status_code == 200, probe.text
         assert probe.json()["capability"] == "accepted"
         editor = (await api.post("/api/settings/edit-sessions", json={})).json()
@@ -306,7 +235,7 @@ async def test_catalog_probe_and_local_api_do_not_leak_credentials(tmp_path):
         assert (await api.get("/api/settings/models", params={"provider_id": "official"})).json()[
             "models"
         ] == []
-        assert (await api.post("/api/settings/probe?role=foreground", json={})).json()[
+        assert (await api.post("/api/settings/probe?role=story", json={})).json()[
             "code"
         ] == "sign_in_required"
     await accounts.close()
@@ -348,7 +277,7 @@ async def test_operation_snapshot_cannot_silently_take_new_authorization(tmp_pat
     generation = snapshot._auth_generation
     seed_account(store.chatgpt, account_id=account_id)
     assert store.settings()._auth_generation != generation
-    for role in ("foreground", "background", "full_agent", "card_author"):
+    for role in ("story", "card_author"):
         config = snapshot.for_role(role)
         assert config._auth_generation == generation
         with pytest.raises(ChatGPTError, match="sign_in_required"):

@@ -9,22 +9,21 @@ from pathlib import Path
 
 import httpx
 import pytest
-from kohakuterrarium.testing.llm import ScriptedLLM
 
 from tavern.application.api import create_app
 from tavern.core.models import PersonaEdit, SessionCreate, TurnRequest
 from tavern.core.ooc import ooc_block
-from tavern.full_agent.activity import message_items
-from tavern.memories.memory import fingerprint, window_valid
+from tavern.storage.legacy_story import OLD_STORY_KEY, RETIRED_STORY_KEY
 from tavern.storage.store import Conflict, Store, dump, uid
-from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
-from tests.backend.test_full_agent import Model
+from tavern.storage.transfer import ExportSelection, export_package, import_package, preview, read_package
+from tavern.story.activity import message_items
+from tests.backend.test_story import Model
 
 
-def seed(store, mode="half_agent", **fields):
+def seed(store, **fields):
     card = store.import_card(json.dumps({"name": "旅人", "first_mes": "故事开始。", **fields}).encode())
     persona = store.save_persona(None, PersonaEdit(name="玩家", description="寻找钟楼"))
-    session = store.new_session(SessionCreate(card_id=card["id"], persona_id=persona["id"], agent_mode=mode))
+    session = store.new_session(SessionCreate(card_id=card["id"], persona_id=persona["id"]))
     return card, persona, session
 
 
@@ -32,15 +31,56 @@ def package(store, **options):
     return read_package(export_package(store, ExportSelection(**options)), store)
 
 
-@pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
-async def test_imported_story_commits_next_round_with_pinned_resources_and_context(tmp_path, mode):
+def previous_story_keys(bundle):
+    for message in bundle["messages"]:
+        snapshot = message["snapshot"]
+        snapshot[OLD_STORY_KEY] = snapshot.pop("story")
+    traces = bundle.pop("story_trace")
+    bundle[f"{OLD_STORY_KEY}_trace"] = traces
+    for trace in traces:
+        message = trace["payload"]
+        if "_story_final" in message:
+            message[f"_{OLD_STORY_KEY}_final"] = message.pop("_story_final")
+    config = bundle["adapter"]["config"]
+    config[OLD_STORY_KEY] = config.pop("story")
+
+
+def test_legacy_mixed_package_preview_and_import_preserve_supported_stories(tmp_path):
+    store = Store(tmp_path)
+    card, _, kept = seed(store)
+    _, _, old = seed(store, name="旧故事的独占名片")
+    payload, blobs = package(store, cards=[card["id"]], sessions=[kept["id"], old["id"]])
+    payload["version"] = 13
+    for bundle, marker in zip(payload["sessions"], (OLD_STORY_KEY, RETIRED_STORY_KEY), strict=True):
+        bundle["session"].update(agent_mode=marker, recipe={}, lore_injection_mode="conversation")
+        previous_story_keys(bundle)
+    payload["sessions"][0]["adapter"]["config"][OLD_STORY_KEY]["mappings"]["chat_completions"] = {
+        "handoff": {"role": "user", "wrap": False},
+        "memory": {"role": "user", "wrap": True},
+    }
+    payload["sessions"][1].update(
+        messages=[], **{f"{RETIRED_STORY_KEY}_trace": [{"payload": "obsolete format"}]}
+    )
+    assert [item["id"] for item in preview(payload)["sessions"]] == [kept["id"]]
+    assert preview(payload)["skipped_sessions"] == [old["title"]]
+    result = import_package(store, payload, blobs)
+    assert len(result["sessions"]) == len(result["cards"]) == 1
+    restored = store.session(result["sessions"][0])
+    assert restored["card"] == result["cards"][0]
+    assert restored["messages"][0]["raw"] == kept["messages"][0]["raw"]
+    adapter = store.message_adapter_settings("story", restored["id"])
+    assert adapter["config"]["story"]["mappings"]["chat_completions"] == {
+        "handoff": {"role": "user", "wrap": False},
+    }
+
+
+async def test_imported_story_commits_next_round_with_pinned_resources_and_context(tmp_path):
     source_app = create_app(tmp_path / "source")
     source, engine = source_app.state.store, source_app.state.service
     target_app = create_app(tmp_path / "target")
     target, target_engine = target_app.state.store, target_app.state.service
     card, persona, session = seed(
         source,
-        mode,
         first_mes="原开场。<initvar>hp: 100\nold: true</initvar>",
         extensions={
             "regex_scripts": [
@@ -54,25 +94,20 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
             ]
         },
     )
-    if mode == "full_agent":
-        settings = source.settings_document()
-        settings.shared.unicode_story_enabled = True
-        source.save_settings(settings)
-        with source.connection() as db:
-            db.execute("UPDATE sessions SET unicode_story=1 WHERE id=?", (session["id"],))
+    settings = source.settings_document()
+    settings.shared.unicode_story_enabled = True
+    source.save_settings(settings)
+    with source.connection() as db:
+        db.execute("UPDATE sessions SET unicode_story=1 WHERE id=?", (session["id"],))
     delivery = "她⟦70B9 5934⟧。"
-    model = (
-        Model(
-            ("read_history", {"ref": "H2"}),
-            ("write_note", {"key": "约定", "content": "一起去钟楼", "kind": "fact", "sources": ["H2"]}),
-            {"calls": [("submit_story", {"content": delivery})], "finish_reason": "stop"},
-        )
-        if mode == "full_agent"
-        else ScriptedLLM(["她点头。"])
+    model = Model(
+        ("read_history", {"ref": "H2"}),
+        ("write_note", {"key": "约定", "content": "一起去钟楼", "kind": "fact", "sources": ["H2"]}),
+        {"calls": [("submit_story", {"content": delivery})], "finish_reason": "stop"},
     )
-    engine.provider_factory = lambda: model
+    engine.story.provider_factory = lambda: model
     try:
-        session = await engine.initialize_session(session["id"])
+        session = await engine.story.initialize_session(session["id"])
         assert session["snapshot"]["state"]["stat_data"]["old"] is True
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=source_app), base_url="http://testserver"
@@ -98,7 +133,7 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         assert session["messages"][0]["model"] == session["messages"][0]["display"] == "最终开场。"
         assert session["opening_editable"] and not session["turns"]
         assert source.card(card["id"])["document"] == card["document"]
-        turn = engine.submit(
+        turn = engine.story.submit(
             session["id"],
             TurnRequest(
                 text="一起去钟楼",
@@ -107,9 +142,9 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
                 expected_revision=session["revision"],
             ),
         )
-        await engine.tasks[turn["id"]]
+        await engine.story.tasks[turn["id"]]
         assert source.turn(turn["id"])["status"] == "committed"
-        wire = dump(model.requests[0]["messages"] if mode == "full_agent" else model.last_messages)
+        wire = dump(model.requests[0]["messages"])
         assert "最终开场。" in wire and "原开场。" not in wire and "修改后的开场。" not in wire
         auxiliary = [{"kind": "thinking", "text": "生成记录 " + session["id"]}]
         with source.connection() as db:
@@ -127,62 +162,56 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         with pytest.raises(ValueError, match="场外发言与模型消息不一致"):
             import_package(target, inconsistent, blobs)
         assert target.sessions() == []
+        assert payload["version"] == 16
+        payload["version"] = 14
+        previous_story_keys(payload["sessions"][0])
         imported = import_package(target, payload, blobs)
         restored = target.session(imported["sessions"][0])
-        assert restored["agent_mode"] == mode
-        assert restored["unicode_story"] is (mode == "full_agent")
+        assert restored["unicode_story"]
         assert restored["persona_data"]["description"] == persona["description"]
         assert [m["raw"] for m in restored["messages"]] == [m["raw"] for m in current["messages"]]
         assert restored["messages"][1]["ooc"] == "保持叙事视角"
         assert restored["messages"][1]["model"].endswith(ooc_block("保持叙事视角"))
         assert restored["messages"][-1]["auxiliary"] == auxiliary
-        assert payload["version"] == 13
         assert restored["opening_locked"] and not restored["opening_editable"]
         assert not set(m["id"] for m in restored["messages"]) & set(m["id"] for m in current["messages"])
-        if mode == "full_agent":
-            from tavern.full_agent.state import note_view
+        from tavern.story.state import note_view
 
-            note = restored["snapshot"]["full_agent"]["notes"]["约定"]
-            assert note_view(note, restored["messages"])["sources"] == ["H2"]
-            assert note["sources"][0]["message_id"] == restored["messages"][1]["id"]
+        note = restored["snapshot"]["story"]["notes"]["约定"]
+        assert note_view(note, restored["messages"])["sources"] == ["H2"]
+        assert note["sources"][0]["message_id"] == restored["messages"][1]["id"]
         assert target.cards() == []
         assert (target.root / "blobs" / restored["card_data"]["original"]).exists()
-        table = "full_agent_trace" if mode == "full_agent" else "half_agent_trace"
         with target.connection() as db:
-            assert db.execute(f"SELECT count(*) FROM {table} WHERE session=?", (restored["id"],)).fetchone()[
-                0
-            ]
-        next_model = Model("钟楼到了。") if mode == "full_agent" else ScriptedLLM(["钟楼到了。"])
-        target_engine.provider_factory = lambda: next_model
-        turn = target_engine.submit(
+            assert db.execute(
+                "SELECT count(*) FROM story_trace WHERE session=?", (restored["id"],)
+            ).fetchone()[0]
+        next_model = Model("钟楼到了。")
+        target_engine.story.provider_factory = lambda: next_model
+        turn = target_engine.story.submit(
             restored["id"], TurnRequest(text="继续走", operation_id="after-import", expected_revision=0)
         )
-        await target_engine.tasks[turn["id"]]
+        await target_engine.story.tasks[turn["id"]]
         assert target.turn(turn["id"])["status"] == "committed", target.turn(turn["id"])["error"]
         assert target.session(restored["id"])["messages"][-1]["raw"] == "钟楼到了。"
-        if mode == "full_agent":
-            history = json.dumps(next_model.requests[0]["messages"], ensure_ascii=False)
-            assert "她点头。" in history and delivery not in history
-            reply_id = restored["messages"][-1]["id"]
-            activities = message_items(target, restored, [reply_id])[reply_id]
-            story = next(item for item in activities if item.get("name") == "submit_story")
-            assert json.loads(story["details"]["arguments"])["content"] == "她点头。"
+        history = json.dumps(next_model.requests[0]["messages"], ensure_ascii=False)
+        assert "她点头。" in history and delivery not in history
+        reply_id = restored["messages"][-1]["id"]
+        activities = message_items(target, restored, [reply_id])[reply_id]
+        story = next(item for item in activities if item.get("name") == "submit_story")
+        assert json.loads(story["details"]["arguments"])["content"] == "她点头。"
     finally:
         await engine.close()
         await target_engine.close()
 
 
-def test_all_branches_sources_cache_and_window_fingerprints_are_remapped(tmp_path):
+def test_all_branches_lore_sources_and_cache_anchors_are_remapped(tmp_path):
     store = Store(tmp_path)
     card, persona, session = seed(store)
     first = session["messages"][0]
     other = uid()
     snapshot = copy.deepcopy(first["snapshot"])
     snapshot["state"] = {"hp": 75}
-    snapshot["memory_document"]["records"] = [
-        {"id": "memory", "sources": [{"message_id": first["id"], "hash": "text"}]}
-    ]
-    snapshot["memory_archive"] = {"covered_count": 1, "fingerprint": fingerprint([first])}
     snapshot["lore_injections"] = [{"anchor_id": first["id"], "source_ids": [first["id"]]}]
     with store.connection() as db:
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), first["id"]))
@@ -216,9 +245,7 @@ def test_all_branches_sources_cache_and_window_fingerprints_are_remapped(tmp_pat
     assert restored["cache_breakpoint_message"] == message["id"]
     assert message["snapshot"]["state"] == {"hp": 75}
     assert message["auxiliary"] == []
-    assert message["snapshot"]["memory_document"]["records"][0]["sources"][0]["message_id"] == message["id"]
     assert message["snapshot"]["lore_injections"][0]["anchor_id"] == message["id"]
-    assert window_valid(message["snapshot"]["memory_archive"], restored["messages"])
     with store.connection() as db:
         assert (
             db.execute("SELECT count(*) FROM messages WHERE session=?", (restored["id"],)).fetchone()[0] == 2
@@ -278,7 +305,7 @@ def test_settings_secrets_and_browser_preferences_are_explicit_and_revision_chec
     store = Store(tmp_path)
     settings = store.settings_document()
     settings.shared.providers[0].api_key = "source-secret"
-    settings.half_agent.system_prompt.replace_current("个人提示词")
+    settings.story.system_prompt.replace_current("个人提示词")
     store.save_settings(settings)
     payload, blobs = package(
         store, browser_preferences={"layout": {"fontSize": 20, "fontFamily": "serif", "glass": False}}
@@ -294,7 +321,7 @@ def test_settings_secrets_and_browser_preferences_are_explicit_and_revision_chec
     target.save_settings(local)
     imported = import_package(target, payload, blobs)
     assert not imported["settings_restored"]
-    assert target.settings_document().half_agent.system_prompt.current != "个人提示词"
+    assert target.settings_document().story.system_prompt.current != "个人提示词"
     revisions = target.settings_document().revisions
     card = target.import_card(b'{"name":"running consultation"}')
     session = target.new_session(SessionCreate(card_id=card["id"]))
@@ -311,7 +338,7 @@ def test_settings_secrets_and_browser_preferences_are_explicit_and_revision_chec
         db.execute("UPDATE advisor_runs SET status='cancelled' WHERE id='active-advisor'")
     imported = import_package(target, payload, blobs, True, revisions)
     assert imported["settings_restored"]
-    assert target.settings_document().half_agent.system_prompt.current == "个人提示词"
+    assert target.settings_document().story.system_prompt.current == "个人提示词"
     assert target.settings_document().shared.providers[0].api_key == "local-secret"
     assert target.settings_document().revisions["shared"] == revisions["shared"] + 1
     with pytest.raises(Conflict):
@@ -486,9 +513,8 @@ def test_worldbooks_card_defaults_and_mount_records_are_remapped_together(tmp_pa
         source, None, WorldbookEdit(name="雾港", book={"entries": [{"content": "钟楼"}]})
     )
     # An edited book (revision 1) must keep its revision so imported mounts stay current.
-    packed = worldbooks.save(
-        source, packed["id"], WorldbookEdit(name="雾港", book={"entries": {"0": {"content": "钟楼"}}})
-    )
+    rules = {"content": "钥匙被使用后标为已消耗", "extensions": {"terrarium": {"purpose": "mvu_rules"}}}
+    packed = worldbooks.save(source, packed["id"], WorldbookEdit(name="雾港", book={"entries": {"0": rules}}))
     left = worldbooks.save(source, None, WorldbookEdit(name="未导出", book={"entries": []}))
     edit = CardDefaultsEdit(persona_id=persona["id"], worldbook_ids=[left["id"], packed["id"]])
     worldbooks.save_defaults(source, card["id"], edit)
@@ -498,6 +524,12 @@ def test_worldbooks_card_defaults_and_mount_records_are_remapped_together(tmp_pa
     )
     # Defaults travel only with the personas and books packed beside them.
     assert payload["cards"][0]["defaults"] == {"persona_id": None, "worldbook_ids": [packed["id"]]}
+    # A v15 package carries the same rule in the library and the mounted copy.
+    payload["version"] = 15
+    book = payload["worldbooks"][0]["book"]
+    mounted = payload["sessions"][0]["messages"][0]["snapshot"]["content"]["document"]["character_book"]
+    for entry in (book["entries"]["0"], mounted["entries"][0]):
+        entry["extensions"]["terrarium"] = {"audience": "tracker_mvu"}
     target = Store(tmp_path / "target")
     imported = import_package(target, payload, blobs)
     [book_id] = imported["worldbooks"]
@@ -505,8 +537,11 @@ def test_worldbooks_card_defaults_and_mount_records_are_remapped_together(tmp_pa
     assert worldbooks.cards_defaults(target, imported["cards"]) == {
         imported["cards"][0]: {"persona_id": None, "worldbook_ids": [book_id], "version": 1}
     }
-    [mount] = target.session(imported["sessions"][0])["snapshot"]["worldbooks"]
+    snapshot = target.session(imported["sessions"][0])["snapshot"]
+    [mount] = snapshot["worldbooks"]
     assert mount == {**session["snapshot"]["worldbooks"][0], "id": book_id}
+    mounted = snapshot["content"]["document"]["character_book"]
+    assert mounted["entries"][0]["extensions"]["terrarium"] == {"purpose": "mvu_rules"}
     [summary] = worldbooks.summaries(target)
     assert summary["revision"] == mount["revision"] == 1 and summary["entries"] == 1
 
@@ -515,5 +550,10 @@ def test_worldbooks_card_defaults_and_mount_records_are_remapped_together(tmp_pa
     legacy["version"] = 3
     legacy.pop("worldbooks")
     legacy["cards"][0].pop("defaults")
+    bundle = legacy["sessions"][0]
+    bundle["session"]["agent_mode"] = OLD_STORY_KEY
+    previous_story_keys(bundle)
+    for message in bundle["messages"]:
+        message["snapshot"].pop("worldbooks", None)
     imported = import_package(target, legacy, blobs)
     assert imported["worldbooks"] == [] and len(imported["sessions"]) == 1

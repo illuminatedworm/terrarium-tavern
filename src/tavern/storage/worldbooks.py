@@ -9,6 +9,7 @@ created; foreign keys drop them together with their card, persona or book.
 import json
 import time
 
+from tavern.character.lore_purpose import upgrade_lore_purposes
 from tavern.character.worldbooks import validate_book
 from tavern.core.errors import NotFound
 from tavern.storage.store import Conflict, dump, uid
@@ -76,6 +77,7 @@ def update(db, wid, name, book, expected_revision):
 
 
 def save(store, wid, edit):
+    upgrade_lore_purposes(edit.book)
     validate_book(edit.name, edit.book)
     with store.connection() as db:
         db.execute("BEGIN IMMEDIATE")

@@ -11,21 +11,16 @@ from pydantic import (
 )
 
 from tavern.character.editor_config import CardAuthorConfig
-from tavern.core.cache_policy import CacheSettings, runtime_cache
+from tavern.core.cache_policy import CacheSettings
 from tavern.core.kemini import KeminiConfig
-from tavern.core.message_adapter import MessageAdapterConfig, infer_type, type_definition
+from tavern.core.message_adapter import MessageAdapterConfig
 from tavern.core.prompts import (
-    DEFAULT_MAINTENANCE_PROMPT,
-    DEFAULT_MEMORY_PROMPT,
     DEFAULT_PREFERENCE_PROMPT,
     DEFAULT_PROBE_MARKER_PROMPT,
     DEFAULT_PROBE_PROMPT,
     DEFAULT_REGENERATE_PROMPT,
-    DEFAULT_SYSTEM_PROMPT,
-    DEFAULT_TRACKER_PROMPT,
 )
 from tavern.core.update_policy import Policy
-from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
 from tavern.search.retrieval_config import (
     LocalModels,
     ModelProfile,
@@ -34,55 +29,10 @@ from tavern.search.retrieval_config import (
     RetrievalSettings,
     api_root,
 )
+from tavern.story.config import STORY_PROMPT, StoryConfig
 from tavern.web.config import WebConfig
 
-LoreInjectionMode = Literal["conversation", "st_top"]
 ReasoningEffort = Literal["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"]
-
-
-class ContextBlock(BaseModel):
-    id: str
-    source: str
-    role: Literal["system", "developer", "user", "assistant"] = "system"
-    message_type: str = ""
-    enabled: bool = True
-    content: str = ""
-    depth: int | None = Field(default=None, ge=0)
-    priority: int = 50
-    budget: int | None = Field(default=None, ge=1)
-    required: bool = False
-    condition: str = ""
-
-    @model_validator(mode="after")
-    def known_message_type(self):
-        if not self.message_type and self.source != "history":
-            self.message_type = infer_type({"context_source": self.source, "role": self.role})
-        if self.message_type:
-            type_definition(self.message_type)
-        return self
-
-
-class ContextRecipe(BaseModel):
-    version: int = 1
-    blocks: list[ContextBlock] = Field(
-        default_factory=lambda: [
-            ContextBlock(id="rules", source="rules", required=True, priority=100),
-            ContextBlock(id="lore_before", source="lore_before"),
-            ContextBlock(id="card_system_prompt", source="system_prompt", required=True, priority=100),
-            ContextBlock(id="character", source="description", required=True, priority=100),
-            ContextBlock(id="card_personality", source="personality", required=True, priority=100),
-            ContextBlock(id="card_scenario", source="scenario", required=True, priority=100),
-            ContextBlock(id="persona", source="persona"),
-            ContextBlock(id="lore_after", source="lore_after"),
-            ContextBlock(id="examples", source="examples", role="assistant", priority=30),
-            ContextBlock(id="history", source="history", priority=60),
-            ContextBlock(id="input", source="input", role="user", required=True, priority=100),
-            ContextBlock(id="post", source="post", priority=90),
-            ContextBlock(id="author_note", source="author_note", priority=80),
-            ContextBlock(id="memory", source="memory", priority=70),
-            ContextBlock(id="state", source="state", required=True, priority=100),
-        ]
-    )
 
 
 class PreferencePreset(BaseModel):
@@ -102,54 +52,40 @@ class PreferencePreset(BaseModel):
 class Settings(BaseModel):
     """Operation-local runtime configuration (persist SettingsDocument instead)."""
 
-    _full_runtime: Any = PrivateAttr(default=None)
     _settings_source: Any = PrivateAttr(default=None)
-    _settings_mode: str = PrivateAttr(default="half_agent")
     _settings_channel: str = PrivateAttr(default="standard")
     _adapter_loader: Any = PrivateAttr(default=None)
     _context_meter: Any = PrivateAttr(default=None)
     _context_generation: str = PrivateAttr(default="")
     _data_root: Any = PrivateAttr(default=None)
-    _adapter_lane: str = PrivateAttr(default="foreground")
+    _adapter_lane: str = PrivateAttr(default="story")
     _chatgpt: Any = PrivateAttr(default=None)
     _auth_generation: str = PrivateAttr(default="")
     _auth_generations: dict[str, str] = PrivateAttr(default_factory=dict)
-    runtime_mode: Literal["half_agent", "full_agent"] = "half_agent"
     channel_origin: Literal["standard", "chatgpt"] | None = None
     context_strategy: Literal["new_context", "openai_compact"] = "new_context"
     compact_auto: bool = True
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
-    # Stable persisted/API keys: foreground = Writer, background = Tracker.
-    foreground: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
-    background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=8192))
     card_author: ModelProfile | None = None
     advisor: ModelProfile | None = None
     novel_research: ModelProfile | None = None
     card_author_config: CardAuthorConfig = Field(default_factory=CardAuthorConfig)
     preference_presets: list[PreferencePreset] = Field(default_factory=list)
-    full_agent: ModelProfile | None = None
-    full_agent_config: FullAgentConfig = Field(default_factory=FullAgentConfig)
-    full_agent_system_prompt: str = FULL_AGENT_PROMPT
+    story: ModelProfile | None = None
+    story_config: StoryConfig = Field(default_factory=StoryConfig)
+    story_system_prompt: str = STORY_PROMPT
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     local_models: LocalModels = Field(default_factory=LocalModels)
     network: Network = Field(default_factory=Network)
     web: WebConfig = Field(default_factory=WebConfig)
     send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "ctrl_enter"
     debug_failed_requests: bool = Field(default=False, strict=True)
-    debug_full_agent_prefix: bool = Field(default=False, strict=True)
+    debug_story_prefix: bool = Field(default=False, strict=True)
     kemini: KeminiConfig = Field(default_factory=KeminiConfig)
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
 
-    def for_role(self, role="foreground"):
-        if role == "full_agent" and self._full_runtime is not None:
-            return self._full_runtime.model_copy(deep=True)
-        profile = (
-            self.background
-            if role == "card_author" and self.card_author is None
-            else self.foreground
-            if role == "full_agent" and self.full_agent is None
-            else getattr(self, role)
-        )
+    def for_role(self, role="story"):
+        profile = getattr(self, role)
         if profile is None:
             return self.model_copy(deep=True)
         provider = next((p for p in self.providers if p.id == profile.provider_id), None)
@@ -193,11 +129,7 @@ class Settings(BaseModel):
             )
         if role == "card_author":
             result.channel_origin = None
-        result._adapter_lane = (
-            "full_agent"
-            if self.runtime_mode == "full_agent" and role in ("foreground", "background")
-            else role
-        )
+        result._adapter_lane = role
         return result
 
     base_url: str = "https://api.openai.com/v1"
@@ -206,13 +138,6 @@ class Settings(BaseModel):
     api_key: str = Field(default="", exclude=True)
     auth_mode: Literal["api_key", "chatgpt_subscription", "openai_api_key"] = "api_key"
     chatgpt_account_id: str | None = None
-    system_prompt: str = DEFAULT_SYSTEM_PROMPT
-    # Compatibility fields for old flat profiles; production Tracker uses the
-    # unified prompt below. Persisted HalfSettings migrates these fields away.
-    memory_system_prompt: str = DEFAULT_MEMORY_PROMPT
-    maintenance_system_prompt: str = DEFAULT_MAINTENANCE_PROMPT
-    tracker_system_prompt: str = DEFAULT_TRACKER_PROMPT
-    tracker_max_steps: int = Field(default=12, ge=2, le=100, strict=True)
     preference_prompt: str = DEFAULT_PREFERENCE_PROMPT
     regenerate_prompt: str = DEFAULT_REGENERATE_PROMPT
     probe_system_prompt: str = DEFAULT_PROBE_PROMPT
@@ -243,42 +168,19 @@ class Settings(BaseModel):
     context_tokens: int = Field(default=131072, ge=2048, le=2000000, strict=True)
     reply_tokens: int = Field(default=16384, ge=128, le=65536, strict=True)
     policy: Policy = "automatic"
-    lore_injection_mode: LoreInjectionMode = "conversation"
     capability: Literal["unknown", "accepted", "unsupported"] = "unknown"
     capability_key: str = ""
     reasoning_effort: ReasoningEffort = "default"
     reasoning_format: Literal["reasoning_effort", "reasoning"] = "reasoning_effort"
-    chunk_mode: Literal["messages", "off"] = "messages"
-    chunk_size: int = Field(default=10, ge=2, le=100, strict=True)
-    history_message_cap: int = Field(default=200, ge=8, le=1000, strict=True)
-    memory_interval_turns: int = Field(default=5, ge=1, le=100, strict=True)
-    context_pressure_trigger: float = Field(default=0.85, ge=0.1, le=0.99)
-    daily_context_budget: int = Field(default=98304, ge=2048, le=2000000, strict=True)
     log_retention_days: int = Field(default=14, ge=1, le=365, strict=True)
     log_max_mib: int = Field(default=512, ge=1, le=16384, strict=True)
     retrieval_cache_max_mib: int = Field(default=256, ge=1, le=16384, strict=True)
-    memory_timeout: int = Field(default=180, ge=5, le=180, strict=True)
-    memory_input_tokens: int = Field(default=65536, ge=2048, le=2000000, strict=True)
-    memory_evidence_tokens: int = Field(default=4096, ge=0, le=32768, strict=True)
-    memory_output_tokens: int = Field(default=16384, ge=256, le=65536, strict=True)
-    memory_capacity_tokens: int = Field(default=16384, ge=512, le=65536, strict=True)
-    memory_current_max_records: int = Field(default=10, ge=1, le=100, strict=True)
-    memory_episode_cooldown_rounds: int = Field(default=20, ge=0, le=10000, strict=True)
-    memory_review_enabled: bool = Field(default=True, strict=True)
-    memory_recall_count: int = Field(default=3, ge=0, le=20, strict=True)
-    memory_recall_filter: bool = Field(default=False, strict=True)
-    context_recipe: ContextRecipe = Field(default_factory=ContextRecipe)
 
     @model_validator(mode="after")
     def validate_linked_settings(self):
-        if (
-            self.runtime_mode == "half_agent"
-            and self.memory_output_tokens + 2048 >= self.background.context_tokens
-        ):
-            raise ValueError("记忆输出上限必须为后台模型的输入及安全余量留出空间")
         if len({p.id for p in self.providers}) != len(self.providers) or not self.providers:
             raise ValueError("提供商不能为空或重复")
-        for profile in (self.foreground, self.background, self.card_author, self.full_agent):
+        for profile in (self.card_author, self.story):
             if (
                 profile
                 and (profile.provider_id or profile.model)
@@ -286,7 +188,7 @@ class Settings(BaseModel):
             ):
                 raise ValueError("所选模型引用了不存在的提供商")
         if self.context_tokens <= self.reply_tokens + 2048:
-            raise ValueError("模型上下文窗口必须大于单次输出上限/维护输出预算加 2048 tokens 的安全余量")
+            raise ValueError("模型上下文窗口必须大于单次输出上限加 2048 tokens 的安全余量")
         return self
 
 
@@ -300,8 +202,8 @@ WorldbookIds = Annotated[list[str], Field(max_length=100), AfterValidator(unique
 
 
 class SessionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     card_id: str
-    agent_mode: Literal["half_agent", "full_agent"] = "half_agent"
     channel_origin: Literal["standard", "chatgpt"] | None = None
     kemini: bool = False
     greeting: int = 0
@@ -318,19 +220,8 @@ class OpeningEdit(BaseModel):
     text: str
 
 
-def without_nulls(value):
-    """Script generation options are external JSON: null means omitted at any depth.
-
-    Empty strings, lists, zero and false keep their meaning.
-    """
-    if isinstance(value, dict):
-        return {key: without_nulls(item) for key, item in value.items() if item is not None}
-    if isinstance(value, list):
-        return [without_nulls(item) for item in value if item is not None]
-    return value
-
-
 class TurnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     text: str = ""
     # Out-of-character text for a new input or a replaced latest input; plain
     # regeneration reuses the stored message's value.
@@ -341,18 +232,11 @@ class TurnRequest(BaseModel):
     message_id: str | None = None
     allow_content_edit: bool = False
     update_variables: bool = False
-    generate: dict[str, Any] | None = None
     reasoning_effort: ReasoningEffort | None = None
     regenerate_note: str = ""
     regenerate_include_reply: bool = False
     replacement_text: str | None = None
-    scene_refresh: Literal["memory"] | None = None
     resume_turn_id: str | None = None
-
-    @field_validator("generate")
-    @classmethod
-    def drop_generate_nulls(cls, value):
-        return without_nulls(value)
 
     @field_validator("ooc")
     @classmethod
@@ -362,18 +246,13 @@ class TurnRequest(BaseModel):
     @model_validator(mode="after")
     def validate_replacement(self):
         if self.replacement_text is not None:
-            if self.mode != "regenerate" or self.scene_refresh:
+            if self.mode != "regenerate":
                 raise ValueError("替换用户输入只能用于本轮重生成")
             if not self.replacement_text.strip() and not self.ooc:
                 raise ValueError("消息不能为空")
         elif self.ooc and self.mode == "regenerate":
             raise ValueError("场外发言只能随新输入或修改后的输入提交")
         return self
-
-
-class SceneRefreshRequest(BaseModel):
-    operation_id: str = Field(min_length=1, max_length=100)
-    expected_revision: int
 
 
 class LoreInjectionRemoval(BaseModel):

@@ -126,18 +126,18 @@
   width: min(1040px, 94vw);
   height: min(870px, 90dvh);
 }
-.context-management-modal .full-agent-notes {
+.context-management-modal .story-notes {
   font-size: var(--fs-ui);
   line-height: 1.6;
 }
-.context-management-modal .full-agent-notes .scene-block-head h3 {
+.context-management-modal .story-notes .scene-block-head h3 {
   font-size: var(--fs-base);
 }
-.context-management-modal .full-agent-notes .inspector-note {
+.context-management-modal .story-notes .inspector-note {
   font-size: var(--fs-base);
   margin: 12px 0;
 }
-.context-management-modal .full-agent-notes label {
+.context-management-modal .story-notes label {
   font-size: var(--fs-ui);
 }
 @media (max-width: 760px) {

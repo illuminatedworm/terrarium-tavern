@@ -21,7 +21,6 @@ from tavern.core.cache_policy import (
     retention_request,
 )
 from tavern.core.gemini_capabilities import gemini_controls
-from tavern.core.kemini import transport_tools
 from tavern.core.message_adapter import adapt_messages, adapter_snapshot
 from tavern.core.usage import observed_usage
 from tavern.scripting.cloud_cache import (
@@ -34,7 +33,6 @@ from tavern.scripting.cloud_cache import (
 from tavern.scripting.failure_debug import FailureDebug
 from tavern.scripting.genai_transport import GenAITransport
 from tavern.scripting.http_errors import response_error, upstream_message
-from tavern.scripting.kemini import KeminiReply
 from tavern.scripting.model_stream import StreamState
 from tavern.scripting.native_response import (
     attachment,
@@ -105,8 +103,7 @@ class ModelTransport(BaseLLMProvider):
         self.last_response_record = {}
         self.response_capture = None
         self.failed_usage_capture: Callable[[dict], None] | None = None
-        self.auxiliary_capture = None
-        self._reset_kemini()
+        self._prepare_story_preview({})
         self.request_observer: Callable[[httpx.Request], None] | None = None
         self._response_headers = {}
         self._sent_breakpoints = SentBreakpoints()
@@ -327,7 +324,7 @@ class ModelTransport(BaseLLMProvider):
                     if isinstance(choice, dict):
                         name = choice.get("function", choice)["name"]
                         if not policy.forced_tools:
-                            # Full Agent still enforces new_context during forced
+                            # The story runtime still enforces new_context during forced
                             # rollover. Expose only the requested tool, using the
                             # auto mode accepted by the model's native API.
                             selected_tools = [
@@ -717,38 +714,19 @@ class ModelTransport(BaseLLMProvider):
                 if error.response.status_code != 404:
                     DISABLED[self.capability_key] = fallback
 
-    def _reset_kemini(self):
-        self._kemini, self.last_auxiliary = None, []
-        self._submit_preview, self._submit_preview_stopped = None, False
+    def _prepare_story_preview(self, kwargs):
+        self._submit_preview = None
+        self._submit_preview_stopped = False
         self.story_preview_breaks = []
-
-    def _begin_kemini(self, tools, kwargs):
-        self._reset_kemini()
-        config = self.settings.kemini
         if kwargs.get("_submit_story"):
             from tavern.scripting.story_preview import StoryArguments
 
+            config = self.settings.kemini
             self._submit_preview = StoryArguments(
                 kwargs.get("_story_segments_remaining", 3), kemini=config if config.enabled else None
             )
-        if kwargs.get("_full_agent_story"):
-            return tools
-        if (
-            getattr(self, "operation_purpose", None) == "narrative"
-            and config.enabled
-            and not kwargs.get("_maintenance_instructions")
-            and not kwargs.get("_compact_threshold")
-        ):
-            choice = (kwargs.get("extra_body") or {}).get("tool_choice", "auto")
-            self._kemini = KeminiReply(config, choice == "auto")
-            if self.auxiliary_capture:
-                self.auxiliary_capture([])
-            return transport_tools(tools, config, choice)
-        return tools
 
     def _preview_delta(self, event, plain, api):
-        if self._kemini:
-            return self._kemini.feed(event, plain, api)
         if self._submit_preview is not None:
             if self._submit_preview_stopped:
                 return ""
@@ -764,20 +742,6 @@ class ModelTransport(BaseLLMProvider):
         return plain
 
     async def _finish(self, payload):
-        try:
-            return await self._finish_payload(payload)
-        except ValueError as error:
-            if self._kemini:
-                self.last_response_record = {
-                    "api_mode": self.settings.api_mode,
-                    "raw_response": copy.deepcopy(payload),
-                    "error": str(error),
-                }
-                if self.response_capture:
-                    self.response_capture(copy.deepcopy(self.last_response_record))
-            raise
-
-    async def _finish_payload(self, payload):
         api = self.settings.api_mode
         if payload.get("error") or payload.get("type") == "error":
             raise ValueError(upstream_message("模型返回错误，本回合未提交", payload, secret=self.key))
@@ -881,28 +845,6 @@ class ModelTransport(BaseLLMProvider):
             observation = observed_usage(self._last_usage, api, payload)
         self.usage_history.append(copy.deepcopy(self._last_usage))
         self.last_completion = response_completion(api, payload, self._last_tool_calls, secret=self.key)
-        original_text, rewritten = text, False
-        if self._kemini:
-            try:
-                text, self._last_tool_calls = self._kemini.finish(text, self._last_tool_calls)
-            except ValueError:
-                if self.last_completion.action != "incomplete":
-                    raise
-                # A truncated JSON/string/tag is a consequence of the native
-                # failure; keep its cause instead of reporting a format error.
-                raise ValueError(
-                    completion_message("模型回复未完整结束，本回合未提交", self.last_completion)
-                ) from None
-            rewritten = self._kemini.transported or text != original_text
-            self.last_auxiliary = self._kemini.parts
-            if self.auxiliary_capture:
-                self.auxiliary_capture(copy.deepcopy(self.last_auxiliary))
-            if self._kemini.transported and finish == "tool_calls":
-                finish = "stop"
-            if rewritten:
-                # Opaque reasoning may contain the old tool/text representation.
-                # It remains diagnostic evidence, never an alternate history source.
-                self._last_assistant_extra_fields = {}
         canonical = {
             "role": "assistant",
             "content": text,
@@ -911,9 +853,7 @@ class ModelTransport(BaseLLMProvider):
                 for c in self._last_tool_calls
             ],
         }
-        self.last_native_response = (
-            None if rewritten else attachment(payload, response_origin(self.settings, self.key), canonical)
-        )
+        self.last_native_response = attachment(payload, response_origin(self.settings, self.key), canonical)
         if self.last_native_response is not None and self.request_context is not None:
             self._last_assistant_extra_fields["_native_response"] = copy.deepcopy(self.last_native_response)
         self.last_response_record = {
@@ -927,21 +867,6 @@ class ModelTransport(BaseLLMProvider):
             "native": copy.deepcopy(self.last_native_response),
             "completion": {"action": self.last_completion.action, "reason": self.last_completion.reason},
         }
-        if self._kemini:
-            self.last_response_record.update(
-                raw_response=copy.deepcopy(payload),
-                kemini={
-                    "transported": self._kemini.transported,
-                    "auxiliary": copy.deepcopy(self.last_auxiliary),
-                    "status": "函数参数传输"
-                    if self._kemini.transported
-                    else "业务工具续答"
-                    if self._last_tool_calls
-                    else "本轮未使用函数传输"
-                    if self._kemini.transport
-                    else "普通文本",
-                },
-            )
         if self.response_capture:
             self.response_capture(copy.deepcopy(self.last_response_record))
         if cancellation is not None:
@@ -972,7 +897,7 @@ class ModelTransport(BaseLLMProvider):
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
         self.last_completion = None
         tools = kwargs.get("tools") or (kwargs.get("extra_body") or {}).get("tools")
-        tools = self._begin_kemini(tools, kwargs)
+        self._prepare_story_preview(kwargs)
         if self.settings.api_mode == "gemini":
             async with aclosing(self._gemini_events(messages, tools, False, kwargs)) as events:
                 async for payload in events:
@@ -997,7 +922,7 @@ class ModelTransport(BaseLLMProvider):
     async def _consume_stream(self, messages, *, tools=None, **kwargs):
         self._completed_response = None
         tools = tools or (kwargs.get("extra_body") or {}).get("tools")
-        tools = self._begin_kemini(tools, kwargs)
+        self._prepare_story_preview(kwargs)
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
         self.last_completion = None
@@ -1015,8 +940,6 @@ class ModelTransport(BaseLLMProvider):
                         completion_message("模型流未完整结束，本回合未提交", self.last_completion)
                     )
                 self._completed_response = result
-                if self._kemini and not self._last_tool_calls:
-                    yield self._kemini.tail(result.content)
             return
         response = await self._send(messages, tools, True, kwargs)
         try:
@@ -1029,7 +952,5 @@ class ModelTransport(BaseLLMProvider):
             if result.finish_reason in ("length", "content_filter"):
                 raise ValueError(completion_message("模型流未完整结束，本回合未提交", self.last_completion))
             self._completed_response = result
-            if self._kemini and not self._last_tool_calls:
-                yield self._kemini.tail(result.content)
         finally:
             await response.aclose()

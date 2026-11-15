@@ -49,7 +49,6 @@ class Reference(Revision):
 
 class Document(Revision):
     document: dict[str, Any]
-    target_mode: Literal["half_agent", "full_agent"] | None = None
 
 
 class PersonaReference(Revision):
@@ -163,8 +162,7 @@ def register_conversation_routes(app, editor):
 
     @app.put(base + "/{wid}/drafts/{ref}")
     async def edit(wid: str, ref: str, payload: Document):
-        options = {"target_mode": payload.target_mode} if "target_mode" in payload.model_fields_set else {}
-        return editor.edits.update_card(wid, ref, payload.document, payload.expected_revision, **options)
+        return editor.edits.update_card(wid, ref, payload.document, payload.expected_revision)
 
     @app.post(base + "/{wid}/drafts/{ref}/save")
     async def save(wid: str, ref: str, payload: Save):

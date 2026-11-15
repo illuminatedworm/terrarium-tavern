@@ -147,6 +147,7 @@ export function install(data: any, host: Host, options?: {history?: HistorySourc
   currentMessage = data.currentMessage;
   mirror.messages ||= []; mirror.state ||= {}; mirror.scopes ||= {};
   const notify = (level: string) => (...args: any[]) => pending.push(bridge('log', {level, message: args.map(String).join(' ')}));
+  const unsupportedGeneration = async () => { throw Error('角色脚本不能发起模型请求'); };
   const api: any = {
     _, $, jQuery: $, z, YAML, klona: _.cloneDeep,
     errorCatched: (fn:any) => function(this:any,...args:any[]) {try{const result=fn.apply(this,args);if(result&&typeof result.then==='function')return result.catch((error:any)=>{notify('error')(error?.message||error);throw error;});return result;}catch(error:any){notify('error')(error?.message||error);throw error;}},
@@ -177,10 +178,10 @@ export function install(data: any, host: Host, options?: {history?: HistorySourc
     replaceWorldbook: async (_name: string, entries: any[]) => {mirror.lore = _.cloneDeep(entries); mirror.loreModified = true; if (mirror.ui) await bridge('lore', {entries});},
     getLorebookEntries: async (_name: string) => _.cloneDeep(mirror.lore || []),
     setLorebookEntries: async (_name: string, entries: any[]) => {mirror.lore = _.cloneDeep(entries); mirror.loreModified = true;},
-    generate: async (config: any = {}) => generation(config),
-    generateRaw: async (config: any = {}) => generation(config),
-    stopGenerationById: (id: string) => {pending.push(bridge('cancel', {id})); return true;},
-    stopAllGeneration: () => {pending.push(bridge('cancel', {})); return true;},
+    generate: unsupportedGeneration,
+    generateRaw: unsupportedGeneration,
+    stopGenerationById: () => false,
+    stopAllGeneration: () => false,
     waitGlobalInitialized: async (name: string) => {if (!(name in w)) throw Error(`缺少全局依赖：${name}`);},
     getButtonEvent: (name: string) => `button:${name}`,
     replaceScriptButtons: (buttons: any[]) => {mirror.buttons = buttons;},
@@ -189,17 +190,6 @@ export function install(data: any, host: Host, options?: {history?: HistorySourc
     iframe_events: {GENERATION_REQUESTED:'generation_requested', GENERATION_STARTED:'generation_started', GENERATION_ENDED:'generation_ended', STREAM_TOKEN_RECEIVED_FULLY:'stream_token_received_fully', STREAM_TOKEN_RECEIVED_INCREMENTALLY:'stream_token_received_incrementally'},
     tavern_events: {CHAT_CHANGED:'CHAT_CHANGED', MESSAGE_RECEIVED:'MESSAGE_RECEIVED', MESSAGE_UPDATED:'MESSAGE_UPDATED', GENERATION_STARTED:'generation_started', GENERATION_ENDED:'generation_ended'},
   };
-  async function generation(config: any) {
-    if (config.custom_api || config.preset_name && config.preset_name !== 'in_use') throw Error('脚本生成仅支持当前模型配置；不支持 ST 代理或预设');
-    await emit('generation_requested', config); await emit('generation_started', config);
-    const result = await bridge('generate', config);
-    if(!mirror.ui || !config.should_stream){
-      await emit('stream_token_received_fully', result);
-      await emit('stream_token_received_incrementally', result);
-    }
-    await emit('generation_ended', result);
-    return result;
-  }
   api.Mvu = {events: {...mvu.events,...w.MVUReference?.variable_events}, getMvuData: getVariables, replaceMvuData: async (data: any, option: any) => replaceVariables(data,option),
     parseMessage: async (text: string, old: any) => (await applyMvu(text,old)).data, isDuringExtraAnalysis: () => false};
   Object.assign(w, api);

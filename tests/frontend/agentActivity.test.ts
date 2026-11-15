@@ -17,7 +17,7 @@ it('previews only accepted graphics, preserving order and unfinished prose acros
   const event = (seq: number, name: string, ok: boolean) => ({
     seq,
     turn: 'current',
-    kind: 'full_agent_tool',
+    kind: 'story_tool',
     payload: {
       activity_id: `call-${seq}`,
       order: seq,
@@ -32,7 +32,7 @@ it('previews only accepted graphics, preserving order and unfinished prose acros
     graphic,
     graphic,
     event(3, 'present_ui', false),
-    { ...event(4, 'present_ui', true), kind: 'full_agent_tool_started' },
+    { ...event(4, 'present_ui', true), kind: 'story_tool_started' },
     { ...event(5, 'present_ui', true), turn: 'other' },
   ];
   const activity = liveActivity(events, 'current', 'running');
@@ -82,7 +82,7 @@ it('batches visible graphics across callback microtasks and preserves unsent dra
     expect(frames).toHaveLength(1);
     frames[0](0);
     await Promise.all(requests);
-    expect(rawApi).toHaveBeenCalledExactlyOnceWith('/sessions/story/full-agent/visuals', {
+    expect(rawApi).toHaveBeenCalledExactlyOnceWith('/sessions/story/story/visuals', {
       message_ids: ['a', 'b'],
     });
     const returned = {
@@ -115,7 +115,7 @@ it('hides future outline spoilers from collapsed live activity summaries', () =>
       {
         seq: 1,
         turn: 't',
-        kind: 'full_agent_tool_started',
+        kind: 'story_tool_started',
         payload: {
           activity_id: 'plot',
           name: 'write_plot',
@@ -137,13 +137,13 @@ it('pairs streamed calls/results in order and ignores replay and foreign turns',
     turn: 'current',
     payload: { activity_id, order, name: 'read_history', arguments: '{"ref":"H2"}', ...more },
   });
-  const first = event(1, 'full_agent_tool_started', 'call-1-0', 11);
+  const first = event(1, 'story_tool_started', 'call-1-0', 11);
   const events = [
-    event(4, 'full_agent_tool', 'call-1-0', 11, { result: { ok: true, data: { text: '原文' } } }),
+    event(4, 'story_tool', 'call-1-0', 11, { result: { ok: true, data: { text: '原文' } } }),
     first,
     first,
-    event(3, 'full_agent_tool_started', 'call-1-1', 12),
-    { ...event(5, 'full_agent_tool', 'foreign', 1), turn: 'other' },
+    event(3, 'story_tool_started', 'call-1-1', 12),
+    { ...event(5, 'story_tool', 'foreign', 1), turn: 'other' },
   ];
   const items = liveActivity(events, 'current', 'running');
   expect(items.map((item) => item.id)).toEqual(['call-1-0', 'call-1-1']);
@@ -156,7 +156,7 @@ it('pairs streamed calls/results in order and ignores replay and foreign turns',
   const received = {
     seq: 6,
     turn: 'current',
-    kind: 'full_agent_runtime',
+    kind: 'story_runtime',
     payload: {
       id: 'runtime-3',
       order: 30,
@@ -184,7 +184,7 @@ it('keeps errors visible and hides transport metadata from dialogue activity', (
       {
         seq: 1,
         turn: 't',
-        kind: 'full_agent_tool',
+        kind: 'story_tool',
         payload: {
           activity_id: 'a',
           order: 1,

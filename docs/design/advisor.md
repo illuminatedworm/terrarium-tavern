@@ -1,6 +1,6 @@
 # 参谋 agent 设计
 
-Advisor 是两种故事模式共用的独立咨询运行时，入口在 `advisor/`。复用模型传输、消息适配、分词器、只读故事服务和检索准入，不进入 Writer／Tracker 编排，也不复用 Full Agent 的写入草稿。
+Advisor 是故事的独立咨询运行时，入口在 `advisor/`。复用模型传输、消息适配、分词器、只读故事服务和检索准入，咨询使用独立记录和草稿。
 
 ## 配置与来源
 
@@ -12,13 +12,13 @@ Advisor 是两种故事模式共用的独立咨询运行时，入口在 `advisor
 
 云端输出项和引用注解完整保存在原生附件中，工具续答按原模型／账号绑定回放；来源链接另作为可移植 `web_sources` 保存并展示。`web_activity` 记录服务、鉴权模式、状态与降级原因，不包含密钥。本地搜索统一限量来源与摘要，网页按字符分页；每次实际返回的片段完整持久化并送往模型，不在传输阶段再次截断。服务错误、上游截断、返回量限制与合法零命中分别标记，见[联网工具协议](../reference/web-tools.md)。
 
-运行前校验故事的不可变渠道。参谋 agent 角色使用独立模型配置，不从 Writer、Tracker 或 Full Agent 推断供应商。模型连接检查、能力失效、提示词保存、设置页撤回及消息适配均接入共享设置机制。
+运行前校验故事的不可变渠道。参谋 agent 角色使用独立模型配置，按当前故事渠道选择参谋模型。模型连接检查、能力失效、提示词保存、设置页撤回及消息适配均接入共享设置机制。
 
 ## 上下文与投影
 
 固定前缀是参谋 agent 系统提示词、角色与用户资料、常驻世界书。动态背景包含当前偏好、模式对应记忆及按完整交流选择的近期剧情；锚定于所选交流的世界书保持完整。主故事未来规划与长期笔记默认按需读取。
 
-一轮开始时冻结当前分支、剧情与状态，工具续答读取同一版本。当前用户咨询引用为 Q1；剧情使用 H 引用，世界书 L 引用，Half Agent 记忆 R 引用，旧咨询 C 引用。真实存储身份、来源指纹和版本仅供程序定位与冲突校验，业务文本经 ModelView 投影；保存时恢复原始内容。云端压缩和续接保留可逆编号映射。
+一轮开始时冻结当前分支、剧情与状态，工具续答读取同一版本。当前用户咨询引用为 Q1；剧情使用 H 引用，世界书 L 引用，旧咨询 C 引用。真实存储身份、来源指纹和版本仅供程序定位与冲突校验，业务文本经 ModelView 投影；保存时恢复原始内容。云端压缩和续接保留可逆编号映射。
 
 消息适配提供 `advisor_reference`、`advisor_story`、`advisor_summary`、`advisor_notice`。预览和实际运行共用编译器，按最终投影匹配上次接口实测快照；预览另提供本地分词预测，仅作相对大小参考，不参与窗口判断。已选内部资料与工具返回片段完整保存并送入模型，超量时提示。
 
@@ -30,16 +30,15 @@ Advisor 是两种故事模式共用的独立咨询运行时，入口在 `advisor
 
 | 工具 | 参数与作用 |
 |---|---|
-| `search_history` / `read_history` | 沿用 Full Agent 的 query/limit、ref；搜索当前分支并完整读取 H 原文 |
+| `search_history` / `read_history` | 沿用剧情模型的 query/limit、ref；搜索当前分支并完整读取 H 原文 |
 | `recall_lore` | query；沿用准入，在独立快照中召回完整相关正文，不改变故事冷却和注入 |
 | `find_lore_for_edit` / `read_lore_entry` | 沿用 query/limit、ref；定位包括停用项的普通条目并读取，参谋 agent 没有编辑能力 |
 | `read_character` | 沿用 ref 字段；读取允许的人物设定字段 |
-| `read_state` | 沿用 Full Agent 的 scope/path（JSON Pointer）；读取已提交状态 |
-| `search_notes` / `read_note` | Full Agent 使用，沿用 query/limit、key，保留来源与失效状态 |
-| `search_memory` | Half Agent 使用，沿用 Tracker 的 query，返回完整匹配记忆及来源状态 |
+| `read_state` | 沿用剧情模型的 scope/path（JSON Pointer）；读取已提交状态 |
+| `search_notes` / `read_note` | 剧情模型使用，沿用 query/limit、key，保留来源与失效状态 |
 | `read_story_context` | field 为 handoff/plot/turn_preference/persona/title；只读，缺失不生成 |
 | `search_consultation` / `read_consultation` | query/limit、ref；查阅当前分支旧咨询 |
-| `novel_outline` / `search_novel` / `read_novel` | 仅 Full Agent 对话在单独授权后提供，复用[原著有界读取工具](novel-research.md#独立调查者)，只读当前分支绑定的文件 |
+| `novel_outline` / `search_novel` / `read_novel` | 仅剧情对话在单独授权后提供，复用[原著有界读取工具](novel-research.md#独立调查者)，只读当前分支绑定的文件 |
 | `web_search` / `read_webpage` | 搜索使用 query/limit/可选 objective；网页使用 url/offset/limit/可选 service。返回有界摘要或提取片段、续读位置、截断状态、实际服务与尝试记录，见[联网工具协议](../reference/web-tools.md) |
 | `offer_inputs` | options 为 1–6 条完整输入；在回复下方显示为可点击选项，点击只填入主对话输入框 |
 | `offer_titles` | titles 为 1–6 个候选标题（各 1–100 字符）、request_ref=Q1；仅用户明确要求改名或起标题时调用，点击后才修改对话标题 |
@@ -53,7 +52,7 @@ Advisor 是两种故事模式共用的独立咨询运行时，入口在 `advisor
 
 schema 4 新增 `advisor_conversations`、`advisor_exchanges`、`advisor_runs`、`advisor_events`。旧数据库打开前只读校验并备份；旧版本程序拒绝未知格式。已完成咨询包含用户输入、最终回复、完整配对工具轨迹、来源锚点和指纹；派生摘要与云端状态独立保存。
 
-完成判定与 Full Agent 一致：只看原生结束信号（`stop`／`end_turn`／`stop_sequence`；Responses 与 Gemini 在完整结束且没有工具调用时视为结束）。以工具调用让出的响应即使带有文字也继续续答；同一响应带工具调用且已原生结束时，先执行这批工具再完成；截断、过滤或缺少结束信号按未完成处理，保留进度。参谋没有“只有一次正文”的限制：本次咨询各响应中非空白的文字按顺序以空行连接，组成最终回复，流式界面同样保留之前响应的文字；已有回复时最后一次响应可以为空。选项工具的返回提示模型不要重述已显示的文字。
+完成判定与剧情模型一致：只看原生结束信号（`stop`／`end_turn`／`stop_sequence`；Responses 与 Gemini 在完整结束且没有工具调用时视为结束）。以工具调用让出的响应即使带有文字也继续续答；同一响应带工具调用且已原生结束时，先执行这批工具再完成；截断、过滤或缺少结束信号按未完成处理，保留进度。参谋没有“只有一次正文”的限制：本次咨询各响应中非空白的文字按顺序以空行连接，组成最终回复，流式界面同样保留之前响应的文字；已有回复时最后一次响应可以为空。选项工具的返回提示模型不要重述已显示的文字。
 
 运行进度保存冻结背景、待执行工具、已配对结果、偏好草稿、编号映射和是否已原生结束。完整响应先保存，再逐项执行与保存；重试跳过已配对调用。操作 ID 在故事内幂等，SSE 按序号重连观察，不负责提交。取消与重启不丢失待续进度。
 

@@ -35,7 +35,6 @@ def register_transfer_routes(app, store):
                 {
                     "id": item["id"],
                     "name": item["title"] or item["name"] or "对话",
-                    "agent_mode": item["agent_mode"],
                 }
                 for item in store.sessions()
             ],

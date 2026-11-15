@@ -7,14 +7,11 @@ it('keeps failed input retryable after settings edits, but not after moving bran
   expect(canRetryTurn(turn, session)).toBe(true);
   expect(canRetryTurn(turn, { ...session, head: 'another-branch' })).toBe(false);
   expect(canRetryTurn(turn, { ...session, turns: [{ id: 'newer' }] })).toBe(false);
-  expect(canRetryTurn({ ...turn, request: { ...turn.request, scene_refresh: 'memory' } }, session)).toBe(
-    false,
-  );
   const resumable = {
     resumable: true,
     request: { operation_id: 'original', expected_revision: 2, allow_content_edit: true },
   };
-  const current = { ...session, agent_mode: 'full_agent' as const };
+  const current = session;
   // Changed authorization or settings block continuing with a visible reason,
   // never by quietly turning the continuation into a fresh start.
   expect(resumeBlocker(resumable, current, { allow_content_edit: true })).toBeNull();

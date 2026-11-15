@@ -110,7 +110,7 @@ def test_creation_alias_keeps_zero_and_skips_null(api, field):
     assert normalize_usage({field: {"cache_creation_tokens": 0}}, api)["cache_write_tokens"] == 0
 
 
-def compiled(mode, cfg):
+def compiled(cfg):
     history = [{"id": "greeting", "parent": None, "role": "assistant", "raw": "Opening"}]
     for index in range(4):
         history.extend(
@@ -121,9 +121,7 @@ def compiled(mode, cfg):
         )
     session = {
         "id": "branch",
-        "agent_mode": mode,
         "cache_breakpoint_auto": True,
-        "recipe": {"blocks": [{"source": "history", "enabled": True}]},
     }
     trace = [{"role": "system", "content": "stable ledger data " * 3000, "source": "character"}]
     trace.extend(
@@ -136,15 +134,14 @@ def compiled(mode, cfg):
         ]
     )
     context = {"messages": [{k: m[k] for k in ("role", "content")} for m in trace], "trace": trace}
-    snapshot = {"state": {}, "full_agent": {"window": {"start": 0, "id": "w1"}}}
+    snapshot = {"state": {}, "story": {"window": {"start": 0, "id": "w1"}}}
     return prepare_context(context, session, history, snapshot, cfg), session, history, snapshot
 
 
 @pytest.mark.parametrize("api", ["chat_completions", "responses", "anthropic", "gemini"])
-@pytest.mark.parametrize("mode", ["full_agent", "half_agent"])
-async def test_second_latest_reply_boundary_reaches_final_wire_for_all_modes(api, mode):
+async def test_second_latest_reply_boundary_reaches_final_wire_for_all_protocols(api):
     cfg = config(api)
-    context, *_ = compiled(mode, cfg)
+    context, *_ = compiled(cfg)
     assert context["cache"]["message_id"] == "a2"
     messages = model_messages(context)
     assert all(not any(k.startswith("_cache") for k in m) for m in context["messages"])
@@ -189,7 +186,7 @@ async def test_second_latest_reply_boundary_reaches_final_wire_for_all_modes(api
 async def test_cloud_mode_never_injects_runtime_controls(api):
     cfg = config(api)
     cfg.cache = CacheSettings(mode="cloud", request={"prompt_cache_key": "ignored"})
-    context, *_ = compiled("full_agent", cfg)
+    context, *_ = compiled(cfg)
     seen = []
 
     def route(request):
@@ -216,7 +213,7 @@ async def test_cloud_mode_never_injects_runtime_controls(api):
 
 async def test_explicit_rejection_falls_back_once_and_remembers_capability():
     cfg = config()
-    context, *_ = compiled("full_agent", cfg)
+    context, *_ = compiled(cfg)
     seen, events = [], []
 
     def route(request):
@@ -239,7 +236,7 @@ async def test_explicit_rejection_falls_back_once_and_remembers_capability():
 @pytest.mark.parametrize("failure", ["timeout", "server", "other400"])
 async def test_never_retries_ambiguous_generation_failures(failure):
     cfg = config()
-    context, *_ = compiled("full_agent", cfg)
+    context, *_ = compiled(cfg)
     seen = []
 
     def route(request):
@@ -258,7 +255,7 @@ async def test_never_retries_ambiguous_generation_failures(failure):
 
 async def test_gemini_reuse_rollover_expiry_and_complete_fallback():
     cfg = config("gemini")
-    context, *_ = compiled("full_agent", cfg)
+    context, *_ = compiled(cfg)
     messages = model_messages(context)
     created, deleted, generated = [], [], []
     expire = False
@@ -379,7 +376,7 @@ async def test_gemini_retention_replaces_old_object_and_honors_server_expiry(api
 
     cfg = config(api)
     cfg.model = "gemini-3.8-flash"
-    context, *_ = compiled("full_agent", cfg)
+    context, *_ = compiled(cfg)
     created, deleted = [], []
 
     def route(request):
@@ -415,7 +412,7 @@ async def test_gemini_retention_replaces_old_object_and_honors_server_expiry(api
 
 async def test_gemini_create_failure_uses_complete_context():
     cfg = config("gemini")
-    context, *_ = compiled("full_agent", cfg)
+    context, *_ = compiled(cfg)
     seen, events = [], []
 
     def route(request):
@@ -489,9 +486,7 @@ def test_settings_migration_backs_up_old_settings_once(tmp_path):
     store = Store(tmp_path)
     raw = store.settings_document().model_dump()
     for scope, key in (
-        ("full_agent", "model"),
-        ("half_agent", "foreground"),
-        ("half_agent", "background"),
+        ("story", "model"),
         ("shared", "card_author"),
     ):
         raw[scope][key].pop("cache")
@@ -501,9 +496,9 @@ def test_settings_migration_backs_up_old_settings_once(tmp_path):
     with store.connection() as db:
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
     migrated = Store(tmp_path).settings_document()
-    assert migrated.full_agent.model.cache.mode == migrated.half_agent.foreground.cache.mode == "runtime"
-    assert migrated.half_agent.background.cache.mode == migrated.shared.card_author.cache.mode == "cloud"
-    assert migrated.full_agent.model.cache.request == {
+    assert migrated.story.model.cache.mode == "runtime"
+    assert migrated.shared.card_author.cache.mode == "cloud"
+    assert migrated.story.model.cache.request == {
         "prompt_cache_key": "retained-key",
         "prompt_cache_retention": "24h",
     }
@@ -543,19 +538,18 @@ def test_custom_fields_validation_urls_and_usage():
     )
 
 
-def test_partial_json_profiles_keep_story_defaults_without_forcing_background():
+def test_partial_json_profiles_keep_independent_cache_defaults():
     settings = SettingsDocument(
-        full_agent={"model": {"model": "new-full"}},
-        half_agent={"foreground": {"model": "new-writer"}, "background": {"model": "new-background"}},
+        story={"model": {"model": "new-full"}},
+        shared={"card_author": {"model": "new-editor"}},
     )
-    assert settings.full_agent.model.cache.mode == settings.half_agent.foreground.cache.mode == "runtime"
-    assert settings.half_agent.background.cache.mode == settings.shared.card_author.cache.mode == "cloud"
+    assert settings.story.model.cache.mode == "runtime"
+    assert settings.shared.card_author.cache.mode == "cloud"
 
 
-@pytest.mark.parametrize("mode", ["full_agent", "half_agent"])
-def test_branch_local_manual_and_regenerate_boundaries(mode):
+def test_branch_local_manual_and_regenerate_boundaries():
     cfg = config()
-    context, session, history, snapshot = compiled(mode, cfg)
+    context, session, history, snapshot = compiled(cfg)
     prepare_context(context, session, history[:-2], snapshot, cfg)
     assert context["cache"]["message_id"] == "a1"
     session.update(cache_breakpoint_auto=False, cache_breakpoint_message="a2")
@@ -564,18 +558,16 @@ def test_branch_local_manual_and_regenerate_boundaries(mode):
     session["cache_breakpoint_message"] = "other-branch"
     prepare_context(context, session, history, snapshot, cfg)
     assert context["cache"]["source"] == "character"
-    if mode == "full_agent":
-        session["cache_breakpoint_message"] = "a1"
-        snapshot["full_agent"]["window"]["start"] = 7
-        prepare_context(context, session, history, snapshot, cfg)
-        assert context["cache"]["message_id"] is None
+    session["cache_breakpoint_message"] = "a1"
+    snapshot["story"]["window"]["start"] = 7
+    prepare_context(context, session, history, snapshot, cfg)
+    assert context["cache"]["message_id"] is None
 
 
 @pytest.mark.parametrize("api", ["chat_completions", "responses", "anthropic", "gemini"])
-@pytest.mark.parametrize("mode", ["full_agent", "half_agent"])
-async def test_held_follow_anchor_keeps_final_wire_prefix_stable(api, mode):
+async def test_held_follow_anchor_keeps_final_wire_prefix_stable(api):
     cfg = config(api)
-    context, session, history, snapshot = compiled(mode, cfg)
+    context, session, history, snapshot = compiled(cfg)
     session["cache_breakpoint_follow"] = {"interval": 3, "offset": 2, "anchor": "a0", "progress": 1}
     captured, bodies, creations = [], [], []
 
@@ -615,7 +607,7 @@ async def test_held_follow_anchor_keeps_final_wire_prefix_stable(api, mode):
 async def test_gemini_compatible_reference_contains_only_suffix_and_no_dynamic_system():
     cfg = config()
     cfg.model = "gemini-3.8-flash"
-    context, *_ = compiled("half_agent", cfg)
+    context, *_ = compiled(cfg)
 
     def route(request):
         body = json.loads(request.content)
@@ -649,7 +641,7 @@ async def test_undersized_gemini_prefix_does_not_disable_larger_future_prefix():
             ]
         )
         assert len(seen) == 1 and p.capability_key not in DISABLED
-        context, *_ = compiled("full_agent", cfg)
+        context, *_ = compiled(cfg)
         await p.chat_complete(model_messages(context))
     assert len(seen) == 3
 
@@ -872,18 +864,18 @@ def test_anthropic_parallel_results_keep_batches_content_and_cache_markers(marke
 
 @pytest.mark.parametrize("api", ["anthropic", "gemini"])
 @pytest.mark.parametrize("call_count", [1, 2])
-async def test_full_runtime_persists_native_signature_and_returns_tool_result(tmp_path, api, call_count):
-    from tests.backend.test_full_agent import native_reply, runtime, story_reply, turn
+async def test_story_runtime_persists_native_signature_and_returns_tool_result(tmp_path, api, call_count):
+    from tests.backend.test_story import native_reply, runtime, story_reply, turn
 
     store = Store(tmp_path)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     settings = store.settings()
-    settings.full_agent.api_mode = api
+    settings.story.api_mode = api
     settings.providers[0].api_key = "test-key"
-    settings.full_agent.model = "claude-fixture" if api == "anthropic" else "gemini-3.8-flash"
-    settings.full_agent_config.auto_retrieval = False
+    settings.story.model = "claude-fixture" if api == "anthropic" else "gemini-3.8-flash"
+    settings.story_config.auto_retrieval = False
     store.save_settings(settings)
-    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+    session = store.new_session(SessionCreate(card_id=card["id"]))
     seen = []
 
     def route(request):
@@ -956,14 +948,14 @@ async def test_full_runtime_persists_native_signature_and_returns_tool_result(tm
 
     service = runtime(store)
     try:
-        async with provider(store.settings().for_role("full_agent"), route) as model:
+        async with provider(store.settings().for_role("story"), route) as model:
             result, _ = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         assert len(seen) == (3 if api == "gemini" else 2)
         with store.connection() as db:
-            payload = " ".join(row[0] for row in db.execute("SELECT payload FROM full_agent_trace"))
+            payload = " ".join(row[0] for row in db.execute("SELECT payload FROM story_trace"))
         assert "opaque-signature" in payload
-        async with provider(store.settings().for_role("full_agent"), route) as model:
+        async with provider(store.settings().for_role("story"), route) as model:
             result, _ = await turn(service, store.session(session["id"]), model)
         assert result["status"] == "committed", result["error"]
         assert len(seen) == (5 if api == "gemini" else 3)

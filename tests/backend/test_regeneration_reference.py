@@ -4,84 +4,61 @@ import copy
 import json
 
 import pytest
-from kohakuterrarium.testing.llm import ScriptedLLM
 
-from tavern.application.service import RoleplayRuntime
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import Conflict, Store, dump, uid
-from tests.backend.test_full_agent import Model, ScriptHost, current_text, handoff, runtime, written
 from tests.backend.test_message_versions import generate
+from tests.backend.test_story import Model, current_text, handoff, runtime, written
 
 
-@pytest.fixture(params=["half_agent", "full_agent"])
-def story(tmp_path, request):
+@pytest.fixture
+def story(tmp_path):
     store = Store(tmp_path)
     card = store.import_card(b'{"name":"fixture","first_mes":"opening"}')
     settings = store.settings()
-    settings.full_agent_config.auto_retrieval = False
+    settings.story_config.auto_retrieval = False
     settings.retrieval.channels = ["keyword"]
-    settings.memory_interval_turns = 50
     store.save_settings(settings)
-    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=request.param))
+    session = store.new_session(SessionCreate(card_id=card["id"]))
     session = generate(store, session, "RAW_REPLY_MUST_USE_MODEL_TEXT")
     text = "待重写的完整正文\n" * 1200 + "REFERENCE_END_MUST_SURVIVE"
     snapshot = copy.deepcopy(session["snapshot"])
-    if request.param == "full_agent":
-        snapshot["full_agent"]["handoff"] = written(session["messages"], "HANDOFF_FROM_REPLACED_REPLY")
+    snapshot["story"]["handoff"] = written(session["messages"], "HANDOFF_FROM_REPLACED_REPLY")
     with store.connection() as db:
         db.execute(
             "UPDATE messages SET model=?,snapshot=? WHERE id=?", (text, dump(snapshot), session["head"])
         )
-        if request.param == "full_agent":
-            db.execute(
-                "INSERT INTO full_agent_trace(session,message_id,seq,window_id,payload) VALUES (?,?,?,?,?)",
-                (
-                    session["id"],
-                    session["head"],
-                    1,
-                    snapshot["full_agent"]["window"]["id"],
-                    dump({"role": "system", "content": "TOOLS_FROM_REPLACED_REPLY"}),
-                ),
-            )
+        db.execute(
+            "INSERT INTO story_trace(session,message_id,seq,window_id,payload) VALUES (?,?,?,?,?)",
+            (
+                session["id"],
+                session["head"],
+                1,
+                snapshot["story"]["window"]["id"],
+                dump({"role": "system", "content": "TOOLS_FROM_REPLACED_REPLY"}),
+            ),
+        )
     return store, store.session(session["id"]), text
 
 
-def service_for(store, session):
-    if session["agent_mode"] == "full_agent":
-        return runtime(store)
-    service = RoleplayRuntime(store)
-    service.runtime = ScriptHost()
-    return service
-
-
 async def run(service, session, model, **options):
-    if session["agent_mode"] == "full_agent":
-        service.full.provider_factory = lambda: model
-    else:
-        service.provider_factory = lambda: model
+    service.story.provider_factory = lambda: model
     request = TurnRequest(text="next", operation_id=uid(), expected_revision=session["revision"], **options)
-    result = service.submit(session["id"], request)
-    await service.tasks[result["id"]]
+    result = service.story.submit(session["id"], request)
+    await service.story.tasks[result["id"]]
     return service.store.turn(result["id"]), service.store.session(session["id"])
 
 
-def model_for(session, *responses):
-    return Model(*responses) if session["agent_mode"] == "full_agent" else ScriptedLLM(list(responses))
-
-
 def requests(model):
-    return [r["messages"] for r in model.requests] if isinstance(model, Model) else [model.last_messages]
+    return [r["messages"] for r in model.requests]
 
 
 @pytest.mark.parametrize("include", [None, False, True])
 async def test_reference_is_opt_in_complete_and_only_for_this_turn(story, include):
     store, session, text = story
-    service = service_for(store, session)
+    service = runtime(store)
     user = copy.deepcopy(session["messages"][-2])
-    model = model_for(
-        session,
-        *(("read_state", {}), "replacement") if session["agent_mode"] == "full_agent" else ("replacement",),
-    )
+    model = Model(("read_state", {}), "replacement")
     try:
         options = {} if include is None else {"regenerate_include_reply": include}
         result, current = await run(
@@ -101,28 +78,23 @@ async def test_reference_is_opt_in_complete_and_only_for_this_turn(story, includ
         assert current["messages"][-2] == user
         assert len(current["messages"]) == len(session["messages"])
         assert current["snapshot"]["state"] == user["snapshot"]["state"]
-        if session["agent_mode"] == "full_agent":
-            assert current["snapshot"]["full_agent"]["handoff"] == user["snapshot"]["full_agent"]["handoff"]
-        next_model = model_for(current, "following")
+        assert current["snapshot"]["story"]["handoff"] == user["snapshot"]["story"]["handoff"]
+        next_model = Model("following")
         result, _ = await run(service, current, next_model)
         assert result["status"] == "committed", result["error"]
-        if session["agent_mode"] == "full_agent":
-            following = json.dumps(requests(next_model), ensure_ascii=False)
-            assert ("REFERENCE_END_MUST_SURVIVE" in following) is (include is True)
-            assert ("<rewrite_reference>" in following) is (include is True)
-            assert ("此前的待重写回复参考已失效" in following) is (include is True)
-            assert "此前的重生成要求已撤销。" in following
-        else:
-            assert "REFERENCE_END_MUST_SURVIVE" not in json.dumps(requests(next_model))
-            assert "rewrite_reference" not in json.dumps(requests(next_model))
+        following = json.dumps(requests(next_model), ensure_ascii=False)
+        assert ("REFERENCE_END_MUST_SURVIVE" in following) is (include is True)
+        assert ("<rewrite_reference>" in following) is (include is True)
+        assert ("此前的待重写回复参考已失效" in following) is (include is True)
+        assert "此前的重生成要求已撤销。" in following
     finally:
         await service.close()
 
 
 async def test_send_does_not_treat_latest_reply_as_a_rewrite_reference(story):
     store, session, _ = story
-    service = service_for(store, session)
-    model = model_for(session, "following")
+    service = runtime(store)
+    model = Model("following")
     try:
         result, _ = await run(service, session, model, regenerate_include_reply=True)
         assert result["status"] == "committed", result["error"]
@@ -133,11 +105,11 @@ async def test_send_does_not_treat_latest_reply_as_a_rewrite_reference(story):
 
 async def test_repeated_rewrite_references_current_candidate_and_restores_same_baseline(story):
     store, session, text = story
-    service = service_for(store, session)
+    service = runtime(store)
     baseline = copy.deepcopy(session["messages"][-2]["snapshot"])
     try:
         for candidate in ("first replacement", "second replacement"):
-            model = model_for(session, candidate)
+            model = Model(candidate)
             result, session = await run(
                 service,
                 session,
@@ -157,10 +129,9 @@ async def test_repeated_rewrite_references_current_candidate_and_restores_same_b
         await service.close()
 
 
-@pytest.mark.parametrize("story", ["full_agent"], indirect=True)
-async def test_full_rollover_retains_reference_and_appends_expiry_next_turn(story):
+async def test_story_rollover_retains_reference_and_appends_expiry_next_turn(story):
     store, session, text = story
-    service = service_for(store, session)
+    service = runtime(store)
     model = Model(
         ("new_context", {"handoff": handoff("本轮新交接"), "keep_recent": 0}),
         ("read_state", {}),
@@ -172,7 +143,7 @@ async def test_full_rollover_retains_reference_and_appends_expiry_next_turn(stor
         for messages in requests(model):
             assert sum(text in m.get("content", "") for m in messages) == 1
             assert "HANDOFF_FROM_REPLACED_REPLY" not in json.dumps(messages)
-        assert current_text(current["snapshot"]["full_agent"]) == "本轮新交接"
+        assert current_text(current["snapshot"]["story"]) == "本轮新交接"
         next_model = Model("following")
         result, _ = await run(service, current, next_model)
         assert result["status"] == "committed", result["error"]
@@ -183,10 +154,9 @@ async def test_full_rollover_retains_reference_and_appends_expiry_next_turn(stor
         await service.close()
 
 
-@pytest.mark.parametrize("story", ["full_agent"], indirect=True)
-async def test_full_retry_keeps_reference_and_changing_choice_requires_restart(story):
+async def test_story_retry_keeps_reference_and_changing_choice_requires_restart(story):
     store, session, text = story
-    service = service_for(store, session)
+    service = runtime(store)
     try:
         failed, current = await run(
             service,
@@ -196,7 +166,7 @@ async def test_full_retry_keeps_reference_and_changing_choice_requires_restart(s
             regenerate_include_reply=True,
         )
         assert failed["status"] == "error"
-        assert store.full_agent_progress(failed["id"])
+        assert store.story_progress(failed["id"])
         with pytest.raises(Conflict, match="输入或授权已改变"):
             store.create_turn(
                 session["id"],

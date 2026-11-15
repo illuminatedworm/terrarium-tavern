@@ -3,7 +3,7 @@ import type { SendShortcut } from './composerShortcut';
 import type { MessageAdapterConfig } from './messageAdapter';
 import type { KeminiSettings } from './kemini';
 import type { NovelConfig } from './novel';
-export type SettingsScope = 'full_agent' | 'half_agent' | 'shared';
+export type SettingsScope = 'story' | 'shared';
 export type SettingsObject = Record<string, any>;
 export interface ModelConnection {
   model: string;
@@ -93,21 +93,12 @@ export interface PromptChoices {
   options: [PromptChoice, PromptChoice, PromptChoice, PromptChoice];
 }
 export interface SettingsDocument {
-  version: 20;
-  full_agent: SettingsObject & {
+  version: 22;
+  story: SettingsObject & {
     system_prompt: PromptChoices;
     novel_research: NovelConfig;
     model: ModelProfile;
     official_model: ModelProfile | null;
-    default_channel: 'standard' | 'chatgpt';
-  };
-  half_agent: SettingsObject & {
-    system_prompt: PromptChoices;
-    tracker_system_prompt: PromptChoices;
-    foreground: ModelProfile;
-    background: ModelProfile;
-    official_foreground: ModelProfile | null;
-    official_background: ModelProfile | null;
     default_channel: 'standard' | 'chatgpt';
   };
   shared: SettingsObject & {
@@ -120,7 +111,7 @@ export interface SettingsDocument {
     preference_presets: PreferencePreset[];
     send_shortcut: SendShortcut;
     debug_failed_requests: boolean;
-    debug_full_agent_prefix: boolean;
+    debug_story_prefix: boolean;
     advisor: {
       model: ModelProfile;
       official_model: ModelProfile | null;
@@ -137,7 +128,7 @@ export interface SettingsDocument {
   pages: SettingsPage[];
   prompt_definitions: PromptDefinition[];
 }
-export const scopes: SettingsScope[] = ['full_agent', 'half_agent', 'shared'];
+export const scopes: SettingsScope[] = ['story', 'shared'];
 export const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 export const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 export function getPath(value: SettingsObject, path: string): any {

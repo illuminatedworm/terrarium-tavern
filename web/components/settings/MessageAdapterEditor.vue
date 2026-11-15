@@ -93,7 +93,7 @@ defineExpose({ resetRoles });
 </script>
 <template>
   <section class="message-adapter-editor" aria-label="消息适配映射">
-    <p v-if="keminiEnabled && ['foreground', 'full_agent'].includes(lane)" class="muted" role="status">
+    <p v-if="keminiEnabled && lane === 'story'" class="muted" role="status">
       {{ keminiCompatibilityNotice }}
     </p>
     <div class="adapter-filter">

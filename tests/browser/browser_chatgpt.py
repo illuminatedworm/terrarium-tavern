@@ -32,7 +32,7 @@ async def viewport_ok(page, label):
 
 async def settings_page(page, page_id):
     group, key = page_id.split(".")
-    groups = {"shared": "通用", "full_agent": "full agent", "half_agent": "half agent"}
+    groups = {"shared": "通用", "story": "游玩"}
     labels = {"providers": "提供商", "model": "模型与生成", "editor": "制卡 agent"}
     dialog = page.get_by_role("dialog", name="设置", exact=True)
     if not await dialog.is_visible():
@@ -131,8 +131,7 @@ async def main():
                 ).to_be_visible()
                 assert abs((await dialog.bounding_box())["height"] - height) < 1
                 current = app.state.store.settings_document()
-                assert current.full_agent.model == before.full_agent.model
-                assert current.half_agent == before.half_agent
+                assert current.story.model == before.story.model
                 assert current.shared.card_author == before.shared.card_author
                 checks.append("new registration, protected callback, welcome, unchanged Agent choices")
 
@@ -187,7 +186,7 @@ async def main():
                 markup = await page.content()
                 assert all(secret not in markup for secret in (ACCESS, REFRESH, "fixture-id-token-only"))
 
-                dialog = await settings_page(page, "full_agent.model")
+                dialog = await settings_page(page, "story.model")
                 await dialog.get_by_role("tab", name="OpenAI 官方", exact=True).click()
                 await dialog.get_by_role("button", name="配置模型连接", exact=True).click()
                 await choose_menu(dialog.get_by_role("button", name="提供商", exact=True), label="SIWC 测试")
@@ -198,17 +197,17 @@ async def main():
                 await expect(dialog.get_by_text("已更新 1 个模型，列表已缓存。", exact=True)).to_be_visible()
                 await choose_model(dialog.get_by_role("button", name="模型名称", exact=True), "fixture")
                 for _ in range(50):
-                    if app.state.store.settings_document().full_agent.official_model.model == "fixture":
+                    if app.state.store.settings_document().story.official_model.model == "fixture":
                         break
                     await asyncio.sleep(0.1)
-                assert app.state.store.settings_document().full_agent.official_model.model == "fixture"
+                assert app.state.store.settings_document().story.official_model.model == "fixture"
                 effort = dialog.get_by_role("button", name="思考强度", exact=True)
                 await choose_menu(effort, "xhigh")
                 await expect(effort).to_have_attribute("data-value", "xhigh")
                 await expect(await menu_option(effort, "xhigh")).to_have_text("超高（xhigh）")
                 await expect(await menu_option(effort, "ultra")).to_have_attribute("aria-disabled", "true")
                 assert await (await menu_option(effort, "none")).count() == 0
-                assert app.state.store.settings_document().full_agent.model == before.full_agent.model
+                assert app.state.store.settings_document().story.model == before.story.model
                 checks.append("official reasoning levels and selectable xhigh, unchanged ordinary API model")
                 await expect(dialog.get_by_text("使用 SIWC", exact=True)).to_be_visible()
                 checks.append("account catalogue, fixed protocol, unsupported controls, output budget label")
@@ -237,7 +236,7 @@ async def main():
                     await viewport_ok(page, label + ":providers")
                     await page.screenshot(path=str(OUTPUT / f"{label}-providers.png"))
                     initial = (await dialog.bounding_box())["height"]
-                    await settings_page(page, "full_agent.model")
+                    await settings_page(page, "story.model")
                     await expect(dialog.get_by_label("输出预留预算（tokens）", exact=True)).to_be_visible()
                     await viewport_ok(page, label + ":model")
                     assert abs((await dialog.bounding_box())["height"] - initial) < 1

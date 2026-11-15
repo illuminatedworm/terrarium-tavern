@@ -1,18 +1,12 @@
-import asyncio
-import copy
 import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from kohakuterrarium.testing.llm import ScriptedLLM, ScriptEntry
 
 from tavern.application.api import create_app
-from tavern.application.service import RoleplayRuntime
-from tavern.conversation.context import activate_lore, compile_context, lore_recovery
-from tavern.core.models import ContextRecipe, SessionCreate, TurnRequest
+from tavern.conversation.context import activate_lore, lore_recovery
+from tavern.core.models import SessionCreate
 from tavern.core.models import Settings as AppSettings
-from tavern.storage.store import Store
-from tests.support.tracker_model import TrackerModel
 
 
 def Settings(**values):
@@ -34,26 +28,22 @@ def history(n, text="继续"):
     ]
 
 
-def compile_lore(entries, *, prior=None, messages=None, text="灯塔", recipe=None, **kwargs):
-    session = {"id": "session", "persona": "玩家", "recipe": recipe or ContextRecipe().model_dump()}
-    snapshot = {"state": {}, "lore": prior or {}}
-    before = copy.deepcopy(snapshot)
-    result = compile_context(
+def compile_lore(entries, *, prior=None, messages=(), text="灯塔", seed="turn", retrieval=None):
+    selected, diagnostics, unchanged = activate_lore(
         document(*entries),
-        session,
-        messages or [],
-        snapshot,
+        messages,
         text,
-        kwargs.pop("settings", Settings()),
-        kwargs.pop("seed", "seed"),
-        **kwargs,
+        prior or {},
+        seed,
+        session_id="session",
+        retrieval=retrieval,
+        query=retrieval["query"] if retrieval else None,
     )
-    assert snapshot == before
-    return result
+    return {"lore": selected, "diagnostics": diagnostics, "next_lore": unchanged}
 
 
-def recovery_note(result, eid="e"):
-    return next(n for n in result["diagnostics"] if n["id"] == eid and n["reason"] == "冷却恢复判断")
+def recovery_note(result):
+    return next(n for n in result["diagnostics"] if n.get("id") == "e" and n["reason"] == "冷却恢复判断")
 
 
 @pytest.mark.parametrize(
@@ -169,103 +159,7 @@ def test_sticky_is_ignored_and_constant_bypasses_recovery():
         [entry(constant=True, probability=0)], prior=prior, messages=history(1), text="继续"
     )
     assert result["lore"][0]["reason"] == "常驻"
-    assert result["next_lore"] == {"e": {"present": True}}
-
-
-def test_reactivation_resets_only_actual_presence():
-    prior = {"e": {"present": False, "removed_at": 1}}
-    result = compile_lore([entry(sticky=3)], prior=prior, messages=history(20))
-    assert result["next_lore"] == {"e": {"present": True}}
-    recipe = ContextRecipe().model_dump()
-    recipe["blocks"][1]["enabled"] = False
-    omitted = compile_lore([entry(sticky=3)], prior=prior, messages=history(20), recipe=recipe)
-    assert omitted["next_lore"] == prior
-
-
-@pytest.mark.parametrize("position", [0, 1, 2, 3, 4, 5, 6, 7])
-def test_actual_injections_record_all_supported_positions(position):
-    recipe = ContextRecipe().model_dump()
-    recipe["blocks"].append({"id": "custom-outlet", "source": "outlet:port", "depth": 1})
-    result = compile_lore([entry(position=position, outletName="port", sticky=3)], recipe=recipe)
-    assert result["next_lore"] == {"e": {"present": True}}
-    assert {eid for m in result["trace"] for eid in m.get("lore_ids", [])} == {"e"}
-    assert all(set(m) == {"role", "content"} for m in result["messages"])
-
-
-@pytest.mark.parametrize(
-    "omission",
-    [
-        "disabled",
-        "condition",
-        "outlet",
-        "unnamed_outlet",
-        "override",
-        "author_override",
-        "ordered",
-        "depth_disabled",
-        "empty",
-    ],
-)
-def test_omitted_candidates_are_not_used(omission):
-    e, recipe, kwargs = entry(sticky=3), ContextRecipe().model_dump(), {}
-    block = recipe["blocks"][1]
-    if omission == "disabled":
-        block["enabled"] = False
-    elif omission == "condition":
-        block["condition"] = "missing"
-    elif omission == "block_budget":
-        block["budget"] = 1
-    elif omission == "total_budget":
-        e["content"] = "界" * 10000
-        kwargs["settings"] = Settings(context_tokens=4096, reply_tokens=128, lore_max_chars=20000)
-    elif omission in ("outlet", "unnamed_outlet"):
-        e.update(position=7, outletName="unreferenced" if omission == "outlet" else "")
-    elif omission == "override":
-        kwargs["generate"] = {"overrides": {"world_info_before": "替代内容"}}
-    elif omission == "author_override":
-        e["position"] = 2
-        kwargs["generate"] = {"overrides": {"chat_history": {"author_note": "替代内容"}}}
-    elif omission == "ordered":
-        kwargs["generate"] = {"ordered_prompts": ["user_input"]}
-    elif omission == "depth_disabled":
-        e["position"] = 4
-        kwargs["generate"] = {"overrides": {"chat_history": {"with_depth_entries": False}}}
-    else:
-        e["content"] = "  "
-    result = compile_lore([e], recipe=recipe, **kwargs)
-    assert result["lore"] and result["next_lore"] == {}
-    assert any(n["reason"] == "候选未注入，未计入使用记录" for n in result["diagnostics"])
-
-
-@pytest.mark.parametrize("reason", ["block_budget", "total_budget"])
-def test_budget_warning_keeps_selected_lore_complete(reason):
-    e, recipe, kwargs = entry(sticky=3), ContextRecipe().model_dump(), {}
-    if reason == "block_budget":
-        recipe["blocks"][1]["budget"] = 1
-    else:
-        e["content"] = "界" * 10000
-        kwargs["settings"] = Settings(context_tokens=4096, reply_tokens=128)
-    result = compile_lore([e], recipe=recipe, **kwargs)
-    assert result["next_lore"]["e"]["present"]
-    assert e["content"] in "\n".join(m["content"] for m in result["messages"])
-
-
-def test_merged_and_duplicate_blocks_record_each_entry_once():
-    recipe = ContextRecipe().model_dump()
-    recipe["blocks"].append({"id": "duplicate", "source": "lore_before"})
-    result = compile_lore([entry("a", sticky=2), entry("b", sticky=4)], recipe=recipe)
-    assert result["next_lore"] == {"a": {"present": True}, "b": {"present": True}}
-    assert sum("a" in m.get("lore_ids", []) for m in result["trace"]) == 2
-
-
-def test_omitted_candidate_cannot_trigger_unapproved_recursive_entry():
-    recipe = ContextRecipe().model_dump()
-    recipe["blocks"][1]["enabled"] = False
-    result = compile_lore(
-        [entry("source", keys=["港口"], content="灯塔"), entry(position=4)], recipe=recipe, text="港口"
-    )
-    assert {e["id"] for e in result["lore"]} == {"source"}
-    assert result["next_lore"] == {}
+    assert result["next_lore"] == prior
 
 
 def test_candidate_activation_does_not_consume_usage():
@@ -273,165 +167,6 @@ def test_candidate_activation_does_not_consume_usage():
     selected, _, proposed = activate_lore(document(entry()), history(20), "灯塔", prior, "nested")
     assert selected
     assert proposed == {"e": {"removed_at": 1}}
-
-
-@pytest.fixture
-def story(tmp_path):
-    store = Store(tmp_path)
-    card = store.import_card(json.dumps(document(entry(sticky=0))).encode())
-    session = store.new_session(SessionCreate(card_id=card["id"]))
-    return store, session
-
-
-async def send(service, session, **kwargs):
-    turn = service.submit(
-        session["id"],
-        TurnRequest(
-            text=kwargs.pop("text", "灯塔"),
-            operation_id=kwargs.pop("operation_id", "send"),
-            expected_revision=session["revision"],
-            **kwargs,
-        ),
-    )
-    await service.tasks[turn["id"]]
-    return service.store.turn(turn["id"])
-
-
-async def test_regeneration_and_branch_restore_keep_recovery_stable(story):
-    store, initial = story
-    service = RoleplayRuntime(store)
-    service.provider_factory = lambda: ScriptedLLM(["正文"])
-    try:
-        first = await send(service, initial)
-        assert first["status"] == "committed", first["error"]
-        branch = store.session(initial["id"])
-        assert branch["snapshot"]["lore"] == {"e": {"present": True}}
-        second = await send(service, branch, operation_id="second")
-        assert second["status"] == "committed", second["error"]
-        second_preview = second["preview"]
-        current = store.session(initial["id"])
-        regenerated = await send(service, current, mode="regenerate", operation_id="regen")
-        assert regenerated["status"] == "committed", regenerated["error"]
-        assert regenerated["preview"]["next_lore_injections"] == second_preview["next_lore_injections"]
-        current = store.session(initial["id"])
-        restored = store.update_session(initial["id"], current["revision"], head=branch["head"])
-        assert restored["snapshot"]["lore"] == branch["snapshot"]["lore"]
-        third = await send(service, restored, operation_id="branch")
-        assert third["status"] == "committed", third["error"]
-        assert third["preview"]["next_lore_injections"] == second_preview["next_lore_injections"]
-    finally:
-        await service.close()
-
-
-@pytest.mark.parametrize("outcome", ["failure", "cancel", "reject", "accept"])
-async def test_only_successful_or_approved_narrative_commits_usage(story, outcome):
-    store, initial = story
-    if outcome in ("reject", "accept"):
-        initial = store.update_session(initial["id"], initial["revision"], policy="preview")
-    service = RoleplayRuntime(store)
-    service.provider_factory = lambda: ScriptedLLM(["" if outcome == "failure" else "正文"])
-    service.tracker_provider_factory = lambda: TrackerModel(
-        (
-            "revise_content",
-            {
-                "operations": [{"op": "add", "path": "/description", "value": "New setting"}],
-                "comment": "Explicit request",
-            },
-        ),
-        "done",
-    )
-    try:
-        if outcome == "cancel":
-            service.provider_factory = lambda: ScriptedLLM(
-                [ScriptEntry(response="正文" * 100, delay_per_chunk=0.1, chunk_size=1)]
-            )
-            turn = service.submit(
-                initial["id"],
-                TurnRequest(text="灯塔", operation_id="cancel", expected_revision=initial["revision"]),
-            )
-            for _ in range(200):
-                if store.turn(turn["id"])["draft"]:
-                    break
-                await asyncio.sleep(0.01)
-            assert store.turn(turn["id"])["draft"]
-            await service.cancel(turn["id"])
-            assert store.turn(turn["id"])["status"] == "cancelled"
-        else:
-            turn = await send(service, initial, allow_content_edit=outcome in ("reject", "accept"))
-            if outcome == "failure":
-                assert turn["status"] == "error"
-            else:
-                assert turn["status"] == "awaiting_review", turn["error"]
-                assert store.session(initial["id"])["snapshot"]["lore"] == {}
-                service.review(turn["id"], outcome == "accept")
-        assert store.session(initial["id"])["snapshot"]["lore"] == (
-            {"e": {"present": True}} if outcome == "accept" else {}
-        )
-    finally:
-        await service.close()
-
-
-async def test_maintenance_compilation_does_not_consume_narrative_usage(story):
-    store, initial = story
-
-    from tests.support.tracker_model import TrackerModel
-
-    provider = TrackerModel(
-        ("search_lore", {"query": "灯塔"}),
-        (
-            "revise_content",
-            {
-                "operations": [{"op": "add", "path": "/character_book/entries/0/enabled", "value": False}],
-                "comment": "停用条目",
-            },
-        ),
-        "维护完成",
-        "后置检查完成",
-    )
-    writer = ScriptedLLM(["正文"])
-    service = RoleplayRuntime(store)
-    service.provider_factory = lambda: writer
-    service.tracker_provider_factory = lambda: provider
-    try:
-        turn = await send(service, initial, allow_content_edit=True)
-        assert turn["status"] == "committed", turn["error"]
-        assert store.session(initial["id"])["snapshot"]["lore"] == {}
-        assert provider.call_count == 4 and writer.call_count == 1
-        assert any("灯塔设定" in str(m.get("content")) for m in provider.call_log[1])
-        assert all("灯塔设定" not in str(m.get("content")) for m in writer.last_messages)
-    finally:
-        await service.close()
-
-
-async def test_nested_generate_does_not_consume_narrative_usage(story, monkeypatch):
-    store, initial = story
-    service = RoleplayRuntime(store)
-    service.provider_factory = lambda: ScriptedLLM(["正文"])
-    nested = ScriptedLLM(["嵌套回复"])
-
-    async def nested_provider(settings, capture=None):
-        return nested
-
-    monkeypatch.setattr("tavern.scripting.agent.make_provider", nested_provider)
-    runtime_open = service.runtime.open
-
-    async def open_with_generation(doc, messages, snapshot, permission, host, *args):
-        before = copy.deepcopy(snapshot)
-        assert await host("generate", {"user_input": "灯塔"}) == "嵌套回复"
-        assert snapshot == before
-        return await runtime_open(doc, messages, snapshot, permission, host, *args)
-
-    monkeypatch.setattr(service.runtime, "open", open_with_generation)
-    try:
-        turn = await send(service, initial, text="无关话题")
-        assert turn["status"] == "committed", turn["error"]
-        from uuid import UUID, uuid5
-
-        assert nested.request_context.session_id == str(uuid5(UUID(initial["id"]), "half_agent:script"))
-        assert any("灯塔设定" in str(m.get("content")) for m in nested.call_log[0])
-        assert store.session(initial["id"])["snapshot"]["lore"] == {}
-    finally:
-        await service.close()
 
 
 async def test_api_preview_is_read_only(tmp_path):
@@ -443,6 +178,6 @@ async def test_api_preview_is_read_only(tmp_path):
         a = await client.post(f"/api/sessions/{initial['id']}/preview", json={"text": "灯塔"})
         b = await client.post(f"/api/sessions/{initial['id']}/preview", json={"text": "灯塔"})
     assert a.status_code == b.status_code == 200
-    assert a.json()["next_lore"] == {"e": {"present": True}}
-    assert recovery_note(a.json()) == recovery_note(b.json())
+    assert a.json()["messages"] == b.json()["messages"]
     assert store.session(initial["id"]) == initial
+    await app.state.service.close()

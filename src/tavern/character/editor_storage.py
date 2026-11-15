@@ -64,7 +64,6 @@ def initialize(store):
                 card=row["card"],
                 base_revision=row["base_revision"],
                 kind="draft",
-                target_mode=None,
                 brief="",
             )
             db.execute(
@@ -221,7 +220,7 @@ class Conversations:
                 (wid, title, dump({"cards": [], "state": {}}), now, now),
             )
             self.initialize_channel(db, wid)
-            self.store.create_message_adapter(db, "editor", wid, "card_author")
+            self.store.create_message_adapter(db, "editor", wid)
         return self.conversation(wid)
 
     def conversations(self, cid=None):
@@ -384,7 +383,6 @@ class Conversations:
                         "card": cid,
                         "source": source,
                         "kind": "draft" if document != source["document"] else "reference",
-                        "target_mode": None,
                         "base_revision": source["revision"],
                         "base_document": source["document"],
                         "document": document,
@@ -411,7 +409,6 @@ class Conversations:
                         "worldbook": book_id,
                         "source": {},
                         "kind": "reference",
-                        "target_mode": None,
                         "base_revision": row["revision"],
                         "base_document": document,
                         "document": copy.deepcopy(document),
@@ -454,20 +451,15 @@ class Conversations:
             self.write(db, workspace)
         return self.conversation(wid)
 
-    def update_card(self, wid, ref, document, revision, reason="手工修改", target_mode=...):
+    def update_card(self, wid, ref, document, revision, reason="手工修改"):
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             workspace = self.check(db, wid, revision)
             item = self.item(workspace, ref)
             (validate_worldbook_document if is_worldbook(item) else validate_document)(document)
-            target_changed = (
-                not is_worldbook(item) and target_mode is not ... and target_mode != item.get("target_mode")
-            )
-            if document != item["document"] or target_changed:
+            if document != item["document"]:
                 self.version(db, wid, item, reason)
                 item.update(document=document, kind="draft")
-                if target_changed:
-                    item["target_mode"] = target_mode
                 self.write(db, workspace)
         return self.conversation(wid)
 
@@ -793,7 +785,6 @@ class Conversations:
             "card": cid,
             "source": source,
             "kind": "draft",
-            "target_mode": None,
             "base_revision": source["revision"],
             "base_document": source["document"],
             "document": document,
@@ -809,7 +800,7 @@ class Conversations:
                 (wid, dump({"cards": [item], "state": {}}), now, now),
             )
             self.initialize_channel(db, wid)
-            self.store.create_message_adapter(db, "editor", wid, "card_author")
+            self.store.create_message_adapter(db, "editor", wid)
         return self.get(wid)
 
     def list(self, cid):

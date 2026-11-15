@@ -6,18 +6,17 @@ from typing import Annotated, Literal
 import jsonpointer
 from pydantic import Field, StringConstraints
 
-from tavern.advisor.context import expanded, memory_rows
+from tavern.advisor.context import expanded
 from tavern.character.cards import normalize
 from tavern.core.history_refs import message_ref, parse_span_ref
 from tavern.core.model_view import HANDLE, state_for_model
-from tavern.full_agent.content import editable_entry, entry_rows, entry_view
-from tavern.full_agent.state import note_view, read_full_state
-from tavern.full_agent.tools import HISTORY_SPAN, Arguments, Read, Search
-from tavern.full_agent.tools import SPECS as STORY_SPECS
 from tavern.novel.source import NovelText
 from tavern.novel.tools import READ_SPECS as NOVEL_SPECS
 from tavern.novel.tools import read_book
-from tavern.tracker.tools import SPECS as TRACKER_SPECS
+from tavern.story.content import editable_entry, entry_rows, entry_view
+from tavern.story.state import note_view, read_story_state
+from tavern.story.tools import HISTORY_SPAN, Arguments, Read, Search
+from tavern.story.tools import SPECS as STORY_SPECS
 from tavern.web.tools import SPECS as WEB_SPECS
 
 
@@ -71,7 +70,6 @@ NOVEL_CHAR_LIMIT = 40_000
 SPECS = {name: STORY_SPECS[name] for name in READ_NAMES}
 SPECS.update(
     {
-        "search_memory": TRACKER_SPECS["search_memory"],
         "read_story_context": (
             ContextRead,
             "Read the current story handoff, future plot, turn preference, user persona or conversation title. Read-only; missing values stay absent. For handoff and plot, available means the field exists; content may be empty.",
@@ -102,13 +100,10 @@ SPECS.update(
 )
 
 
-def definitions(mode, *, novel=False):
-    excluded = {"search_memory"} if mode == "full_agent" else {"search_notes", "read_note"}
-    if mode != "full_agent" or not novel:
-        excluded.update(NOVEL_SPECS)
+def definitions(*, novel=False):
     result = []
     for name, (model, description) in SPECS.items():
-        if name in excluded:
+        if not novel and name in NOVEL_SPECS:
             continue
         if name == "find_lore_for_edit":
             description = "Locate ordinary worldbook entries by literal title, keywords or text, including disabled entries. This advisor cannot edit them. Use read_lore_entry for complete content."
@@ -196,7 +191,7 @@ class AdvisorTools:
         o, story = self.owner, self.owner.story
         if name in NOVEL_SPECS:
             return await self.read_novel(name, args)
-        full = read_full_state(story["snapshot"]) if story["agent_mode"] == "full_agent" else {}
+        full = read_story_state(story["snapshot"])
         if name in {"search_history", "read_history"}:
             rows = [
                 {
@@ -288,15 +283,6 @@ class AdvisorTools:
                     args.limit,
                 )
             }
-        if name == "search_memory":
-            return {
-                "matches": search(
-                    [{**r, "text": r["content"]} for r in memory_rows(story)],
-                    args.query,
-                    limit=1000000,
-                    full=True,
-                )
-            }
         if name == "read_story_context":
             if args.field == "turn_preference":
                 return {
@@ -313,7 +299,7 @@ class AdvisorTools:
                 }
             data = full.get(args.field)
             if args.field == "handoff":
-                from tavern.full_agent.handoff import render_text
+                from tavern.story.handoff import render_text
 
                 # Changed sources are marked inline on the affected points.
                 return {

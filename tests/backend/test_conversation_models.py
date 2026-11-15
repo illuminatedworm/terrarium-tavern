@@ -4,7 +4,6 @@ import json
 
 import httpx
 import pytest
-from kohakuterrarium.testing.llm import ScriptedLLM, ScriptEntry
 
 from tavern.application.api import create_app
 from tavern.character.editor_runtime_config import editor_runtime_config
@@ -12,7 +11,7 @@ from tavern.core.models import SessionCreate, TurnRequest
 from tavern.search.retrieval_config import ModelConnection, ModelProfile, Provider
 from tavern.storage.store import Store
 from tests.backend.test_card_author import ToolLLM
-from tests.backend.test_full_agent import Model, ScriptHost, handoff
+from tests.backend.test_story import Model, ScriptHost, handoff
 
 
 def configured_app(path):
@@ -26,29 +25,24 @@ def configured_app(path):
         Provider(id="official-two", name="Official two", auth_mode="chatgpt_subscription"),
     ]
     for profile in (
-        doc.full_agent.model,
-        doc.half_agent.foreground,
-        doc.half_agent.background,
+        doc.story.model,
         doc.shared.card_author,
     ):
         profile.model = "configured"
-    doc.full_agent.official_model = ModelProfile(provider_id="official", model="official-model")
-    doc.half_agent.official_foreground = doc.full_agent.official_model.model_copy(deep=True)
-    doc.half_agent.official_background = doc.full_agent.official_model.model_copy(deep=True)
-    doc.full_agent.tools.auto_retrieval = False
-    doc.half_agent.chunk_mode = "off"
-    doc.half_agent.retrieval.channels = doc.full_agent.retrieval.channels = ["keyword"]
+    doc.story.official_model = ModelProfile(provider_id="official", model="official-model")
+    doc.story.tools.auto_retrieval = False
+    doc.story.retrieval.channels = ["keyword"]
     store.save_settings(doc)
     card = store.import_card(b'{"name":"Fixture","first_mes":"Opening"}')
     return app, card
 
 
-@pytest.mark.parametrize("mode", ["full_agent", "half_agent", "editor"])
+@pytest.mark.parametrize("mode", ["story", "editor"])
 async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monkeypatch, mode):
     app, card = configured_app(tmp_path)
     store, service, editor = app.state.store, app.state.service, app.state.editor
     settings = store.settings_document()
-    for profile in (settings.full_agent.model, settings.half_agent.foreground, settings.shared.card_author):
+    for profile in (settings.story.model, settings.shared.card_author):
         profile.api_mode, profile.api_path = "gemini", "gateway/v1beta"
         profile.provider_connections["second"] = ModelConnection(
             api_mode="responses", api_path="v2", model="second-default"
@@ -58,13 +52,13 @@ async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monke
     conversation = (
         editor.edits.create_conversation()
         if mode == "editor"
-        else store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
+        else store.new_session(SessionCreate(card_id=card["id"]))
     )
     cid = conversation["id"]
     base = f"/api/card-author/conversations/{cid}" if mode == "editor" else f"/api/sessions/{cid}"
     selection = {"provider_id": "second", "model": "chosen"}
     remembered = {**selection, "provider_models": {"default": "configured"}}
-    configs, messages, half_models = [], [], []
+    configs, messages = [], []
 
     async def make(cfg, *args, **kwargs):
         configs.append((cfg.base_url, cfg.api_key, cfg.model, cfg.api_mode, cfg.channel_origin))
@@ -77,25 +71,20 @@ async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monke
                         yield item
 
             return Capture([])
-        if mode == "full_agent":
 
-            class Capture(Model):
-                async def native_complete(self, items, **options):
-                    messages.extend(items)
-                    return await super().native_complete(items, **options)
+        class Capture(Model):
+            async def native_complete(self, items, **options):
+                messages.extend(items)
+                return await super().native_complete(items, **options)
 
-            return Capture("Completed")
-        model = ScriptedLLM([ScriptEntry(response="Completed")])
-        half_models.append(model)
-        return model
+        return Capture("Completed")
 
     target = {
         "editor": "tavern.character.card_author.make_provider",
-        "full_agent": "tavern.full_agent.agent.make_provider",
-        "half_agent": "tavern.scripting.agent.make_provider",
+        "story": "tavern.story.agent.make_provider",
     }[mode]
     monkeypatch.setattr(target, make)
-    service.full.runtime = ScriptHost()
+    service.story.runtime = ScriptHost()
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver"
@@ -134,17 +123,15 @@ async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monke
                     await task
                 assert editor.edits.run(response.json()["id"])["status"] == "completed"
             else:
-                turn = service.submit(
+                turn = service.story.submit(
                     cid, TurnRequest(text="Complete content 尾部", operation_id="test", expected_revision=0)
                 )
-                await service.tasks[turn["id"]]
+                await service.story.tasks[turn["id"]]
                 assert store.turn(turn["id"])["status"] == "committed", store.turn(turn["id"])["error"]
             assert configs and all(
                 cfg == ("https://second.test/v2", "fixture-second", "chosen", "responses", "standard")
                 for cfg in configs
             )
-            if half_models:
-                messages.extend(half_models[0].call_log[0])
             if messages:
                 # The fake provider receives local cache metadata too; check all
                 # business fields that become model messages, not transport tags.
@@ -158,8 +145,6 @@ async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monke
                 assert "Complete content 尾部" in encoded
                 assert "fixture-second" not in encoded and cid not in encoded
             assert store.settings_document().model_dump() == configured
-            if mode == "half_agent":
-                assert store.session_settings(cid).for_role("background").model == "configured"
             if mode != "editor":
                 saved = store.session(cid)
                 fork = store.fork_session(cid, saved["head"], saved["revision"])
@@ -220,14 +205,14 @@ async def test_editor_legacy_classification_and_official_provider_boundary(tmp_p
         assert editor_runtime_config(store, wid, {}).auth_mode == "chatgpt_subscription"
 
 
-@pytest.mark.parametrize("mode", ["full_agent", "half_agent", "editor"])
+@pytest.mark.parametrize("mode", ["story", "editor"])
 async def test_selection_is_locked_while_work_runs(tmp_path, mode):
     app, card = configured_app(tmp_path)
     store, editor = app.state.store, app.state.editor
     conversation = (
         editor.edits.create_conversation()
         if mode == "editor"
-        else store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
+        else store.new_session(SessionCreate(card_id=card["id"]))
     )
     cid = conversation["id"]
     base = f"/api/card-author/conversations/{cid}" if mode == "editor" else f"/api/sessions/{cid}"
@@ -250,11 +235,10 @@ async def test_selection_is_locked_while_work_runs(tmp_path, mode):
         assert result.status_code == 409
 
 
-@pytest.mark.parametrize("mode", ["full_agent", "half_agent"])
-async def test_official_story_can_change_provider_but_not_channel(tmp_path, mode):
+async def test_official_story_can_change_provider_but_not_channel(tmp_path):
     app, card = configured_app(tmp_path)
     store = app.state.store
-    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode, channel_origin="chatgpt"))
+    session = store.new_session(SessionCreate(card_id=card["id"], channel_origin="chatgpt"))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
         base = f"/api/sessions/{session['id']}/model"
         selected = {
@@ -269,11 +253,11 @@ async def test_official_story_can_change_provider_but_not_channel(tmp_path, mode
         assert store.session(session["id"])["channel_origin"] == "chatgpt"
 
 
-async def test_full_agent_resume_uses_new_provider_without_replaying_accepted_work(tmp_path, monkeypatch):
+async def test_story_resume_uses_new_provider_without_replaying_accepted_work(tmp_path, monkeypatch):
     app, card = configured_app(tmp_path)
     store, service = app.state.store, app.state.service
-    service.full.runtime = ScriptHost()
-    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+    service.story.runtime = ScriptHost()
+    session = store.new_session(SessionCreate(card_id=card["id"]))
     models = [
         Model(("write_handoff", handoff("完整保留已完成的工作", through=None)), ValueError("interrupted")),
         Model("完成正文"),
@@ -284,14 +268,14 @@ async def test_full_agent_resume_uses_new_provider_without_replaying_accepted_wo
         connections.append((cfg.base_url, cfg.model))
         return models[len(connections) - 1]
 
-    monkeypatch.setattr("tavern.full_agent.agent.make_provider", make)
+    monkeypatch.setattr("tavern.story.agent.make_provider", make)
     try:
-        first = service.submit(
+        first = service.story.submit(
             session["id"], TurnRequest(text="继续故事", operation_id="first", expected_revision=0)
         )
-        await service.tasks[first["id"]]
+        await service.story.tasks[first["id"]]
         assert store.turn(first["id"])["status"] == "error"
-        progress = store.full_agent_progress(first["id"])
+        progress = store.story_progress(first["id"])
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver"
         ) as api:
@@ -303,14 +287,14 @@ async def test_full_agent_resume_uses_new_provider_without_replaying_accepted_wo
                 },
             )
             assert result.status_code == 200
-        assert store.full_agent_progress(first["id"]) == progress
-        resumed = service.submit(
+        assert store.story_progress(first["id"]) == progress
+        resumed = service.story.submit(
             session["id"],
             TurnRequest(
                 text="继续故事", operation_id="resumed", expected_revision=0, resume_turn_id=first["id"]
             ),
         )
-        await service.tasks[resumed["id"]]
+        await service.story.tasks[resumed["id"]]
         assert store.turn(resumed["id"])["status"] == "committed"
         assert connections[-1] == ("https://second.test/v1", "resume-model")
         assert "完整保留已完成的工作" in json.dumps(models[-1].requests, ensure_ascii=False)

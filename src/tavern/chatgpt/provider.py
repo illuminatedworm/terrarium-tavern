@@ -103,8 +103,6 @@ class ChatGPTProvider(ModelTransport):
         # may also need repair before a tool continuation. Only dedicated
         # maintenance requests compress, never a normal story/tool response.
         if threshold is not None and not kwargs.get("_compact_disabled"):
-            if cfg.runtime_mode not in ("full_agent", "half_agent"):
-                raise ValueError("云端 compact 仅适用于官方渠道的剧情上下文")
             if type(threshold) is not int or threshold < 1024:
                 raise ValueError("云端压缩阈值必须为至少 1024 tokens 的整数")
             body["context_management"] = [{"type": "compaction", "compact_threshold": threshold}]
@@ -345,13 +343,7 @@ class ChatGPTProvider(ModelTransport):
         self._completed_response = None
         terminal = None
         response = None
-        if kwargs.get("_full_agent_story"):
-            # Full Agent previews the prose carried by submit_story.
-            tools = self._begin_kemini(tools, kwargs)
-        else:
-            # Other Responses requests keep plain transport; never inherit the
-            # previous story request's Kemini state on a reused provider.
-            self._reset_kemini()
+        self._prepare_story_preview(kwargs)
         event_sink = kwargs.get("_web_event") or (lambda kind, payload: None)
         try:
             response = await self._send(messages, tools, True, kwargs)

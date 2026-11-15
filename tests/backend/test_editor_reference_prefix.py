@@ -10,7 +10,7 @@ from tavern.core.models import CardAuthorRequest, PersonaEdit
 from tavern.storage.store import Store
 from tests.backend.test_card_author import import_fixture
 from tests.backend.test_card_author_alignment import Editor
-from tests.backend.test_half_agent_alignment import blocks
+from tests.support.model_transport import blocks
 
 
 async def execute(editor, plan, text="继续"):

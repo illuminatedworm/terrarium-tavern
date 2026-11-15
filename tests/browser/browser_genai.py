@@ -22,7 +22,7 @@ async def main():
         app = create_app(root)
         store = app.state.store
         doc = store.settings_document()
-        profile = doc.full_agent.model
+        profile = doc.story.model
         profile.api_mode, profile.model = "gemini", "gemini-4-argon"
         profile.temperature, profile.top_p, profile.top_k = 0.42, 0.8, 32
         profile.cache.mode, profile.cache.preset, profile.cache.retention = "runtime", "custom", "24h"
@@ -31,7 +31,7 @@ async def main():
         store.save_settings(doc)
         original = profile.model_dump()
         card = store.import_card('{"name":"GenAI 验证","first_mes":"开场。"}'.encode())
-        session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+        session = store.new_session(SessionCreate(card_id=card["id"]))
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         address = f"http://127.0.0.1:{listener.getsockname()[1]}"
@@ -78,14 +78,14 @@ async def main():
                         if width <= 760:
                             await (
                                 page.locator(".settings-mode-buttons")
-                                .get_by_role("button", name="full agent", exact=True)
+                                .get_by_role("button", name="游玩", exact=True)
                                 .click()
                             )
                             await page.get_by_role("combobox", name="设置页面", exact=True).select_option(
-                                "full_agent.model"
+                                "story.model"
                             )
                         else:
-                            await page.get_by_role("button", name="full agent 模型与生成", exact=True).click()
+                            await page.get_by_role("button", name="游玩 模型与生成", exact=True).click()
                         model = dialog.get_by_role("button", name="模型名称", exact=True)
                         protocol = dialog.get_by_label("接口方式", exact=True)
                         advanced = dialog.locator("details").filter(
@@ -156,7 +156,7 @@ async def main():
                         await page.screenshot(path=str(output / f"{name}-long-model.png"))
                         await choose_model(model, "gemini-4-argon")
                         await saved()
-                        restored = store.settings_document().full_agent.model.model_dump()
+                        restored = store.settings_document().story.model.model_dump()
                         for key in ("temperature", "top_p", "top_k", "cache"):
                             assert restored[key] == original[key]
                         assert not errors, errors

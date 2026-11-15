@@ -99,7 +99,6 @@ describe('current draft reading preview', () => {
       base_document: { name: '雾港' },
       source: { container: 'json' },
       base_revision: 0,
-      target_mode: null,
       brief: '',
       portrait_changed: false,
     };
@@ -133,7 +132,7 @@ describe('current draft reading preview', () => {
       content: '长篇设定\n'.repeat(500) + '完整末尾',
       enabled: true,
       constant: true,
-      extensions: { terrarium: { audience: 'tracker_mvu' } },
+      extensions: { terrarium: { purpose: 'mvu_rules' } },
     };
     const document = {
       name: '旧的顶层镜像',
@@ -150,8 +149,8 @@ describe('current draft reading preview', () => {
         enabled: true,
         stateLabel: '',
         trigger: '常驻',
-        audience: 'tracker_mvu',
-        purpose: 'Tracker 变量规则',
+        purpose: 'mvu_rules',
+        purposeLabel: 'MVU 变量规则',
         keywords: [],
       },
     ]);

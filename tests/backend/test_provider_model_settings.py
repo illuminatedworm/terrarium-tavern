@@ -19,9 +19,7 @@ async def test_provider_connections_migrate_save_restore_and_undo_without_hidden
     doc = store.settings_document()
     doc.shared.providers.append(Provider(id="second.provider", base_url="https://second.test"))
     for profile in (
-        doc.full_agent.model,
-        doc.half_agent.foreground,
-        doc.half_agent.background,
+        doc.story.model,
         doc.shared.card_author,
         doc.shared.advisor.model,
     ):
@@ -39,16 +37,14 @@ async def test_provider_connections_migrate_save_restore_and_undo_without_hidden
     store = app.state.store
     migrated = store.settings_document()
     assert migrated.version == doc.version
-    assert migrated.full_agent.model.model_dump() == doc.full_agent.model.model_dump()
+    assert migrated.story.model.model_dump() == doc.story.model.model_dump()
     backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
         assert json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]) == raw
     # Every role owns its own records, and new providers never borrow the active path/model.
     for profile in (
-        migrated.full_agent.model,
-        migrated.half_agent.foreground,
-        migrated.half_agent.background,
+        migrated.story.model,
         migrated.shared.card_author,
         migrated.shared.advisor.model,
     ):
@@ -71,22 +67,22 @@ async def test_provider_connections_migrate_save_restore_and_undo_without_hidden
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
         opened = (await api.post("/api/settings/edit-sessions", json={})).json()
-        selected = migrated.full_agent.model.for_provider("second.provider")
+        selected = migrated.story.model.for_provider("second.provider")
         selected.api_mode, selected.api_path, selected.model = "responses", "gateway/v2", "second-model"
         response = await api.patch(
-            "/api/settings/full_agent",
+            "/api/settings/story",
             json={
-                "expected_revision": migrated.revisions["full_agent"],
+                "expected_revision": migrated.revisions["story"],
                 "edit_session": opened["id"],
                 "changes": {"model": selected.model_dump()},
             },
         )
         assert response.status_code == 200, response.text
-        selected = store.settings_document().full_agent.model.for_provider("default")
+        selected = store.settings_document().story.model.for_provider("default")
         response = await api.patch(
-            "/api/settings/full_agent",
+            "/api/settings/story",
             json={
-                "expected_revision": response.json()["revisions"]["full_agent"],
+                "expected_revision": response.json()["revisions"]["story"],
                 "edit_session": opened["id"],
                 "changes": {
                     "model." + key: value
@@ -97,18 +93,18 @@ async def test_provider_connections_migrate_save_restore_and_undo_without_hidden
         )
         assert response.status_code == 200, response.text
         reloaded = Store(tmp_path).settings_document()
-        assert reloaded.full_agent.model == selected
-        assert reloaded.full_agent.model.for_provider("second.provider").api_path == "gateway/v2"
-        assert reloaded.half_agent == migrated.half_agent and reloaded.shared == migrated.shared
+        assert reloaded.story.model == selected
+        assert reloaded.story.model.for_provider("second.provider").api_path == "gateway/v2"
+        assert reloaded.shared == migrated.shared
         duplicate = {
             "model.provider_connections": {
                 "default": {"api_mode": "responses", "api_path": "hidden", "model": "stale"}
             }
         }
         rejected = await api.patch(
-            "/api/settings/full_agent",
+            "/api/settings/story",
             json={
-                "expected_revision": response.json()["revisions"]["full_agent"],
+                "expected_revision": response.json()["revisions"]["story"],
                 "changes": duplicate,
             },
         )
@@ -116,12 +112,12 @@ async def test_provider_connections_migrate_save_restore_and_undo_without_hidden
         undone = await api.post(
             f"/api/settings/edit-sessions/{opened['id']}/undo",
             json={
-                "page": "full_agent.model",
-                "expected_revision": response.json()["revisions"]["full_agent"],
+                "page": "story.model",
+                "expected_revision": response.json()["revisions"]["story"],
             },
         )
         assert undone.status_code == 200, undone.text
-        assert store.settings_document().full_agent.model == migrated.full_agent.model
+        assert store.settings_document().story.model == migrated.story.model
         assert len(list(tmp_path.glob("before-upgrade-*.sqlite3"))) == 1
 
 
@@ -139,9 +135,7 @@ def test_migrates_provider_protocol_and_root_to_all_profiles(tmp_path, mode, pat
     raw = SettingsDocument().model_dump()
     raw["shared"]["providers"][0].update(base_url=f"https://fixture.test/{path}", api_mode=mode)
     for scope, name in (
-        ("full_agent", "model"),
-        ("half_agent", "foreground"),
-        ("half_agent", "background"),
+        ("story", "model"),
         ("shared", "card_author"),
     ):
         raw[scope][name].pop("api_mode")
@@ -149,7 +143,7 @@ def test_migrates_provider_protocol_and_root_to_all_profiles(tmp_path, mode, pat
     migrated = migrate_settings(raw)
     assert migrated.shared.providers[0].base_url == "https://fixture.test"
     assert "api_mode" not in migrated.shared.providers[0].model_dump()
-    for role in ("full_agent", "foreground", "background", "card_author"):
+    for role in ("story", "card_author"):
         cfg = migrated.runtime().for_role(role)
         assert cfg.api_mode == mode
         assert cfg.api_path == expected
@@ -170,9 +164,8 @@ def test_flat_legacy_config_and_explicit_profile_overrides():
             "foreground": {"api_mode": "responses", "api_path": "v2"},
         }
     )
-    assert doc.half_agent.foreground.api_mode == "responses"
-    assert doc.half_agent.foreground.api_path == "v2"
-    assert doc.half_agent.background.api_mode == "gemini"
+    assert doc.story.model.api_mode == "responses"
+    assert doc.story.model.api_path == "v2"
     assert doc.shared.card_author.api_mode == "gemini"
 
 
@@ -188,13 +181,13 @@ def test_flat_legacy_config_and_explicit_profile_overrides():
 )
 def test_runtime_uses_each_models_path_exactly(mode, path, suffix):
     doc = SettingsDocument()
-    doc.full_agent.model = ModelProfile(api_mode=mode, api_path=path, model="fixture")
-    cfg = doc.runtime("full_agent")
+    doc.story.model = ModelProfile(api_mode=mode, api_path=path, model="fixture")
+    cfg = doc.runtime()
     assert (
         endpoint(cfg.base_url, cfg.api_mode, cfg.model, api_path=cfg.api_path)
         == "https://api.openai.com" + suffix
     )
-    assert doc.runtime().api_mode == "chat_completions"
+    assert doc.runtime().for_role("card_author").api_mode == "chat_completions"
 
 
 @pytest.mark.parametrize("path", ["https://host/v1", "../v1"])
@@ -208,12 +201,11 @@ def test_provider_root_validation_and_profile_invalidation():
         Provider(id="bad", base_url="https://fixture.test/v1")
     assert ModelProfile(api_path=" /v1beta/ ").api_path == "v1beta"
     old = SettingsDocument()
-    old.full_agent.model.capability = old.half_agent.foreground.capability = "accepted"
+    old.story.model.capability = "accepted"
     new = old.model_copy(deep=True)
-    new.full_agent.model.api_path = "v2"
+    new.story.model.api_path = "v2"
     invalidate_capabilities(old, new)
-    assert new.full_agent.model.capability == "unknown"
-    assert new.half_agent.foreground.capability == "accepted"
+    assert new.story.model.capability == "unknown"
 
 
 @pytest.mark.parametrize(
@@ -291,9 +283,7 @@ async def test_catalogs_are_provider_isolated_and_shared_across_openai_protocols
     doc = app.state.store.settings_document()
     doc.shared.providers = [Provider(id=name, name=name, api_key="same-key") for name in ("one", "two")]
     for profile in (
-        doc.full_agent.model,
-        doc.half_agent.foreground,
-        doc.half_agent.background,
+        doc.story.model,
         doc.shared.card_author,
     ):
         profile.provider_id = "one"
@@ -367,25 +357,18 @@ async def test_official_api_connection_is_explicit_persistent_and_fixed_protocol
     )
     doc.shared.providers.append(official)
     profile = ModelProfile(provider_id=official.id, model="gpt-6-sol", api_mode="responses", api_path="v1")
-    doc.full_agent.official_model = profile.model_copy(deep=True)
-    doc.half_agent.official_foreground = profile.model_copy(deep=True)
-    doc.half_agent.official_background = profile.model_copy(deep=True)
+    doc.story.official_model = profile.model_copy(deep=True)
     doc.shared.advisor.official_model = profile.model_copy(deep=True)
     doc.shared.card_author = profile.model_copy(deep=True)
-    doc.full_agent.novel_research.official_model = profile.model_copy(deep=True)
+    doc.story.novel_research.official_model = profile.model_copy(deep=True)
     store.save_settings(doc)
     saved = store.settings_document()
     assert saved.model_dump(exclude={"revisions"}) == doc.model_dump(exclude={"revisions"})
-    assert saved.version == 20
+    assert saved.version == 22
     assert provider_channel(saved.shared.providers[0]) == "standard"
     assert provider_channel(official) == "chatgpt"
-    for mode, role in (
-        ("full_agent", "full_agent"),
-        ("half_agent", "foreground"),
-        ("half_agent", "background"),
-        ("half_agent", "card_author"),
-    ):
-        runtime = saved.runtime(mode, "chatgpt").for_role(role)
+    for role in ("story", "card_author", "advisor", "novel_research"):
+        runtime = saved.runtime("chatgpt").for_role(role)
         assert (runtime.auth_mode, runtime.api_mode, runtime.api_path) == (
             "openai_api_key",
             "responses",
@@ -393,7 +376,7 @@ async def test_official_api_connection_is_explicit_persistent_and_fixed_protocol
         )
         assert runtime.base_url == "https://official.test/v1" and runtime.api_key == "official-test-key"
     invalid = saved.model_dump()
-    invalid["full_agent"]["official_model"]["api_path"] = "custom"
+    invalid["story"]["official_model"]["api_path"] = "custom"
     with pytest.raises(ValidationError, match="固定使用 Responses"):
         SettingsDocument.model_validate(invalid)
 

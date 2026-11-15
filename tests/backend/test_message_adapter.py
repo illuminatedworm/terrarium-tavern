@@ -19,10 +19,9 @@ from tavern.core.message_adapter import (
     rule_for,
     runtime_messages,
 )
-from tavern.core.models import ContextBlock, ContextRecipe, SessionCreate, Settings
+from tavern.core.models import SessionCreate, Settings
 from tavern.scripting.model_transport import ModelTransport
 from tavern.scripting.protocols import native_messages
-from tavern.storage.message_adapters import recipe_types
 from tavern.storage.store import Conflict, Store
 from tests.support.history_labels import strip_label
 from tests.support.model_transport import request_payload
@@ -32,19 +31,19 @@ def config(**rules):
     return {"version": 1, "mappings": {"chat_completions": rules}}
 
 
-def story(tmp_path, mode="half_agent"):
+def story(tmp_path):
     store = Store(tmp_path)
     card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}')
-    return store, store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
+    return store, store.new_session(SessionCreate(card_id=card["id"]))
 
 
-def state_messages():
+def handoff_messages():
     return runtime_messages(
         [
             {"role": "system", "message_type": "root_system", "content": "Rules"},
-            {"role": "system", "message_type": "state", "content": "V1"},
+            {"role": "system", "message_type": "handoff", "content": "V1"},
             {"role": "user", "content": "Continue"},
-            {"role": "system", "message_type": "state", "content": "V2", "runtime_phase": "body"},
+            {"role": "system", "message_type": "handoff", "content": "V2", "runtime_phase": "body"},
         ]
     )
 
@@ -65,17 +64,17 @@ def test_removed_call_notifications_are_purged_from_settings_and_catalog(api):
     cleaned = MessageAdapterConfig.model_validate(original).model_dump()
     assert cleaned["mappings"][api] == {"handoff": {"role": "user", "wrap": False}}
     assert original == before
-    for lane in ("full_agent", "card_author"):
+    for lane in ("story", "card_author"):
         assert not {"call_budget", "last_call_notice"} & {item["id"] for item in catalog(lane)}
 
 
 @pytest.mark.parametrize("kind", ["story", "editor"])
 async def test_reopen_cleans_persisted_call_notification_mappings(tmp_path, kind):
-    store, session = story(tmp_path, "full_agent")
+    store, session = story(tmp_path)
     editor = CardAuthorService(store)
     try:
         owner = session["id"] if kind == "story" else editor.edits.create_conversation()["id"]
-        lane = "full_agent" if kind == "story" else "card_author"
+        lane = "story" if kind == "story" else "card_author"
         saved = {lane: config(last_call_notice={"role": "user", "wrap": True})}
         with store.connection() as db:
             db.execute(
@@ -102,13 +101,8 @@ async def test_reopen_cleans_persisted_call_notification_mappings(tmp_path, kind
 def test_configurable_message_defaults_follow_protocol_across_lanes(api):
     expected = "user" if api == "gemini" else "system"
 
-    def expected_role(name):
-        if name == "tracker_input":
-            return "user"
-        return expected
-
-    for lane in ("foreground", "full_agent", "background", "card_author", "advisor"):
-        settings = Settings(runtime_mode="full_agent" if lane == "full_agent" else "half_agent", api_mode=api)
+    for lane in ("story", "card_author", "advisor"):
+        settings = Settings(api_mode=api)
         settings._adapter_lane = lane
         directory = catalog(lane)
         configurable = {item["id"] for item in directory if item["configurable"]}
@@ -129,23 +123,15 @@ def test_configurable_message_defaults_follow_protocol_across_lanes(api):
             lane,
         )
         projected, _, _ = adapt_messages(rows, settings)
-        assert all(
-            row["role"] == expected_role(row["message_type"])
-            for row in projected
-            if row["message_type"] in configurable
-        )
+        assert all(row["role"] == expected for row in projected if row["message_type"] in configurable)
         assert next(row for row in projected if row["message_type"] == "root_system")["role"] == "system"
         assert [row["role"] for row in projected if row["message_type"] in ("user", "assistant", "tool")] == [
             "user",
             "assistant",
             "tool",
         ]
-        assert all(
-            item["defaults"][api]["role"] == expected_role(item["id"])
-            for item in directory
-            if item["configurable"]
-        )
-        if lane == "full_agent":
+        assert all(item["defaults"][api]["role"] == expected for item in directory if item["configurable"])
+        if lane == "story":
             legacy = runtime_messages(
                 [
                     {"role": "user", "content": "Status", "_novel_status": True},
@@ -162,16 +148,6 @@ def test_configurable_message_defaults_follow_protocol_across_lanes(api):
                 (expected, "Status"),
                 ("assistant", "Report"),
             ]
-        if lane == "background":
-            task_input = next(row for row in projected if row["message_type"] == "tracker_input")
-            assert task_input["runtime_content"] == "tracker_input"
-            # Explicit saved overrides remain authoritative; no hidden user frame
-            # or role correction may conceal an incompatible user configuration.
-            settings.message_adapter = MessageAdapterConfig.model_validate(
-                {"mappings": {api: {"tracker_input": {"role": "system", "wrap": False}}}}
-            )
-            custom, _, _ = adapt_messages([task_input], settings)
-            assert custom[0]["role"] == "system" and custom[0]["content"] == "tracker_input"
         if api == "gemini":
             _, contents, _ = native_messages(projected, api)
             assert all(row["role"] in ("user", "model") for row in contents)
@@ -179,7 +155,7 @@ def test_configurable_message_defaults_follow_protocol_across_lanes(api):
 
 @pytest.mark.parametrize("api", APIS)
 def test_note_list_defaults_are_wrapped_and_mapping_is_reversible(api):
-    settings = Settings(runtime_mode="full_agent", api_mode=api)
+    settings = Settings(api_mode=api)
     messages = runtime_messages(
         [
             {"role": "system", "source": "character", "content": "Character"},
@@ -190,7 +166,7 @@ def test_note_list_defaults_are_wrapped_and_mapping_is_reversible(api):
             },
             {"role": "user", "source": "input", "content": "Continue"},
         ],
-        "full_agent",
+        "story",
     )
     original = copy.deepcopy(messages)
     defaults, _, _ = adapt_messages(messages, settings)
@@ -198,12 +174,10 @@ def test_note_list_defaults_are_wrapped_and_mapping_is_reversible(api):
     assert defaults[1]["role"] == expected
     assert defaults[1]["content"] == "<tavern_note_list>\n线索/钟楼\n</tavern_note_list>"
     assert defaults[1]["runtime_phase"] == "header"
-    directory_type = next(t for t in catalog("full_agent") if t["id"] == "note_list")
+    directory_type = next(t for t in catalog("story") if t["id"] == "note_list")
     assert directory_type["configurable"] and not directory_type["appendable"]
     assert directory_type["defaults"][api] == {"role": expected, "wrap": True}
-    assert all(
-        t["id"] != "note_list" for lane in ("foreground", "background", "card_author") for t in catalog(lane)
-    )
+    assert all(t["id"] != "note_list" for lane in ("card_author", "advisor") for t in catalog(lane))
     settings.message_adapter = MessageAdapterConfig.model_validate(
         {"mappings": {api: {"note_list": {"role": "user", "wrap": False}}}}
     )
@@ -215,32 +189,30 @@ def test_note_list_defaults_are_wrapped_and_mapping_is_reversible(api):
 
 
 @pytest.mark.parametrize("api", APIS)
-def test_full_agent_existing_owner_and_new_owner_inherit_protocol_defaults(tmp_path, api):
-    store, existing = story(tmp_path, "full_agent")
+def test_story_existing_owner_and_new_owner_inherit_protocol_defaults(tmp_path, api):
+    store, existing = story(tmp_path)
     reopened = Store(store.root)
-    new = reopened.new_session(SessionCreate(card_id=existing["card"], agent_mode="full_agent"))
-    configs = [reopened.settings_document().full_agent.model.message_adapter.model_dump()]
+    new = reopened.new_session(SessionCreate(card_id=existing["card"]))
+    configs = [reopened.settings_document().story.model.message_adapter.model_dump()]
     configs.extend(
-        reopened.message_adapter("story", owner["id"], "full_agent")["config"] for owner in (existing, new)
+        reopened.message_adapter("story", owner["id"], "story")["config"] for owner in (existing, new)
     )
     for adapter in configs:
-        for item in catalog("full_agent"):
+        for item in catalog("story"):
             if item["configurable"]:
-                assert rule_for(item["id"], adapter, api, "full_agent")["role"] == (
+                assert rule_for(item["id"], adapter, api, "story")["role"] == (
                     "user" if api == "gemini" else "system"
                 )
 
 
 @pytest.mark.parametrize("api", ["chat_completions", "responses", "anthropic", "gemini"])
-@pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
-async def test_same_type_has_one_sdk_role_and_labels_are_reversible(api, mode):
+async def test_same_type_has_one_sdk_role_and_labels_are_reversible(api):
     settings = Settings(
         model="fixture",
         api_mode=api,
-        runtime_mode=mode,
-        message_adapter={"mappings": {api: {"state": {"role": "user", "wrap": False}}}},
+        message_adapter={"mappings": {api: {"handoff": {"role": "user", "wrap": False}}}},
     )
-    original = state_messages()
+    original = handoff_messages()
     before = copy.deepcopy(original)
     provider = ModelTransport(
         settings,
@@ -251,14 +223,14 @@ async def test_same_type_has_one_sdk_role_and_labels_are_reversible(api, mode):
         body = await request_payload(provider, original)
         rows = body.get("messages", body.get("input", body.get("contents")))
         text = json.dumps(rows)
-        assert "V1" in text and "V2" in text and "tavern_state" not in text
+        assert "V1" in text and "V2" in text and "tavern_memory" not in text
         assert all(
             row["role"] == "user" for row in rows if "V1" in json.dumps(row) or "V2" in json.dumps(row)
         )
         assert "message_type" not in json.dumps(body) and "runtime_content" not in json.dumps(body)
         assert original == before
-        settings.message_adapter.mappings[api]["state"].wrap = True
-        assert "<tavern_state>" in json.dumps((await request_payload(provider, original)))
+        settings.message_adapter.mappings[api]["handoff"].wrap = True
+        assert "<tavern_memory>" in json.dumps((await request_payload(provider, original)))
     finally:
         await provider.close()
 
@@ -267,134 +239,34 @@ def test_managed_header_order_is_stable_across_mapping_changes_and_body_stays_pu
     messages = runtime_messages(
         [
             {"role": "system", "source": "rules", "content": "Rules"},
-            {"role": "system", "source": "author_note", "content": "A"},
-            {"role": "system", "source": "state", "content": "B"},
+            {"role": "system", "source": "post", "content": "A"},
+            {"role": "system", "source": "handoff", "content": "B"},
             {"role": "system", "source": "description", "content": "Character"},
             {"role": "user", "content": "Continue"},
-            {"role": "system", "source": "state", "content": "B2", "runtime_phase": "body"},
+            {"role": "system", "source": "handoff", "content": "B2", "runtime_phase": "body"},
         ]
     )
     settings = Settings(
-        runtime_mode="full_agent",
-        message_adapter=config(
-            author_note={"role": "user", "wrap": True}, state={"role": "system", "wrap": True}
-        ),
+        message_adapter=config(post={"role": "user", "wrap": True}, handoff={"role": "system", "wrap": True}),
     )
     first, reordered, _ = adapt_messages(messages, settings)
     assert [m["message_type"] for m in first[:4]] == [
         "root_system",
         "card_description",
-        "state",
-        "author_note",
+        "handoff",
+        "post",
     ]
-    assert first[-1]["runtime_phase"] == "body" and first[-1]["content"].endswith("B2\n</tavern_state>")
+    assert first[-1]["runtime_phase"] == "body" and first[-1]["content"].endswith("B2\n</tavern_memory>")
     settings.message_adapter = MessageAdapterConfig.model_validate(
-        config(author_note={"role": "user", "wrap": False}, state={"role": "user", "wrap": False})
+        config(post={"role": "user", "wrap": False}, handoff={"role": "user", "wrap": False})
     )
     second, _, _ = adapt_messages(reordered, settings)
     assert [m["message_type"] for m in second[:4]] == [
         "root_system",
         "card_description",
-        "author_note",
-        "state",
+        "post",
+        "handoff",
     ]
-
-
-def test_half_agent_header_partition_is_minimal_idempotent_and_keeps_body_positions():
-    messages = runtime_messages(
-        [
-            {"role": "system", "source": "rules", "content": "Rules"},
-            {"role": "system", "source": "author_note", "content": "Note"},
-            {"role": "system", "source": "state", "content": "State"},
-            {"role": "system", "source": "description", "content": "Character"},
-            {"role": "system", "source": "persona", "content": "Player"},
-            {"role": "system", "source": "scenario", "content": "Scene"},
-            {"role": "user", "content": "Input"},
-            {
-                "role": "system",
-                "source": "custom",
-                "content": "<tavern_custom_context>\nUser text\n</tavern_custom_context>",
-            },
-        ]
-    )
-    before = copy.deepcopy(messages)
-    settings = Settings(
-        api_mode="gemini",
-        message_adapter={
-            "mappings": {
-                "gemini": {
-                    "author_note": {"role": "system", "wrap": True},
-                    "card_description": {"role": "system", "wrap": True},
-                    "card_scenario": {"role": "system", "wrap": True},
-                    "custom": {"role": "user", "wrap": False},
-                }
-            }
-        },
-    )
-    projected, ordered, warnings = adapt_messages(messages, settings)
-    assert [m["message_type"] for m in projected[:6]] == [
-        "root_system",
-        "author_note",
-        "card_description",
-        "card_scenario",
-        "state",
-        "persona",
-    ]
-    assert [m["message_type"] for m in projected[6:]] == ["user", "custom"]
-    assert len(warnings) == 1 and "最小位移" in warnings[0]
-    assert projected[-1]["content"] == messages[-1]["content"]
-    again, _, repeated_warnings = adapt_messages(ordered, settings)
-    assert again == projected and repeated_warnings == []
-    _, contents, _ = native_messages(projected, "gemini")
-    assert all(item["role"] == "user" for item in contents)
-    assert messages == before
-
-
-async def test_half_agent_partition_preserves_final_sdk_prefix_across_turns():
-    from tavern.conversation.cache_breakpoint import model_messages
-    from tests.backend.test_half_agent_alignment import Story
-
-    story = Story("gemini")
-    story.cfg.model = "fixture"
-    story.cfg.message_adapter = MessageAdapterConfig.model_validate(
-        {"mappings": {"gemini": {"card_description": {"role": "system", "wrap": True}}}}
-    )
-    story.session["recipe"]["blocks"].insert(
-        1, ContextBlock(id="prefix_user", source="custom", content="Stable header reference").model_dump()
-    )
-    saved_recipe = copy.deepcopy(story.session["recipe"])
-    requests = []
-
-    def route(request):
-        requests.append(json.loads(request.content))
-        return httpx.Response(
-            200,
-            json={
-                "candidates": [
-                    {"finishReason": "STOP", "content": {"role": "model", "parts": [{"text": "done"}]}}
-                ]
-            },
-        )
-
-    provider = ModelTransport(
-        story.cfg, "local-fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
-    )
-    try:
-        # The same input text must survive its transition to committed history.
-        first = story.compile(generate=None)
-        assert [row["source"] for row in first["trace"][:2]] == ["rules", "character"]
-        await provider.chat_complete(model_messages(first))
-        story.commit(first, "done")
-        second = story.compile(generate=None)
-        assert second["context_ledger"]["rebuild_reason"] is None
-        assert second["messages"][: len(first["messages"])] == first["messages"]
-        await provider.chat_complete(model_messages(second))
-        assert requests[1]["systemInstruction"] == requests[0]["systemInstruction"]
-        assert requests[1]["contents"][: len(requests[0]["contents"])] == requests[0]["contents"]
-        assert all(row["role"] in ("user", "model") for request in requests for row in request["contents"])
-        assert story.session["recipe"] == saved_recipe
-    finally:
-        await provider.close()
 
 
 def test_fixed_types_and_unknown_types_cannot_be_overridden():
@@ -420,9 +292,9 @@ async def test_native_protocol_preserves_selected_roles_and_checks_genai_schema(
         model="fixture",
         base_url="https://fixture.test",
         use_proxy=False,
-        message_adapter={"mappings": {api: {"state": {"role": role, "wrap": False}}}},
+        message_adapter={"mappings": {api: {"handoff": {"role": role, "wrap": False}}}},
     )
-    original = state_messages()
+    original = handoff_messages()
     if api == "gemini":
         from tavern.core.message_adapter import project_context
 
@@ -456,11 +328,11 @@ async def test_native_protocol_preserves_selected_roles_and_checks_genai_schema(
             with pytest.raises(ValueError, match="正文仅支持 user / model") as error:
                 await provider.chat_complete(original)
             title = "更新状态" if role == "system" else "初始状态"
-            assert f"新一轮消息中的「剧情状态 · {title}」使用了不受支持的 role={role}" in str(error.value)
+            assert f"新一轮消息中的「交接笔记 · {title}」使用了不受支持的 role={role}" in str(error.value)
             assert "位置" not in str(error.value)
             assert requests == []
             assert original == before
-            assert settings.message_adapter.mappings[api]["state"].role == role
+            assert settings.message_adapter.mappings[api]["handoff"].role == role
             return
         if accepted:
             assert (await provider.chat_complete(original)).content == "done"
@@ -480,155 +352,38 @@ async def test_native_protocol_preserves_selected_roles_and_checks_genai_schema(
         else:
             assert "V1" in json.dumps(requests[0]["system" if api == "anthropic" else "systemInstruction"])
         assert original == before
-        assert settings.message_adapter.mappings[api]["state"].role == role
+        assert settings.message_adapter.mappings[api]["handoff"].role == role
     finally:
         await provider.close()
-
-
-async def test_genai_half_agent_data_positions_and_compatibility_roles_reach_sdk_unchanged():
-    from tavern.conversation.cache_breakpoint import model_messages
-    from tavern.conversation.context import compile_context
-
-    settings = Settings(
-        api_mode="gemini", model="fixture", system_prompt="Rules", retrieval={"channels": ["keyword"]}
-    )
-    history = [
-        {"id": "u", "role": "user", "raw": "Earlier input", "model": "Earlier input"},
-        {"id": "a", "role": "assistant", "raw": "Earlier reply", "model": "Earlier reply"},
-    ]
-    requests = []
-
-    def route(request):
-        requests.append(json.loads(request.content))
-        return httpx.Response(
-            200,
-            json={
-                "candidates": [
-                    {"finishReason": "STOP", "content": {"role": "model", "parts": [{"text": "done"}]}}
-                ]
-            },
-        )
-
-    provider = ModelTransport(
-        settings, "local-fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
-    )
-    try:
-        for position in ("before_card", "depth_zero", "compatibility"):
-            document = {
-                "name": "Fixture",
-                "description": "Complete card description",
-                "personality": "Complete personality",
-            }
-            recipe = ContextRecipe()
-            if position == "depth_zero":
-                recipe.blocks = [
-                    ContextBlock(id="rules", source="rules"),
-                    ContextBlock(id="history", source="history"),
-                    ContextBlock(id="input", source="input", role="user"),
-                    ContextBlock(id="description", source="description", depth=0),
-                ]
-            else:
-                document["character_book"] = {
-                    "entries": [
-                        {
-                            "id": "e",
-                            "keys": ["灯塔"],
-                            "content": "Complete lore text",
-                            "position": 0 if position == "before_card" else 5,
-                            "role": "assistant" if position == "compatibility" else "system",
-                        }
-                    ]
-                }
-            if position == "compatibility":
-                settings.message_adapter = MessageAdapterConfig.model_validate(
-                    {
-                        "mappings": {
-                            "gemini": {
-                                "lore_injected": {"role": "user", "wrap": False},
-                                "compat:lore_injected:assistant": {"role": "assistant", "wrap": True},
-                            }
-                        }
-                    }
-                )
-                compatible = next(
-                    item for item in catalog("foreground") if item["id"] == "compat:lore_injected:assistant"
-                )
-                assert compatible["configurable"]
-            session = {
-                "id": "s",
-                "persona": "Player",
-                "lore_injection_mode": "st_top",
-                "recipe": recipe.model_dump(),
-            }
-            compiled = compile_context(
-                document, session, history, {"state": {}}, "灯塔", settings, "fixture", input_message_id="new"
-            )
-            assert (await provider.chat_complete(model_messages(compiled))).content == "done"
-            body = requests[-1]
-            assert all(message["role"] in ("user", "model") for message in body["contents"])
-            assert any(part.get("text") == "Rules" for part in body["systemInstruction"]["parts"])
-            content = [
-                "".join(part.get("text", "") for part in message["parts"]) for message in body["contents"]
-            ]
-            card_index = next(i for i, text in enumerate(content) if "Complete card description" in text)
-            assert "<card_description>\nComplete card description\n</card_description>" in content[card_index]
-            if position == "depth_zero":
-                assert card_index > next(i for i, text in enumerate(content) if strip_label(text) == "灯塔")
-            else:
-                lore_index = next(i for i, text in enumerate(content) if "Complete lore text" in text)
-                if position == "before_card":
-                    assert lore_index < card_index
-                else:
-                    assert body["contents"][lore_index]["role"] == "model"
-                    assert content[lore_index] == "<lorebook>\nComplete lore text\n</lorebook>"
-    finally:
-        await provider.close()
-
-
-def test_legacy_recipe_roles_have_distinct_compatible_types():
-    recipe = ContextRecipe(
-        blocks=[ContextBlock(id="a", source="state"), ContextBlock(id="b", source="state", role="user")]
-    ).model_dump()
-    migrated = recipe_types(copy.deepcopy(recipe))
-    assert [b["message_type"] for b in migrated["blocks"]] == ["state", "compat:state:user"]
-    rows = runtime_messages(
-        [
-            {"role": b["role"], "message_type": b["message_type"], "content": b["id"]}
-            for b in migrated["blocks"]
-        ]
-    )
-    assert [r["role"] for r in adapt_messages(rows, Settings())[0]] == ["system", "system"]
-    settings = Settings(message_adapter=config(**{"compat:state:user": {"role": "user", "wrap": False}}))
-    assert [r["role"] for r in adapt_messages(rows, settings)[0]] == ["system", "user"]
 
 
 def test_global_defaults_are_snapshotted_and_forks_and_reopen_are_independent(tmp_path):
     store, old = story(tmp_path)
     document = store.settings_document()
-    document.half_agent.foreground.message_adapter = MessageAdapterConfig.model_validate(
-        config(state={"role": "user", "wrap": False})
+    document.story.model.message_adapter = MessageAdapterConfig.model_validate(
+        config(handoff={"role": "user", "wrap": False})
     )
     store.save_settings(document)
     new = store.new_session(SessionCreate(card_id=old["card"]))
-    assert store.message_adapter("story", old["id"], "foreground")["config"]["mappings"] == {}
+    assert store.message_adapter("story", old["id"], "story")["config"]["mappings"] == {}
     assert (
-        store.message_adapter("story", new["id"], "foreground")["config"]["mappings"]["chat_completions"][
-            "state"
+        store.message_adapter("story", new["id"], "story")["config"]["mappings"]["chat_completions"][
+            "handoff"
         ]["role"]
         == "user"
     )
     saved = store.message_adapter_settings("story", old["id"])
-    saved["config"]["foreground"] = config(state={"role": "assistant", "wrap": True})
+    saved["config"]["story"] = config(handoff={"role": "assistant", "wrap": True})
     store.save_message_adapter("story", old["id"], 0, saved["config"])
     assert store.session(old["id"])["revision"] == 0
     fork = store.fork_session(old["id"], old["head"], 0)
-    assert store.message_adapter("story", fork["id"], "foreground")["config"] == saved["config"]["foreground"]
-    saved["config"]["foreground"] = config(state={"role": "user", "wrap": False})
+    assert store.message_adapter("story", fork["id"], "story")["config"] == saved["config"]["story"]
+    saved["config"]["story"] = config(handoff={"role": "user", "wrap": False})
     store.save_message_adapter("story", fork["id"], 0, saved["config"])
     assert (
-        Store(store.root).message_adapter("story", old["id"], "foreground")["config"]["mappings"][
+        Store(store.root).message_adapter("story", old["id"], "story")["config"]["mappings"][
             "chat_completions"
-        ]["state"]["role"]
+        ]["handoff"]["role"]
         == "assistant"
     )
     with pytest.raises(Conflict):
@@ -641,7 +396,7 @@ async def test_next_sdk_call_uses_live_adapter_while_current_request_keeps_snaps
     editor = CardAuthorService(store)
     try:
         owner = session["id"] if kind == "story" else editor.edits.create_conversation()["id"]
-        lane = "foreground" if kind == "story" else "card_author"
+        lane = "story" if kind == "story" else "card_author"
         cfg = Settings(model="fixture", base_url="https://fixture.test", use_proxy=False)
         cfg._adapter_lane = lane
         bind_adapter(cfg, store, kind, owner)
@@ -669,14 +424,14 @@ async def test_next_sdk_call_uses_live_adapter_while_current_request_keeps_snaps
             cfg, "local-fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
         )
         try:
-            task = asyncio.create_task(provider.chat_complete(state_messages()))
+            task = asyncio.create_task(provider.chat_complete(handoff_messages()))
             await asyncio.wait_for(received.wait(), 5)
             current = store.message_adapter_settings(kind, owner)
-            current["config"][lane] = config(state={"role": "user", "wrap": False})
+            current["config"][lane] = config(handoff={"role": "user", "wrap": False})
             store.save_message_adapter(kind, owner, 0, current["config"])
             release.set()
             await task
-            await provider.chat_complete(state_messages())
+            await provider.chat_complete(handoff_messages())
             assert requests[0]["messages"][-1]["role"] == "system"
             assert requests[1]["messages"][-1] == {"role": "user", "content": "V2"}
         finally:
@@ -702,7 +457,7 @@ async def test_owner_api_allows_running_turn_and_preserves_story_revision(tmp_pa
         ) as client:
             path = f"/api/sessions/{session['id']}/message-adapter"
             old = (await client.get(path)).json()
-            old["config"]["foreground"] = config(state={"role": "user", "wrap": False})
+            old["config"]["story"] = config(handoff={"role": "user", "wrap": False})
             saved = await client.put(path, json={"expected_adapter_revision": 0, "config": old["config"]})
             assert saved.status_code == 200 and saved.json()["revision"] == 1
             assert store.session(session["id"])["revision"] == 0
@@ -714,17 +469,17 @@ async def test_owner_api_allows_running_turn_and_preserves_story_revision(tmp_pa
         await app.state.service.close()
 
 
-async def test_full_agent_tool_continuation_refreshes_adapter_and_commits_without_revision_conflict(tmp_path):
+async def test_story_tool_continuation_refreshes_adapter_and_commits_without_revision_conflict(tmp_path):
     from tavern.core.models import TurnRequest
-    from tests.backend.test_full_agent import runtime, story_reply
+    from tests.backend.test_story import runtime, story_reply
 
-    store, session = story(tmp_path, "full_agent")
+    store, session = story(tmp_path)
     document = store.settings_document()
     document.shared.providers[0].api_key = "local-fixture"
     document.shared.providers[0].base_url = "https://fixture.test"
     document.shared.network.api_proxy = False
-    document.full_agent.model.model = "fixture"
-    document.full_agent.tools.auto_retrieval = False
+    document.story.model.model = "fixture"
+    document.story.tools.auto_retrieval = False
     store.save_settings(document)
     service = runtime(store)
     received, release = asyncio.Event(), asyncio.Event()
@@ -758,22 +513,22 @@ async def test_full_agent_tool_continuation_refreshes_adapter_and_commits_withou
         )
 
     def factory():
-        cfg = bind_adapter(store.settings("full_agent").for_role("full_agent"), store, "story", session["id"])
+        cfg = bind_adapter(store.settings().for_role("story"), store, "story", session["id"])
         return ModelTransport(
             cfg, "local-fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
         )
 
-    service.provider_factory = factory
+    service.story.provider_factory = factory
     try:
-        turn = service.submit(
+        turn = service.story.submit(
             session["id"], TurnRequest(text="Continue", operation_id="hot-adapter", expected_revision=0)
         )
         await asyncio.wait_for(received.wait(), 5)
         current = store.message_adapter_settings("story", session["id"])
-        current["config"]["full_agent"] = config(context_status={"role": "user", "wrap": True})
+        current["config"]["story"] = config(context_status={"role": "user", "wrap": True})
         store.save_message_adapter("story", session["id"], 0, current["config"])
         release.set()
-        await service.tasks[turn["id"]]
+        await service.story.tasks[turn["id"]]
         assert store.turn(turn["id"])["status"] == "committed", store.turn(turn["id"])["error"]
         assert store.session(session["id"])["revision"] == 1
         statuses = [
@@ -792,7 +547,7 @@ async def test_full_agent_tool_continuation_refreshes_adapter_and_commits_withou
 def test_assistant_history_and_native_replay_preserve_original_text():
     from tavern.scripting.native_response import attachment, message_digest
     from tavern.scripting.protocols import openai_messages, response_input
-    from tests.backend.test_card_context_blocks import compile_mode
+    from tests.backend.test_card_context_blocks import compile_card
 
     text = "[H12]\n屏幕上的代号。\n[H13]\n她输入密码，门开了。"
     history = [
@@ -802,38 +557,37 @@ def test_assistant_history_and_native_replay_preserve_original_text():
     ]
     # A literal label is part of the story, never omitted from attachment validation.
     assert message_digest({"content": text}) != message_digest({"content": strip_label(text)})
-    for mode in ("half_agent", "full_agent"):
-        compiled = compile_mode(mode, {"name": "测试"}, history)
-        story = {m["message_id"]: m for m in compiled["trace"] if m.get("message_id")}
-        assert story["opening"]["content"] == "开场"
-        assert story["user"]["content"] == ("[H2]\n" if mode == "full_agent" else "") + "检查终端"
-        assert story["reply"]["content"] == text
-        message = {"role": "assistant", "content": story["reply"]["content"]}
-        assert openai_messages([message])[0]["content"] == text
-        for api in ("anthropic", "responses"):
-            items = (
-                [
-                    {"type": "thinking", "thinking": "reasoning", "signature": "signed"},
-                    {"type": "text", "text": text},
-                ]
-                if api == "anthropic"
-                else [
-                    {"type": "reasoning", "id": "reason", "encrypted_content": "encrypted"},
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": text}],
-                    },
-                ]
-            )
-            payload = {"content" if api == "anthropic" else "output": items}
-            native = {**message, "_native_response": attachment(payload, {"api": api}, message)}
-            replayed = (
-                native_messages([native], api)[1][0]["content"]
-                if api == "anthropic"
-                else response_input([native])
-            )
-            assert replayed == items
-        parts = [{"text": text}, {"text": "signed text", "thoughtSignature": "signed"}]
-        gemini = {**message, "reasoning_details": [{"provider": "gemini", "parts": parts}]}
-        assert native_messages([gemini], "gemini")[1] == [{"role": "model", "parts": parts}]
+    compiled = compile_card({"name": "测试"}, history)
+    story = {m["message_id"]: m for m in compiled["trace"] if m.get("message_id")}
+    assert story["opening"]["content"] == "开场"
+    assert story["user"]["content"] == "[H2]\n检查终端"
+    assert story["reply"]["content"] == text
+    message = {"role": "assistant", "content": story["reply"]["content"]}
+    assert openai_messages([message])[0]["content"] == text
+    for api in ("anthropic", "responses"):
+        items = (
+            [
+                {"type": "thinking", "thinking": "reasoning", "signature": "signed"},
+                {"type": "text", "text": text},
+            ]
+            if api == "anthropic"
+            else [
+                {"type": "reasoning", "id": "reason", "encrypted_content": "encrypted"},
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text}],
+                },
+            ]
+        )
+        payload = {"content" if api == "anthropic" else "output": items}
+        native = {**message, "_native_response": attachment(payload, {"api": api}, message)}
+        replayed = (
+            native_messages([native], api)[1][0]["content"]
+            if api == "anthropic"
+            else response_input([native])
+        )
+        assert replayed == items
+    parts = [{"text": text}, {"text": "signed text", "thoughtSignature": "signed"}]
+    gemini = {**message, "reasoning_details": [{"provider": "gemini", "parts": parts}]}
+    assert native_messages([gemini], "gemini")[1] == [{"role": "model", "parts": parts}]

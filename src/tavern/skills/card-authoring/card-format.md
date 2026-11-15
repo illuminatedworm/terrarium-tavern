@@ -23,10 +23,10 @@
 | `first_mes` | 文本 | 开场 0 |
 | `alternate_greetings` | 文本数组 | 开场 1..N。用户只选一个开场作为第一条 assistant 剧情，其余开场不发送 |
 | `character_book` | 对象 | 世界书，条目按下文规则准入 |
-| `extensions` | 对象 | 只解释已支持的扩展：`regex_scripts`、Tavern Helper 脚本、世界书条目的 `terrarium.audience` 等 |
+| `extensions` | 对象 | 只解释已支持的扩展：`regex_scripts`、Tavern Helper 脚本、世界书条目的 `terrarium.purpose` 等 |
 | `creator_notes`、`creator`、`tags`、`character_version` | 文本／数组 | 卡片信息，不进入游玩请求 |
 
-非空字段才注入，宏展开后完整发送。标签只标识字段来源，运行时不附加用途说明，字段里写什么由作者决定。上表是默认顺序；Half Agent 可由会话配方调整，Full Agent 固定使用此顺序。固定资料区内容变化会让请求前缀失效，详见各模式文档。
+非空字段才注入，宏展开后完整发送。标签只标识字段来源，运行时不附加用途说明，字段里写什么由作者决定。上表是游玩请求的字段顺序。固定资料区内容变化会让请求前缀失效，详见 `story.md`。
 
 ## 宏
 
@@ -56,7 +56,7 @@
 | `keys` | — | 主关键词，任一命中即成为候选 |
 | `secondary_keys`、`selectiveLogic` | 空、0 | 次级关键词非空时追加条件：0 任一命中，1 并非全部命中，2 全部未命中，3 全部命中。V2 的 `selective` 只为其他前端保留，本项目以 `secondary_keys` 是否为空为准 |
 | `content` | — | 正文，准入后整条注入 |
-| `comment` | 空 | 优先采用的条目标题，用于界面、诊断和默认开启的标题检索／注入；含 `[InitVar]` 的条目参与初始化、不进入普通叙事检索，标记 `tracker_mvu` 后也向授权变量任务提供（见 `runtime-guide.md`） |
+| `comment` | 空 | 优先采用的条目标题，用于界面、诊断和默认开启的标题检索／注入；含 `[InitVar]` 的条目参与初始化、不进入普通叙事检索，标记 `mvu_rules` 后也向授权变量任务提供（见 `runtime-guide.md`） |
 | `name` | 空 | `comment` 为空时使用的标题；是否参与检索由“条目标题参与检索”控制 |
 | `enabled` | true | 关闭后不注入 |
 | `constant` | false | 常驻条目，每轮注入，不经检索，不占新增名额 |
@@ -67,8 +67,8 @@
 | `matchWholeWords` | false | 按整词匹配。中文关键词前后通常是文字，开启后几乎无法命中 |
 | `use_regex`，或写成 `/pattern/flags` 的关键词 | — | 正则关键词，使用简单模式 |
 | `excludeRecursion`、`preventRecursion` | false | 不被递归激活；正文不激活其他条目 |
-| `position`、`depth`、`role` | — | 注入位置，生效方式见各模式文档 |
-| `extensions.terrarium.audience` | `writer` | 条目用途：`writer`、`tracker_mvu` |
+| `position`、`depth`、`role` | — | 注入位置，生效方式见 `story.md` |
+| `extensions.terrarium.purpose` | `narrative` | 本项目的条目用途，`narrative` 为叙事设定，`mvu_rules` 为 MVU 变量规则 |
 
 其他前端导出的这些字段常放在条目的 `extensions` 中，运行时合并读取，原样保留即可。`matchWholeWords`、`excludeRecursion`、`preventRecursion`、`caseSensitive` 也接受 SillyTavern 的 `match_whole_words`、`exclude_recursion`、`prevent_recursion`、`case_sensitive` 写法，顶层和 `extensions` 均可读取。已有 camelCase 优先，同一拼写以 `extensions` 为先，`false` 和 `null` 不回退到别名（`null` 按默认关闭处理）。修改时保留已有字段位置与拼写，不添加相互矛盾的同义字段；有多个同义字段时应同步修改。
 

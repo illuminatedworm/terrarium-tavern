@@ -1,4 +1,4 @@
-"""Roleplay Runtime retrieval: admission, fusion and content-addressed indexes."""
+"""Worldbook retrieval: admission, fusion and content-addressed indexes."""
 
 import asyncio
 import hashlib
@@ -221,7 +221,7 @@ def lexical_recall(
     card = normalize(document)
     entries = [
         dict(e, content=macros(e.get("content", ""), card, session.get("persona", ""), state))
-        for e in lore_entries(document, "writer")
+        for e in lore_entries(document, "narrative")
         if e["enabled"]
         and not e.get("constant")
         and not is_initvar(e)
@@ -233,16 +233,14 @@ def lexical_recall(
     ]
     clues = [{**m, "model": m.get("retrieval_query", ""), "raw": ""} for m in history]
     visible_ids = {m["id"] for m in history}
-    from tavern.conversation.half_compaction import active_lore, enabled
-
-    injections = active_lore(snapshot) if enabled(settings) else snapshot.get("lore_injections", [])
+    injections = snapshot.get("lore_injections", [])
     retained = {r["id"] for r in injections if r["anchor_id"] in visible_ids}
     exiting = {
         eid
         for eid, old in snapshot.get("lore", {}).items()
         if isinstance(old, dict) and old.get("present") and eid not in retained
     }
-    suppressed = retained | exiting if session.get("lore_injection_mode") == "conversation" else set()
+    suppressed = retained | exiting
     query = query_text(history, user_input, config, story)
     from tavern.search.lore_admission import keyword_evidence
 
@@ -325,7 +323,7 @@ def lexical_recall(
                 session_id=session.get("id", ""),
                 timeline=timeline,
                 turn_number=turn_number,
-                retained=retained | exiting if session.get("lore_injection_mode") == "conversation" else (),
+                retained=retained | exiting,
                 retrieval={"ids": ranks[channel]},
                 query=query,
                 title_heading=config.title_in_retrieval,
@@ -350,32 +348,6 @@ def lexical_recall(
     }
 
 
-def archive_lexical(rows, query, config):
-    """BM25 shortlist of archived episodes; a pure, cached index like lore's."""
-    _, index = sparse_index(rows, config)
-    return index.search(query, config)
-
-
-def recall_view(ranks, ids, bm25, dense, rerank, diagnostics):
-    """Map ``memory:<id>`` index IDs back to record IDs with their admission evidence."""
-    prefix = len("memory:")
-    return {
-        "ids": [eid[prefix:] for eid in ids],
-        "evidence": {
-            eid[prefix:]: {
-                "channels": [name for name, ranked in ranks.items() if eid in ranked],
-                "bm25_score": bm25.get(eid),
-                "embedding_score": (dense or {}).get(eid),
-                "rerank_score": rerank.get(eid),
-            }
-            for eid in ids
-        },
-        "diagnostics": [
-            {**note, "id": note["id"][prefix:]} if "id" in note else note for note in diagnostics
-        ],
-    }
-
-
 class RetrievalEngine:
     def __init__(self, store, models):
         self.store, self.models = store, models
@@ -393,11 +365,11 @@ class RetrievalEngine:
                 "CREATE TABLE IF NOT EXISTS retrieval_collections (session TEXT PRIMARY KEY, keys TEXT NOT NULL)"
             )
 
-    def dense_vectors(self, entries, config_key, sid, source):
+    def dense_vectors(self, entries, config_key, sid):
         """Reuse unchanged entries, including while this source is only partly indexed."""
         import numpy as np
 
-        collection = (sid, config_key, source)
+        collection = (sid, config_key)
         cached = self.dense_cache.get(collection, {})
         current, vectors, missing = {}, [], []
         with self.store.connection() as db:
@@ -414,8 +386,6 @@ class RetrievalEngine:
                 else:
                     current[key] = value
                     vectors.append((entry["id"], value))
-        # Retain only this source's current entries, under the existing bounded LRU.
-        # A new archive entry must not invalidate cached worldbook vectors.
         self.dense_cache[collection] = current
         self.dense_cache.move_to_end(collection)
         while len(self.dense_cache) > 4:
@@ -434,23 +404,16 @@ class RetrievalEngine:
         *,
         turn_number=None,
         index_only=False,
-        archive=None,
         record_collection=True,
         ooc="",
     ):
-        """Recall lore and optional archive; only story/index owners record live cache references.
+        """Recall lore. Only story and index operations record live cache references.
 
         The user's ooc text joins the query like input text, but only the story
         part decides whether an empty or "continue" input falls back to history.
         """
         started = time.perf_counter()
         story, user_input = user_input, query_input(user_input, ooc)
-        from tavern.memories.memory_archive import retrieval_entries
-
-        archive_rows = [
-            {k: row[k] for k in ("id", "content", "keys", "comment")}
-            for row in retrieval_entries((archive or []) if settings.memory_recall_count else [])
-        ]
         turn_number = turn_number or sum(m["role"] == "user" for m in session.get("messages", history)) + 1
         key = digest(
             [
@@ -462,13 +425,9 @@ class RetrievalEngine:
                 settings.retrieval.model_dump(),
                 settings.local_models.model_dump(),
                 session.get("id"),
-                session.get("agent_mode"),
-                session.get("lore_injection_mode"),
                 session.get("persona"),
                 seed,
                 turn_number,
-                archive_rows,
-                settings.memory_recall_count,
                 record_collection,
             ]
         )
@@ -527,10 +486,6 @@ class RetrievalEngine:
                         ),
                     ),
                 )
-        # Archive vectors share the lore vector cache, collection and indexing job.
-        dense_entries = entries + archive_rows
-        archive_ids = {row["id"] for row in archive_rows}
-        archive_dense = None
         if "embedding" in config.channels:
             result["channel_ms"]["embedding_query"] = round(query_ms, 2)
             try:
@@ -553,36 +508,20 @@ class RetrievalEngine:
                             SELECT ?,? WHERE EXISTS (SELECT 1 FROM sessions WHERE id=?)""",
                             (
                                 sid,
-                                json.dumps([index_key] + [digest([config_key, e]) for e in dense_entries]),
+                                json.dumps([index_key] + [digest([config_key, e]) for e in entries]),
                                 sid,
                             ),
                         )
-                lore_vectors, missing_lore = self.dense_vectors(entries, config_key, sid, "lore")
-                archive_vectors, missing_archive = (
-                    self.dense_vectors(archive_rows, config_key, sid, "archive")
-                    if archive is not None
-                    else ([], [])
-                )
-                vectors, missing = lore_vectors + archive_vectors, missing_lore + missing_archive
-                archive_missing, lore_missing = len(missing_archive), len(missing_lore)
+                vectors, missing = self.dense_vectors(entries, config_key, sid)
                 if missing:
                     self.models.schedule_index(self, missing, settings)
-                    for label, count in (("世界书", lore_missing), ("归档经历", archive_missing)):
-                        if count:
-                            result["diagnostics"].append(
-                                {
-                                    "reason": f"{label}向量索引尚未完整就绪，该通道暂时降级；构建完成后原子切换",
-                                    "missing": count,
-                                }
-                            )
-                # Share storage and indexing, but publish each complete source
-                # independently: a newly retired episode must not disable lore.
-                ready_vectors = [
-                    (eid, value)
-                    for eid, value in vectors
-                    if not (archive_missing if eid in archive_ids else lore_missing)
-                ]
-                if ready_vectors and not index_only:
+                    result["diagnostics"].append(
+                        {
+                            "reason": "世界书向量索引尚未完整就绪，该通道暂时降级；构建完成后原子切换",
+                            "missing": len(missing),
+                        }
+                    )
+                elif vectors and not index_only:
                     import numpy as np
 
                     if query_error:
@@ -590,7 +529,7 @@ class RetrievalEngine:
                     q = query_vectors
                     scores = {}
                     result["fragment_hits"] = {}
-                    for eid, value in ready_vectors:
+                    for eid, value in vectors:
                         similarities = np.asarray(value["vectors"], dtype=np.float32) @ np.asarray(q[0])
                         scores[eid] = float(similarities.max())
                         order = np.argsort(-similarities)[: settings.local_models.rerank_fragments]
@@ -600,16 +539,10 @@ class RetrievalEngine:
                         for eid, score in scores.items()
                         if score >= config.embedding_min_similarity
                     }
-                    if not archive_missing:
-                        archive_dense = {eid: v for eid, v in scores.items() if eid in archive_ids}
-                    scores = {eid: v for eid, v in scores.items() if eid not in archive_ids}
-                    for eid in archive_ids:
-                        result["fragment_hits"].pop(eid, None)
-                    if not lore_missing:
-                        result["embedding_scores"] = scores
-                        ranks["embedding"] = sorted(
-                            scores, key=lambda eid: (-scores[eid], entry_order(entry_by_id[eid]))
-                        )
+                    result["embedding_scores"] = scores
+                    ranks["embedding"] = sorted(
+                        scores, key=lambda eid: (-scores[eid], entry_order(entry_by_id[eid]))
+                    )
             except Exception as error:
                 if index_only:
                     raise
@@ -645,9 +578,7 @@ class RetrievalEngine:
                     for eid, old in snapshot.get("lore", {}).items()
                     if isinstance(old, dict) and old.get("present")
                 }
-            )
-            if session.get("lore_injection_mode") == "conversation"
-            else (),
+            ),
             retrieval={
                 "ids": list(dict.fromkeys(eid for ids in ranks.values() for eid in ids)),
                 "diagnostics": [],
@@ -729,9 +660,7 @@ class RetrievalEngine:
                 session_id=session.get("id", ""),
                 turn_number=turn_number,
                 timeline=(snapshot.get("state", {}).get("世界", {}) or {}).get("当前时间线", ""),
-                retained={r["id"] for r in snapshot.get("lore_injections", [])}
-                if session.get("lore_injection_mode") == "conversation"
-                else (),
+                retained={r["id"] for r in snapshot.get("lore_injections", [])},
                 retrieval={"ids": candidate_ids},
                 query=result["query"],
                 title_heading=config.title_in_retrieval,
@@ -778,54 +707,8 @@ class RetrievalEngine:
             result["fragment_hits"] = {
                 eid: hits for eid, hits in result["fragment_hits"].items() if eid in result["ids"]
             }
-        if archive_rows and settings.memory_recall_count:
-            recall_started = time.perf_counter()
-            result["memory_recall"] = await self.recall_archive(
-                archive_rows, result["query"], settings, dense=archive_dense
-            )
-            result["channel_ms"]["memory_recall"] = round((time.perf_counter() - recall_started) * 1000, 2)
         result["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 2)
         self.cache[key] = result
         while len(self.cache) > 32:
             self.cache.popitem(last=False)
         return result
-
-    async def recall_archive(self, rows, query, settings, *, dense=None):
-        """Admit archived episodes with the lore gates: BM25/vector thresholds, then rerank.
-
-        No keyword channel: archived records carry no trigger keys. A failed
-        reranker keeps only lexically supported candidates, as for lore.
-        """
-        config = settings.retrieval
-        ranks, diagnostics, rerank = {}, [], {}
-        ranks["bm25"], bm25 = await self.dictionary.run(archive_lexical, rows, query, config)
-        if dense is not None:
-            ranks["embedding"] = sorted(dense, key=lambda eid: -dense[eid])
-        ids = fuse(ranks, rows, config)
-        if settings.local_models.reranker_enabled and ids:
-            content = {row["id"]: row["content"] for row in rows}
-            try:
-                scores = await self.models.infer(
-                    "reranker",
-                    "rerank",
-                    [[query, content[eid]] for eid in ids],
-                    settings,
-                    timeout=config.rerank_timeout,
-                )
-                rerank = dict(zip(ids, scores, strict=True))
-                ids.sort(key=lambda eid: -rerank[eid])
-                diagnostics.extend(
-                    {"id": eid, "reason": "重排相关性低于阈值，未召回", "score": rerank[eid]}
-                    for eid in ids
-                    if rerank[eid] < config.rerank_min_score
-                )
-                ids = [eid for eid in ids if rerank[eid] >= config.rerank_min_score]
-            except Exception as error:
-                ids = [eid for eid in ids if eid in bm25]
-                diagnostics.append({"reason": "重排不可用，仅保留独立词法证据", "detail": str(error)})
-        diagnostics.extend(
-            {"id": eid, "reason": "超过归档经历召回上限，未召回"}
-            for eid in ids[settings.memory_recall_count :]
-        )
-        ids = ids[: settings.memory_recall_count]
-        return recall_view(ranks, ids, bm25, dense, rerank, diagnostics)

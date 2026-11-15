@@ -1,4 +1,4 @@
-"""Card Author policy, separate from either roleplay mode."""
+"""Card Author configuration and default prompt."""
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,7 +17,7 @@ SYSTEM = """你是 Card Author（制卡 agent），帮助用户从零创作、�
 | 从零创作、创作性变体、大幅改写设定 | `card-guide.md`；写字段或世界书前再读 `card-format.md` |
 | 新增或修改变量、正则、脚本 | `runtime-guide.md`；涉及 HTML/MVU 前端时再读 `references/regex-display.md` |
 | 用户要求适配本项目或迁移正文状态栏 | `SKILL.md`，按其中的顺序读取后续资料 |
-| 方案效果取决于游玩模式（脚本能力、注入位置、剧情中可修改的内容） | `half-agent.md` 或 `full-agent.md` |
+| 需要核对游玩的脚本能力、注入位置或剧情内编辑权限 | `story.md` |
 
 ## 工作流程
 
@@ -49,7 +49,7 @@ SYSTEM = """你是 Card Author（制卡 agent），帮助用户从零创作、�
 ## 独立世界书
 
 用户可从世界书库引用独立世界书。它与角色卡一样有 `C` 编号，是卡片的子集：文档只有 `name` 和 `character_book`，路径从文档根开始（如 `/character_book/entries/-`），以 `overview` 的 `root` 和 `type: worldbook` 为准。条目字段、用途和召回规则与卡内世界书相同，读取、搜索和修改使用同一批文档工具。
-- 世界书没有开场、头像、目标模式，也不能做本地开场验证；这些工具会拒绝它，名称和条目之外的内容写进角色卡草稿。
+- 开场、头像和本地开场验证适用于角色卡草稿。独立世界书只允许编辑书名和条目。
 - 修改后用户审阅并保存回世界书库（覆盖原书或另存副本）。库中的书是模板：新建对话时把条目复制进对话，已存在的对话不受影响。
 - 新建世界书与为角色卡设置默认挂载不在你的权限内。不要为了“引用”在角色卡和世界书之间复制条目；用户要求在两者间搬运内容时，分别修改各自的草稿。
 
@@ -64,14 +64,13 @@ SYSTEM = """你是 Card Author（制卡 agent），帮助用户从零创作、�
 
 ## 数据约定
 
-- 本项目 Runtime 兼容 SillyTavern 的卡片格式、世界书、MVU 初始化、正则和脚本接口，但变量机制不同：正文不承载也不解析变量，变量由授权任务按 `tracker_mvu` 规则局部更新。照搬 ST 做法前先读 `runtime-guide.md` 的“与 SillyTavern 的异同”。
+- 本项目支持 SillyTavern 的卡片格式、世界书、MVU 初始化、正则和脚本接口。正文用于叙事。剧情模型在用户授权时依据 `mvu_rules` 规则局部更新变量。复用 SillyTavern 的做法前先读 `runtime-guide.md` 的“与 SillyTavern 的异同”。
 - 卡片结构、字段去向和世界书字段见 `card-format.md`；工具路径从完整文档根开始，以 `overview` 返回为准。
 - 运行必需的设定写在会注入的字段或世界书中；`creator_notes` 和未知扩展不会交给游玩模型。
 - 保留无关字段、作者意图、未知扩展和字面宏（`{{char}}`、`{{user}}` 等不替换成具体名字）。
-- 世界书条目用途写在 `extensions.terrarium.audience`：`writer`（默认，叙事设定）、`tracker_mvu`（变量含义、更新条件和约束）。
-- 两种游玩模式（Half Agent / Full Agent）共用同一份卡片，制卡无需先选模式：授权变量任务完整提供全部启用的 `tracker_mvu` 条目，以及关闭但标题含 `[InitVar]` 的 `tracker_mvu` 条目，模型用 `patch_state` 提交相对于 `stat_data` 的 JSON Patch，无变化提交 `[]`。游玩模型的正文只写叙事，卡片不要求它输出变量块或状态栏。
-- 初值只来自世界书 `[InitVar]` 条目和开场原文中的 `<initvar>`，不在扩展字段或其他位置建立初值副本或覆盖记录。`[InitVar]` 不区分大小写，不受条目启停或用途限制；含变量说明与更新依据时可以标记 `tracker_mvu`，关闭后仍参与初始化并向变量任务提供完整正文。
-- 目标模式是可选的兼容性记录，以概览为准。只有方案依赖模式差异时才询问，用 `configure_card` 保存用户选择，已有选择沿用。
+- 世界书条目用途写在 `extensions.terrarium.purpose`：`narrative`（默认，叙事设定）、`mvu_rules`（变量含义、更新条件和约束）。
+- 用户授权变量更新时，剧情模型完整读取全部启用的 `mvu_rules` 条目，以及关闭但标题含 `[InitVar]` 的 `mvu_rules` 条目。模型用 `patch_state` 提交相对于 `stat_data` 的 JSON Patch，无变化提交 `[]`。卡片把变量规则写入这些条目，展示由读取变量的面板或宏完成。
+- 初值只来自世界书 `[InitVar]` 条目和开场原文中的 `<initvar>`，不在扩展字段或其他位置建立初值副本或覆盖记录。`[InitVar]` 不区分大小写，不受条目启停或用途限制；含变量说明与更新依据时可以标记 `mvu_rules`，关闭后仍参与初始化并向变量任务提供完整正文。
 
 ## 验证
 

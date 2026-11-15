@@ -3,13 +3,12 @@
 import copy
 import json
 
-import pytest
 import yaml
 
-from tavern.conversation.context import compile_context, macros
-from tavern.core.models import ContextRecipe, Settings
+from tavern.conversation.context import macros
+from tavern.core.models import Settings
 from tavern.core.variable_macros import replace_variable_macros
-from tavern.full_agent.context import compile_window
+from tavern.story.context import compile_window
 
 OPAQUE = "12345678-90ab-cdef-1234-567890abcdef"
 
@@ -70,17 +69,15 @@ def test_yaml_prefix_quoting_null_and_internal_projection():
     assert replace_variable_macros("{{unknown}}", source) == "{{unknown}}"
 
 
-@pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
-def test_final_compiled_messages_expand_macros_without_ledger_or_hash_leaks(mode):
+def test_final_compiled_messages_expand_macros_without_ledger_or_hash_leaks():
     value = state()
     template = "生命={{get_message_variable::stat_data.hp.0}}；全局={{format_global_variable::score}}；账本={{get_message_variable::initialized_lorebooks}}；内部={{get_message_variable::stat_data.$internal}}"
     document = {"name": "变量卡", "description": template, "first_mes": "开场。"}
-    session = {"id": "story", "persona": "用户", "recipe": ContextRecipe().model_dump()}
+    session = {"id": "story", "persona": "用户"}
     snapshot = {
         "state": value,
         "scopes": {"global": {"score": 3}},
         "lore": {},
-        "memory_document": {"version": 3, "records": []},
     }
     history = [
         {
@@ -92,10 +89,7 @@ def test_final_compiled_messages_expand_macros_without_ledger_or_hash_leaks(mode
         }
     ]
     cfg = Settings()
-    if mode == "half_agent":
-        result = compile_context(document, session, history, snapshot, "继续", cfg, "turn")
-    else:
-        result = compile_window(document, session, history, snapshot, "继续", cfg, [])
+    result = compile_window(document, session, history, snapshot, "继续", cfg, [])
     wire = json.dumps(result["messages"], ensure_ascii=False)
     assert "生命=45；全局=3；账本=null；内部=null" in wire
     assert OPAQUE not in wire and "初始化账本" not in wire

@@ -9,11 +9,14 @@ import tempfile
 import time
 from pathlib import Path
 
-from tavern.conversation.context import activate_lore, compile_context
-from tavern.core.models import ContextRecipe, Settings
+from tavern.core.models import Settings
+from tavern.core.tokens import request_tokens
 from tavern.search.local_models import LocalModelManager
 from tavern.search.retrieval import RetrievalEngine, chinese_tokenizer, sparse_index
 from tavern.storage.store import Store
+from tavern.story.context import compile_window
+from tavern.story.lore import inject_lore
+from tavern.story.tools import tool_definitions
 
 
 def metrics(predictions, gold):
@@ -52,66 +55,39 @@ async def main(neural, model_dir=None):
         "negative_query_count": sum(not case["relevant"] for case in fixture["queries"]),
     }
     try:
-        modes = ["keyword_only", "keyword_bm25"]
+        modes = {"keyword_only": ["keyword"], "keyword_bm25": ["keyword", "bm25"]}
         if neural:
             for purpose in ("embedding", "reranker"):
                 await models.warmup(purpose, settings)
-            modes.extend(["hybrid", "hybrid_rerank"])
             settings.retrieval.channels = ["keyword", "bm25", "embedding"]
+            modes.update(hybrid=settings.retrieval.channels, hybrid_rerank=settings.retrieval.channels)
             await engine.prepare(doc, [], "", {}, settings, {"id": "eval"}, "build")
             await asyncio.gather(*list(models.tasks.values()))
-        for mode in modes:
+        for mode, channels in modes.items():
             samples, times, degraded = [], [], 0
-            settings.retrieval.channels = (
-                ["keyword", "bm25", "embedding"] if mode.startswith("hybrid") else ["keyword", "bm25"]
-            )
+            settings.retrieval.channels = channels
             settings.local_models.reranker_enabled = mode == "hybrid_rerank"
             for i, case in enumerate(fixture["queries"]):
                 start = time.perf_counter()
-                if mode == "keyword_only":
-                    entries, _, _ = activate_lore(
-                        doc, [], case["text"], {}, str(i), recursive=False, timeline=case.get("timeline", "")
-                    )
-                    ids = [entry["id"] for entry in entries]
-                else:
-                    result = await engine.prepare(
-                        doc,
-                        [],
-                        case["text"],
-                        {"state": {"世界": {"当前时间线": case.get("timeline", "")}}},
-                        settings,
-                        {"id": "eval"},
-                        str(i),
-                    )
-                    ids = result["ids"]
-                    degraded += int(
-                        any("降级" in str(d) or "不可用" in str(d) for d in result["diagnostics"])
-                    )
-                session = {
-                    "id": "eval",
-                    "persona": "用户",
-                    "recipe": ContextRecipe().model_dump(),
-                    "lore_injection_mode": "conversation",
-                }
-                prepared = (
-                    {"ids": ids, "query": case["text"], "diagnostics": []}
-                    if mode == "keyword_only"
-                    else result
+                text = case["text"]
+                snapshot = {"state": {"世界": {"当前时间线": case.get("timeline", "")}}}
+                session = {"id": "eval", "persona": "用户", "messages": []}
+                result = await engine.prepare(doc, [], text, snapshot, settings, session, str(i))
+                degraded += int(any("降级" in str(d) or "不可用" in str(d) for d in result["diagnostics"]))
+                records, _ = inject_lore(
+                    doc, session, [], snapshot, text, settings, str(i), "eval-input", result, set()
                 )
-                compiled = compile_context(
-                    doc,
-                    session,
-                    [],
-                    {"state": {"世界": {"当前时间线": case.get("timeline", "")}}},
-                    case["text"],
-                    settings,
-                    str(i),
-                    retrieval=prepared,
+                tools = tool_definitions(session, settings.story_config, settings=settings)
+                compiled = compile_window(
+                    doc, session, [], snapshot, text, settings, tools, input_id="eval-input"
                 )
-                ids = list(dict.fromkeys(eid for row in compiled["trace"] for eid in row.get("lore_ids", [])))
+                ids = [row["id"] for row in records]
                 times.append((time.perf_counter() - start) * 1000)
                 samples.append(
-                    {**metrics(ids, case["relevant"]), "estimated_input_tokens": compiled["estimated_tokens"]}
+                    {
+                        **metrics(ids, case["relevant"]),
+                        "estimated_input_tokens": request_tokens(compiled["messages"], settings, tools),
+                    }
                 )
             report["modes"][mode] = {key: statistics.mean(row[key] for row in samples) for key in samples[0]}
             report["modes"][mode]["positive_recall20"] = statistics.mean(

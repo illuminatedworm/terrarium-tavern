@@ -5,7 +5,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
-from tavern.character.cards import append_lorebook, lore_entries
+from tavern.character.cards import append_lorebook, lore_entries, variable_rule_entries
 
 
 @pytest.mark.parametrize("destination", ["array", "object"])
@@ -17,7 +17,7 @@ async def test_lorebook_upload_adds_entries_without_overwriting_existing_data(
     old = {"id": 0, "content": "原有设定", "extensions": {"custom": {"keep": True}}}
     incoming = [
         {"id": "0", "content": "新设定", "extensions": {"custom": {"imported": True}}},
-        {"id": "fresh", "content": "另一条新设定"},
+        {"id": "fresh", "content": "另一条新设定", "terrarium": {"audience": "tracker_mvu"}},
     ]
     current = {
         "name": "当前世界书",
@@ -37,12 +37,17 @@ async def test_lorebook_upload_adds_entries_without_overwriting_existing_data(
     card = store.import_card(json.dumps(document).encode())
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            file = {"file": ("lore.json", json.dumps(imported).encode(), "application/json")}
+            prepared = await client.post("/api/worldbooks/prepare-import", files=file)
+            assert prepared.status_code == 200, prepared.text
+            entries = prepared.json()["entries"]
+            entry = entries[-1] if isinstance(entries, list) else entries["fresh"]
+            assert entry["extensions"]["terrarium"] == {"purpose": "mvu_rules"}
+            assert store.card(card["id"])["document"] == document
             for count in (3, 5):
                 response = await client.post(
                     f"/api/cards/{card['id']}/lorebook",
-                    files={
-                        "file": ("lore.json", json.dumps(imported).encode(), "application/json"),
-                    },
+                    files=file,
                 )
                 assert response.status_code == 200, response.text
                 result = response.json()
@@ -51,6 +56,9 @@ async def test_lorebook_upload_adds_entries_without_overwriting_existing_data(
                 rows = lore_entries(result["document"])
                 assert len(rows) == count
                 assert len({entry["id"] for entry in rows}) == count
+                rules = variable_rule_entries(result["document"])
+                assert len(rules) == (count - 1) // 2
+                assert all(entry["extensions"]["terrarium"] == {"purpose": "mvu_rules"} for entry in rules)
                 assert [entry["content"] for entry in rows] == ["原有设定", "新设定", "另一条新设定"] + (
                     ["新设定", "另一条新设定"] if count == 5 else []
                 )
@@ -148,8 +156,8 @@ def test_shelf_sync_keeps_story_changes_unless_selected_and_full_selection_overw
         },
     }
     story = copy.deepcopy(base)
-    story["data"]["character_book"]["entries"]["b"]["content"] = "Tracker 改写 B"
-    story["data"]["character_book"]["entries"]["t"] = {"content": "Tracker 新增"}
+    story["data"]["character_book"]["entries"]["b"]["content"] = "剧情中改写 B"
+    story["data"]["character_book"]["entries"]["t"] = {"content": "剧情中新增"}
     shelf = copy.deepcopy(base)
     data = shelf["data"]
     data.update(description="新描述", first_mes="新开场", creator_notes="不同步")
@@ -175,8 +183,8 @@ def test_shelf_sync_keeps_story_changes_unless_selected_and_full_selection_overw
     assert merged["description"] == "新描述" and merged["first_mes"] == "开场"
     assert {key: entry["content"] for key, entry in merged["character_book"]["entries"].items()} == {
         "a": "新 A",
-        "b": "Tracker 改写 B",
-        "t": "Tracker 新增",
+        "b": "剧情中改写 B",
+        "t": "剧情中新增",
         "n": "书架新增",
     }
     assert merged["extensions"]["regex_scripts"] == data["extensions"]["regex_scripts"]
@@ -247,15 +255,26 @@ async def test_session_card_sync_commits_selected_items_and_rejects_stale_shelf(
 def test_worldbook_library_validates_writes_and_card_defaults_follow_their_targets(tmp_path):
     from tavern.core.models import CardDefaultsEdit, PersonaEdit, SessionCreate, WorldbookEdit
     from tavern.storage import worldbooks
+    from tavern.storage.legacy_story import OLD_STORY_KEY
     from tavern.storage.store import Conflict, Store
 
     store = Store(tmp_path)
     book = {"entries": {"0": {"uid": 0, "key": ["钟楼"], "content": "钟楼在北岸。"}}}
     saved = worldbooks.save(store, None, WorldbookEdit(name=" 雾港 ", book=book))
     assert (saved["name"], saved["book"], saved["revision"]) == ("雾港", book, 0)
-    for invalid in ({"entries": "x"}, {"entries": [{"extensions": {"terrarium": {"audience": "nobody"}}}]}):
+    for invalid in ({"entries": "x"}, {"entries": [{"extensions": {"terrarium": {"purpose": "nobody"}}}]}):
         with pytest.raises(ValueError):
             worldbooks.save(store, saved["id"], WorldbookEdit(name="雾港", book=invalid))
+    conflicting = {
+        "entries": [
+            {
+                "comment": "钟楼规则",
+                "extensions": {"terrarium": {"audience": "tracker_mvu", "purpose": "narrative"}},
+            }
+        ]
+    }
+    with pytest.raises(ValueError, match="钟楼规则.*用途字段冲突"):
+        worldbooks.save(store, saved["id"], WorldbookEdit(name="雾港", book=conflicting))
     assert worldbooks.worldbook(store, saved["id"]) == saved
     worldbooks.save(store, saved["id"], WorldbookEdit(name="雾港", book=book))
     with pytest.raises(Conflict):
@@ -281,13 +300,14 @@ def test_worldbook_library_validates_writes_and_card_defaults_follow_their_targe
     # A schema 9 database with conversations upgrades after its automatic backup.
     store.new_session(SessionCreate(card_id=copied["id"]))
     with store.connection() as db:
+        db.execute(f"ALTER TABLE sessions ADD COLUMN agent_mode TEXT NOT NULL DEFAULT '{OLD_STORY_KEY}'")
         db.execute("UPDATE meta SET value='9' WHERE key='schema_version'")
     Store(tmp_path)
     assert any(path.name.startswith("before-upgrade-schema9") for path in tmp_path.iterdir())
 
 
 async def test_new_story_mounts_worldbooks_as_fresh_entries_and_initializes_their_initvar(tmp_path):
-    from tavern.application.service import RoleplayRuntime
+    from tavern.application.service import StoryService
     from tavern.character.card_sync import sync_items
     from tavern.character.worldbooks import mounted_ids
     from tavern.core.models import SessionCreate, WorldbookEdit
@@ -308,10 +328,10 @@ async def test_new_story_mounts_worldbooks_as_fresh_entries_and_initializes_thei
         }
     }
     library = worldbooks.save(store, None, WorldbookEdit(name="雾港设定", book=book))
-    service = RoleplayRuntime(store)
+    service = StoryService(store)
     try:
         session = store.new_session(SessionCreate(card_id=card["id"], worldbook_ids=[library["id"]]))
-        session = await service.initialize_session(session["id"])
+        session = await service.story.initialize_session(session["id"])
     finally:
         await service.close()
     current = session["snapshot"]["content"]["document"]

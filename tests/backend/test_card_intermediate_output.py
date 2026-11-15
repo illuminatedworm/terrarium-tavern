@@ -11,7 +11,7 @@ from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.maintenance import cleanup
 from tavern.storage.store import Store
 from tests.backend.test_card_author_alignment import Editor
-from tests.backend.test_half_agent_alignment import blocks
+from tests.support.model_transport import blocks
 
 
 def public_events(edits, rid):

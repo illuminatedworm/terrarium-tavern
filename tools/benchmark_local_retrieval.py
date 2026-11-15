@@ -21,7 +21,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 from tavern.character.cards import normalize
-from tavern.core.settings import SettingsDocument
+from tavern.core.settings import migrate_settings
 from tavern.search.japanese_dictionary import JapaneseDictionary
 from tavern.search.local_models import LocalModelManager
 from tavern.search.retrieval import RetrievalEngine, chinese_tokenizer, digest, lexical_recall
@@ -159,9 +159,9 @@ async def main(args):
             raise ValueError("Card name must identify exactly one card")
         card_id, raw_card = cards[0]
         document = json.loads(raw_card)
-        settings = SettingsDocument.model_validate(
+        settings = migrate_settings(
             json.loads(source.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
-        ).runtime(args.mode)
+        ).runtime()
     fixture = json.loads(args.queries.read_text("utf-8"))
     cases = fixture["queries"]
     default_budgets = {
@@ -184,14 +184,11 @@ async def main(args):
     session = {
         "id": "benchmark",
         "persona": "用户",
-        "agent_mode": args.mode,
-        "lore_injection_mode": "conversation",
     }
     with store.connection() as db:
         db.execute(
-            "INSERT OR IGNORE INTO sessions(id,card,persona,recipe,created,card_data,lore_injection_mode) "
-            "VALUES(?,?,?,?,?,?,?)",
-            (session["id"], card_id, session["persona"], "{}", time.time(), "{}", "conversation"),
+            "INSERT OR IGNORE INTO sessions(id,card,persona,created,card_data) VALUES(?,?,?,?,?)",
+            (session["id"], card_id, session["persona"], time.time(), "{}"),
         )
     models = MeasuredModels(store)
     models.root = (args.data / "models").resolve()
@@ -350,7 +347,6 @@ if __name__ == "__main__":
         "--dimensions", type=int, default=1024, help="Embedding output dimensions; reranker is unchanged"
     )
     parser.add_argument("--repeat", type=int, default=2)
-    parser.add_argument("--mode", choices=["half_agent", "full_agent"], default="half_agent")
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
     if arguments.repeat < 1 or not 1 <= arguments.batch_size <= 128:

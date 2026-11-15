@@ -1,0 +1,1605 @@
+"""Official-client request contracts, exercised against local HTTP mocks only."""
+
+import copy
+import hashlib
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
+
+import httpx
+import pytest
+
+from tavern.core.models import SessionCreate, Settings, TurnRequest
+from tavern.scripting.model_transport import ModelTransport
+from tavern.scripting.request_context import ProviderRequestContext
+from tavern.storage.store import Store
+from tavern.story.context import compile_window, load_trace
+from tavern.story.tools import AgentTools
+from tests.backend.test_story import Model, current_text, handoff, runtime, story_reply, turn, written
+from tests.support.model_transport import request_payload
+
+
+def config(api="anthropic", mode="runtime", **kwargs):
+    return Settings(
+        api_mode=api,
+        model="claude-opus-5-5" if api == "anthropic" else "gpt-6-sol",
+        api_key="local-audit-secret",
+        base_url="https://fixture.test/v1",
+        use_proxy=False,
+        reasoning_effort="high",
+        cache={"mode": mode},
+        **kwargs,
+    )
+
+
+def reply(api, items=None):
+    if api == "anthropic":
+        return {
+            "id": "msg_fixture",
+            "model": "claude-opus-5-5",
+            "stop_reason": "tool_use"
+            if any(p.get("type") == "tool_use" for p in items or [])
+            else "end_turn",
+            "content": items if items is not None else [{"type": "text", "text": "done"}],
+            "usage": {
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "cache_read_input_tokens": 40,
+                "cache_creation_input_tokens": 5,
+            },
+        }
+    return {
+        "id": "resp_fixture",
+        "status": "completed",
+        "model": "gpt-6-sol",
+        "output": items
+        if items is not None
+        else [
+            {
+                "type": "message",
+                "id": "msg_fixture",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "done", "annotations": []}],
+            }
+        ],
+        "usage": {"input_tokens": 47, "output_tokens": 3, "input_tokens_details": {"cached_tokens": 40}},
+    }
+
+
+def transport(cfg, route, context=None, capture=None):
+    return ModelTransport(
+        cfg,
+        cfg.api_key,
+        capture,
+        request_context=context,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)),
+    )
+
+
+def assistant(provider, response):
+    return {
+        "role": "assistant",
+        "content": response.content,
+        **provider.last_assistant_extra_fields,
+        "tool_calls": [
+            {"id": c.id, "function": {"name": c.name, "arguments": c.arguments}}
+            for c in provider.last_tool_calls
+        ],
+        "_native_response": copy.deepcopy(provider.last_native_response),
+    }
+
+
+@pytest.mark.parametrize("api", ["anthropic", "responses"])
+@pytest.mark.parametrize("mode", ["runtime", "cloud"])
+async def test_identity_is_independent_of_cache_and_survives_resume(tmp_path, api, mode):
+    store = Store(tmp_path)
+    device = store.device_id()
+    assert device == Store(tmp_path).device_id()
+    sid, tid = uuid4(), uuid4().hex
+    context = ProviderRequestContext(sid.hex, tid, "window1", device)
+    captured, requests = [], []
+
+    def route(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=reply(api),
+            headers={"x-codex-turn-state": "opaque-routing-token", "request-id": "req_fixture"},
+        )
+
+    cfg = config(api, mode)
+    p = transport(cfg, route, context, captured.append)
+    messages = [{"role": "user", "content": "fixture"}]
+    try:
+        await p.chat_complete(messages)
+        await p.chat_complete(messages)
+        saved = context.saved()
+        restored = ProviderRequestContext(
+            sid.hex, saved["turn_id"], "window1", store.device_id(), saved["routing"]
+        )
+        resumed = transport(cfg, route, restored, captured.append)
+        try:
+            await resumed.chat_complete(messages)
+        finally:
+            await resumed.close()
+        next_turn = transport(cfg, route, ProviderRequestContext(sid.hex, uuid4().hex, "window1", device))
+        try:
+            await next_turn.chat_complete(messages)
+        finally:
+            await next_turn.close()
+    finally:
+        await p.close()
+    for request in requests:
+        body = json.loads(request.content)
+        assert not body.get("stream")
+        if api == "anthropic":
+            assert request.headers["X-Claude-Code-Session-Id"] == str(sid)
+            assert json.loads(body["metadata"]["user_id"]) == {
+                "device_id": device,
+                "account_uuid": "",
+                "session_id": str(sid),
+            }
+        else:
+            assert request.headers["session-id"] == request.headers["thread-id"] == str(sid)
+            assert body["prompt_cache_key"] == str(sid)
+    if api == "responses":
+        assert "x-codex-turn-state" not in requests[0].headers
+        assert (
+            requests[1].headers["x-codex-turn-state"]
+            == requests[2].headers["x-codex-turn-state"]
+            == "opaque-routing-token"
+        )
+        assert "x-codex-turn-state" not in requests[3].headers
+    assert captured[0]["wire_sha256"] == hashlib.sha256(requests[0].content).hexdigest()
+    assert "local-audit-secret" not in json.dumps(captured)
+    assert "opaque-routing-token" not in json.dumps(captured)
+    assert p.last_response_record["headers"] == {"request-id": "req_fixture"}
+
+
+@pytest.mark.parametrize("change", ["model", "api_key", "base_url"])
+async def test_routing_state_cannot_cross_provider_identity(change):
+    cfg = config("responses")
+    context = ProviderRequestContext(uuid4().hex, uuid4().hex, "w", "device")
+    p = transport(cfg, lambda _: httpx.Response(200, json=reply("responses")), context)
+    context.routing["turn_state"] = "old-route"
+    await p.close()
+    cfg = cfg.model_copy(
+        update={
+            change: "different-model"
+            if change == "model"
+            else "different-key"
+            if change == "api_key"
+            else "https://other.test/v1"
+        }
+    )
+    next_provider = transport(cfg, lambda _: httpx.Response(200, json=reply("responses")), context)
+    try:
+        assert "turn_state" not in context.routing
+    finally:
+        await next_provider.close()
+
+
+def native_blocks(api):
+    if api == "anthropic":
+        return [
+            {"type": "thinking", "thinking": "analysis", "signature": "signed-original"},
+            {"type": "tool_use", "id": "tool_1", "name": "read_state", "input": {}},
+            {"type": "text", "text": "between calls"},
+            {"type": "redacted_thinking", "data": "opaque-original"},
+            {"type": "tool_use", "id": "tool_2", "name": "read_state", "input": {"path": "x"}},
+        ]
+    return [
+        {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "encrypted-original"},
+        {"type": "function_call", "id": "fc_1", "call_id": "tool_1", "name": "read_state", "arguments": "{}"},
+        {
+            "type": "message",
+            "id": "msg_1",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "between calls", "annotations": []}],
+        },
+        {
+            "type": "function_call",
+            "id": "fc_2",
+            "call_id": "tool_2",
+            "name": "read_state",
+            "arguments": '{"path":"x"}',
+        },
+    ]
+
+
+@pytest.mark.parametrize("api", ["anthropic", "responses"])
+async def test_native_items_round_trip_in_original_order_and_invalidate_on_edit(api):
+    cfg, original = config(api), native_blocks(api)
+    p = transport(cfg, lambda _: httpx.Response(200, json=reply(api, original)))
+    try:
+        result = await p.chat_complete([{"role": "user", "content": "fixture"}])
+        message = assistant(p, result)
+        body = await request_payload(p, [message])
+        items = body["messages"][0]["content"] if api == "anthropic" else body["input"]
+        assert items == original
+        assert p.last_response_record["native"]["items"] == original
+        message["content"] = "edited text"
+        body = await request_payload(p, [message])
+        assert "edited text" in json.dumps(body)
+        assert "between calls" not in json.dumps(body)
+        assert "signed-original" not in json.dumps(body)
+        assert "encrypted-original" not in json.dumps(body)
+        assert "tool_1" in json.dumps(body) and "tool_2" in json.dumps(body)
+    finally:
+        await p.close()
+
+
+async def test_explicit_cache_key_wins_for_identified_story_requests():
+    cfg = config("responses", prompt_cache_key="custom-key")
+    p = transport(
+        cfg,
+        lambda _: httpx.Response(200, json=reply("responses")),
+        ProviderRequestContext(uuid4().hex, "turn", "window", "device"),
+    )
+    plain = transport(cfg, lambda _: httpx.Response(200, json=reply("responses")))
+    try:
+        assert (await request_payload(p, []))["prompt_cache_key"] == "custom-key"
+        assert "prompt_cache_key" not in (await request_payload(plain, []))
+    finally:
+        await p.close()
+        await plain.close()
+
+
+def game(tmp_path, api="anthropic", *, kemini=False):
+    store = Store(tmp_path)
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
+    document = store.settings_document()
+    document.story.tools.auto_retrieval = False
+    document.story.model.model = "claude-opus-5-5" if api == "anthropic" else "gpt-6-sol"
+    document.story.model.reasoning_effort = "high"
+    document.story.model.cache.retention = "1h" if api == "anthropic" else "default"
+    document.story.model.api_mode = api
+    document.shared.card_author.api_mode = api
+    document.shared.providers[0].api_key = "local-audit-secret"
+    document.shared.providers[0].base_url = "https://fixture.test"
+    document.shared.network.api_proxy = False
+    document.shared.kemini.enabled = kemini
+    store.save_settings(document)
+    session = store.new_session(SessionCreate(card_id=card["id"], kemini=kemini))
+    return store, runtime(store), session
+
+
+def strip_local(messages):
+    return [{k: v for k, v in m.items() if not k.startswith("_")} for m in messages]
+
+
+def handoff_frames(messages):
+    return [m for m in messages if m.get("content", "").startswith("<tavern_memory>\n")]
+
+
+def set_handoff(store, session, text):
+    snapshot = copy.deepcopy(session["snapshot"])
+    revision = snapshot["story"]["handoff"]["revision"]
+    snapshot["story"]["handoff"] = {**written(session["messages"], text), "revision": revision + 1}
+    with store.connection() as db:
+        db.execute("UPDATE messages SET snapshot=? WHERE id=?", (json.dumps(snapshot), session["head"]))
+    return store.session(session["id"])
+
+
+async def test_runtime_frames_append_and_handoff_tool_does_not_duplicate_memory(tmp_path):
+    store, service, session = game(tmp_path)
+    session = set_handoff(store, session, "MEMORY_A")
+    model = Model(
+        ("read_state", {}),
+        ("write_handoff", {"current": [{"text": "MEMORY_B"}]}),
+        ("write_handoff", {"current": [{"text": "MEMORY_B"}]}),
+        "narrative",
+    )
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        requests = [strip_local(r["messages"]) for r in model.requests]
+        for first, second in zip(requests, requests[1:]):
+            assert first == second[: len(first)]
+        for messages in requests:
+            assert len(handoff_frames(messages)) == 1
+            assert "MEMORY_A" in handoff_frames(messages)[0]["content"]
+            assert sum("<tavern_context_status>" in m.get("content", "") for m in messages) == 1
+            assert not any("还可调用模型" in m.get("content", "") for m in messages)
+        assert "MEMORY_B" in json.dumps(requests[-1])
+        assert current_text(current["snapshot"]["story"]) == "MEMORY_B"
+        baseline_epoch = result["preview"]["context_ledger"]["epoch"]
+        for status_count in (2, 3):
+            next_model = Model("next narrative")
+            result, current = await turn(service, current, next_model)
+            assert result["status"] == "committed", result["error"]
+            assert result["preview"]["context_ledger"]["epoch"] == baseline_epoch
+            assert len(handoff_frames(next_model.requests[0]["messages"])) == 1
+            assert (
+                sum(
+                    "<tavern_context_status>" in m.get("content", "")
+                    for m in next_model.requests[0]["messages"]
+                )
+                == status_count
+            )
+        assert (
+            len(
+                [
+                    r
+                    for r in load_trace(store, current["id"], current["messages"])
+                    if r["message"].get("source") == "handoff"
+                ]
+            )
+            == 1
+        )
+    finally:
+        await service.close()
+
+
+async def test_turn_requirements_replay_in_place_and_append_revocations():
+    from tavern.story.state import new_state
+
+    settings = config("gemini", "cloud")
+    settings.model = "gemini-3.8-flash-tiered"
+    session = {"id": uuid4().hex, "persona": "user"}
+    snapshot = {"state": {}, "story": new_state()}
+    document = {"name": "fixture"}
+    first = compile_window(
+        document,
+        session,
+        [],
+        snapshot,
+        "First input",
+        settings,
+        [],
+        input_id="u1",
+        require_state_patch=True,
+        instruction="只重写这一轮。",
+        regenerate_reply="完整待重写参考。",
+    )
+    records = first["context_additions"] + [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_read", "type": "function", "function": {"name": "read_state", "arguments": "{}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_read", "content": '{"hp":8}'},
+    ]
+    sent = compile_window(
+        document,
+        session,
+        [],
+        snapshot,
+        "First input",
+        settings,
+        [],
+        input_id="u1",
+        continuation=records,
+        require_state_patch=True,
+        instruction="只重写这一轮。",
+        regenerate_reply="完整待重写参考。",
+    )
+    records += sent["context_additions"]
+    history = [
+        {"id": "u1", "role": "user", "raw": "First input"},
+        {"id": "a1", "role": "assistant", "raw": "First narrative"},
+    ]
+    trace = [
+        {"window_id": snapshot["story"]["window"]["id"], "message_id": "a1", "message": m} for m in records
+    ]
+    second = compile_window(
+        document,
+        session,
+        history,
+        snapshot,
+        "Second input",
+        settings,
+        [],
+        input_id="u2",
+        trace=trace,
+        require_state_patch=True,
+    )
+    assert second["context_ledger"]["rebuild_reason"] is None
+    assert second["messages"][: len(sent["messages"])] == sent["messages"]
+    assert [m["content"] for m in second["runtime_trace"] if m["source"] == "turn_instruction"] == [
+        "允许修改设定：False。"
+    ]
+    assert {
+        m["source"]: m["content"]
+        for m in second["context_additions"]
+        if m["source"].startswith("regenerate_")
+    } == {
+        "regenerate_instruction": "此前的重生成要求已撤销。",
+        "regenerate_reference": "此前的待重写回复参考已失效；不再作为本轮重写依据，也不作为已发生剧情或当前状态。",
+    }
+    again = compile_window(
+        document,
+        session,
+        history,
+        snapshot,
+        "Second input",
+        settings,
+        [],
+        input_id="u2",
+        trace=trace,
+        continuation=second["context_additions"],
+        require_state_patch=True,
+    )
+    assert again["messages"] == second["messages"]
+    assert again["context_additions"] == []
+    provider = transport(settings, lambda _: pytest.fail("Context compilation must not call the model"))
+    try:
+        before, after = (
+            (await request_payload(provider, sent["messages"])),
+            (await request_payload(provider, second["messages"])),
+        )
+        assert after["systemInstruction"] == before["systemInstruction"]
+        assert after["contents"][: len(before["contents"])] == before["contents"]
+        assert "完整待重写参考。" in json.dumps(after, ensure_ascii=False)
+        assert "此前的待重写回复参考已失效" in json.dumps(after, ensure_ascii=False)
+    finally:
+        await provider.close()
+
+
+async def test_kemini_turn_prompts_are_request_local_across_legacy_replay():
+    from tavern.core.kemini import STORY_TRANSPORT_PROMPT, TURN_SOURCES, control_text
+    from tavern.story.state import new_state
+
+    settings = config("responses", "cloud")
+    settings.kemini.enabled = True
+    settings.kemini.filler_text = "固定填充"
+    settings.kemini.roleplay_prompt = "当前追加要求"
+    settings.kemini.acknowledgement = "当前确认"
+    settings.kemini.thinking_prompt = "当前自检"
+    settings.kemini.content_prompt = "当前正文约束"
+    settings.kemini.output_prompt = "当前末尾提示"
+    session = {"id": uuid4().hex, "persona": "user"}
+    snapshot = {"state": {}, "story": new_state()}
+    document = {"name": "fixture"}
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_state",
+                "description": "读取状态",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    first = compile_window(document, session, [], snapshot, "first", settings, tools, input_id="u1")
+    legacy = [
+        {
+            "role": role,
+            "source": source,
+            "content": "旧提示不可回放：" + source,
+            "_runtime_context": {"epoch": first["context_ledger"]["epoch"], "value": ["u1", "旧值"]},
+        }
+        for role, source in zip(("system", "assistant", "user"), TURN_SOURCES, strict=True)
+    ]
+    exchange = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "read", "type": "function", "function": {"name": "read_state", "arguments": "{}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "read", "content": "完整工具原文尾部"},
+        {
+            "role": "assistant",
+            "content": "旧过程备注",
+            "tool_calls": [
+                {
+                    "id": "old-story",
+                    "type": "function",
+                    "function": {
+                        "name": "kemini_emit_story",
+                        "arguments": '{"content":"<thinking>旧自检</thinking>完整剧情尾部"}',
+                    },
+                },
+            ],
+            "_story_call_id": "old-story",
+            "_story_received": {"input_id": "u1"},
+        },
+        {"role": "tool", "tool_call_id": "old-story", "content": '{"ok":true}'},
+    ]
+    history = [
+        {"id": "u1", "role": "user", "raw": "first"},
+        {"id": "a1", "role": "assistant", "raw": "完整剧情尾部"},
+    ]
+    trace = [
+        {"window_id": snapshot["story"]["window"]["id"], "message_id": "a1", "message": m}
+        for m in [*first["context_additions"], *legacy, *exchange]
+    ]
+    saved = copy.deepcopy(trace)
+    second = compile_window(
+        document, session, history, snapshot, "second", settings, tools, input_id="u2", trace=trace
+    )
+    continued = compile_window(
+        document,
+        session,
+        history,
+        snapshot,
+        "second",
+        settings,
+        tools,
+        input_id="u2",
+        trace=trace,
+        continuation=[*second["context_additions"], *legacy],
+    )
+    for context in (first, second, continued):
+        assert [m["source"] for m in context["trace"] if m["source"] in TURN_SOURCES] == list(TURN_SOURCES)
+        assert context["messages"][-3:] == [
+            {"role": "user", "content": settings.kemini.roleplay_prompt},
+            {"role": "assistant", "content": settings.kemini.acknowledgement},
+            {"role": "user", "content": control_text(settings.kemini)},
+        ]
+        assert context["messages"][-1]["content"].endswith(
+            f"当前正文约束\n\n{STORY_TRANSPORT_PROMPT}\n\n当前末尾提示"
+        )
+        assert not any(m.get("source") in TURN_SOURCES for m in context["context_additions"])
+        assert "旧提示不可回放" not in json.dumps(context["messages"], ensure_ascii=False)
+    assert second["context_ledger"]["rebuild_reason"] is continued["context_ledger"]["rebuild_reason"] is None
+    assert [m["content"] for m in continued["messages"] if m["role"] == "tool"] == ["完整工具原文尾部"]
+    sent = json.dumps(continued["messages"], ensure_ascii=False)
+    assert sent.count("完整剧情尾部") == 1
+    assert "kemini_emit_story" not in sent and "旧自检" not in sent
+    resumed = compile_window(
+        document,
+        session,
+        [],
+        snapshot,
+        "first",
+        settings,
+        tools,
+        input_id="u1",
+        continuation=exchange[:-1],
+        story={"content": "完整剧情尾部", "breaks": []},
+    )
+    resumed_wire = json.dumps(resumed["messages"], ensure_ascii=False)
+    assert resumed_wire.count("完整剧情尾部") == resumed_wire.count("旧过程备注") == 1
+    assert "kemini_emit_story" not in resumed_wire and "旧自检" not in resumed_wire
+    assert trace == saved
+    settings.kemini.enabled = False
+    disabled = compile_window(document, session, history, snapshot, "third", settings, tools, trace=trace)
+    assert not any(m["source"] in TURN_SOURCES for m in disabled["trace"])
+
+
+async def test_window_inventory_tracks_note_changes_and_rollover(tmp_path):
+    store, service, session = game(tmp_path)
+    model = Model(
+        ("read_state", {}),
+        ("write_note", {"key": "plan", "content": "下一步计划", "kind": "plan"}),
+        ("archive_note", {"key": "plan"}),
+        ("new_context", {"handoff": handoff("已归档计划，继续当前故事"), "keep_recent": 0}),
+        ("read_state", {}),
+        "narrative",
+    )
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        notices = [
+            [m["content"] for m in request["messages"] if "<tavern_context_status>" in m.get("content", "")]
+            for request in model.requests
+        ]
+        assert [len(items) for items in notices] == [1, 1, 2, 3, 1, 1]
+        assert "有效 1 条，已归档 0 条" in notices[2][-1]
+        assert "有效 0 条，已归档 1 条" in notices[3][-1]
+        assert "当前第 2 个" in notices[4][0]
+        assert current["snapshot"]["story"]["notes"]["plan"]["status"] == "archived"
+    finally:
+        await service.close()
+
+
+async def test_note_list_updates_on_key_changes_and_survives_rollover_without_search(tmp_path):
+    store, service, session = game(tmp_path)
+    model = Model(
+        ("write_note", {"key": "线索/钟楼", "content": "初版笔记", "kind": "plan"}),
+        ("new_context", {"handoff": handoff("继续当前场景"), "keep_recent": 0}),
+        ("read_note", {"key": "线索/钟楼"}),
+        ("write_note", {"key": "线索/钟楼", "content": "更新笔记正文", "kind": "hypothesis"}),
+        ("write_note", {"key": "计划/港口", "content": "新计划", "kind": "plan"}),
+        ("archive_note", {"key": "线索/钟楼"}),
+        ("write_note", {"key": "线索/钟楼", "content": "重新启用笔记", "kind": "plan"}),
+        ("read_note", {"key": "计划/港口"}),
+        # Same turn: nothing new has left the window since the first rollover.
+        ("new_context", {"handoff": handoff("继续下一段场景", through=None), "keep_recent": 0}),
+        "narrative",
+    )
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        expected = [
+            None,
+            None,
+            "线索/钟楼",
+            "线索/钟楼",
+            "线索/钟楼",
+            "线索/钟楼\n计划/港口",
+            "计划/港口",
+            "线索/钟楼\n计划/港口",
+            "线索/钟楼\n计划/港口",
+            "线索/钟楼\n计划/港口",
+        ]
+        for request, keys in zip(model.requests, expected, strict=True):
+            messages = request["messages"]
+            directories = [
+                i for i, m in enumerate(messages) if m.get("content", "").startswith("<tavern_note_list>\n")
+            ]
+            if keys is None:
+                assert directories == []
+                continue
+            at = directories[-1]
+            assert messages[at]["role"] == "system"
+            assert messages[at]["content"].endswith(f"\n{keys}\n</tavern_note_list>")
+        # Directory edits, as well as body-only edits, append without rewriting
+        # the already sent prefix. Rollover intentionally starts another prefix.
+        for before_edit, after_edit in zip(model.requests[2:8], model.requests[3:9], strict=True):
+            before_messages = strip_local(before_edit["messages"])
+            assert strip_local(after_edit["messages"])[: len(before_messages)] == before_messages
+        assert current["snapshot"]["story"]["window"]["number"] == 3
+        directory_trace = next(m for m in result["preview"]["trace"] if m["source"] == "note_list")
+        assert directory_trace["runtime_phase"] == "body"
+        assert not any(m.get("tool_calls") or m["role"] == "tool" for m in model.requests[-1]["messages"])
+        follow = Model("next narrative")
+        follow_result, _ = await turn(service, current, follow)
+        assert follow_result["status"] == "committed", follow_result["error"]
+        directory = next(
+            m
+            for m in follow.requests[0]["messages"]
+            if m.get("content", "").startswith("<tavern_note_list>\n")
+        )
+        assert directory["content"] == directory_trace["content"]
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("fail_last_request", [False, True])
+async def test_call_notifications_are_absent_even_on_last_request_and_resume(tmp_path, fail_last_request):
+    store, service, session = game(tmp_path)
+    document = store.settings_document()
+    document.story.tools.max_steps = 3
+    store.save_settings(document)
+    model = Model(
+        ("read_state", {}),
+        ("read_state", {}),
+        RuntimeError("last request disconnected") if fail_last_request else "narrative",
+    )
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == ("error" if fail_last_request else "committed"), result["error"]
+        for request in model.requests:
+            assert not any(
+                "tavern_call_budget" in m.get("content", "")
+                or "tavern_last_call_notice" in m.get("content", "")
+                or "最后一次模型请求" in m.get("content", "")
+                for m in request["messages"]
+            )
+        next_model = Model("next narrative")
+        if fail_last_request:
+            assert current["revision"] == 0
+            service.story.provider_factory = lambda: next_model
+            resumed = service.story.submit(
+                current["id"],
+                TurnRequest(
+                    text=result["request"]["text"],
+                    operation_id="resume-last-call",
+                    expected_revision=0,
+                    resume_turn_id=result["id"],
+                ),
+            )
+            await service.story.tasks[resumed["id"]]
+            following = store.turn(resumed["id"])
+        else:
+            following, _ = await turn(service, current, next_model)
+        assert following["status"] == "committed", following["error"]
+        assert not any("最后一次模型请求" in m.get("content", "") for m in next_model.requests[0]["messages"])
+        assert "tavern_call_budget" not in str(next_model.requests[0]["messages"])
+    finally:
+        await service.close()
+
+
+async def test_memory_updates_compare_effective_version_and_empty_is_explicit(tmp_path):
+    store, service, session = game(tmp_path)
+    try:
+        initial = Model("first")
+        first, session = await turn(service, session, initial)
+        assert first["status"] == "committed", first["error"]
+        assert not handoff_frames(initial.requests[0]["messages"])
+        assert not any(
+            m.get("content", "").startswith("<tavern_plot>\n") for m in initial.requests[0]["messages"]
+        )
+        assert not any(m.get("source") in ("handoff", "plot") for m in first["preview"]["trace"])
+        expected = []
+        for value in ("", "MEMORY_A", "MEMORY_A", "MEMORY_B", "MEMORY_A", "", ""):
+            previous = current_text(session["snapshot"]["story"])
+            session = set_handoff(store, session, value)
+            model = Model("continue")
+            result, session = await turn(service, session, model)
+            assert result["status"] == "committed", result["error"]
+            if previous != value:
+                expected.append(f"## 当前交接\n- {value} [H1]" if value else "")
+            frames = [m for m in result["preview"]["trace"] if m.get("source") == "handoff"]
+            assert [m["_runtime_context"]["value"] for m in frames] == expected
+            assert len(handoff_frames(model.requests[0]["messages"])) == len(expected)
+        assert "当前 handoff 为空" in frames[-1]["content"]
+    finally:
+        await service.close()
+
+
+async def test_failed_memory_write_and_explicit_repeated_reads_keep_tool_pairs(tmp_path):
+    store, service, session = game(tmp_path)
+    session = set_handoff(store, session, "MEMORY_A")
+    model = Model(
+        ("write_handoff", handoff("", through=None)), ("read_state", {}), ("read_state", {}), "done"
+    )
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        assert current_text(current["snapshot"]["story"]) == "MEMORY_A"
+        messages = model.requests[-1]["messages"]
+        assert len(handoff_frames(messages)) == 1
+        results = [m for m in messages if m["role"] == "tool"]
+        assert len(results) == 3 and "error" in json.loads(results[0]["content"])
+        assert results[1]["content"] == results[2]["content"]
+        assert results[1]["tool_call_id"] != results[2]["tool_call_id"]
+    finally:
+        await service.close()
+
+
+async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, monkeypatch):
+    store, service, session = game(tmp_path)
+
+    class Batch(Model):
+        async def chat_complete(self, messages, **kwargs):
+            from tavern.scripting.native_response import ResponseCompletion
+
+            self.requests.append(copy.deepcopy(messages))
+            self.last_tool_calls = [
+                SimpleNamespace(
+                    id=f"call-{index}",
+                    name="write_handoff",
+                    arguments=json.dumps(handoff(value, through=None), ensure_ascii=False),
+                )
+                for index, value in enumerate(("MEMORY_A", "MEMORY_B"))
+            ]
+            self.last_completion = ResponseCompletion("tools", "tool_calls")
+            return SimpleNamespace(content="", usage={}, finish_reason="tool_calls")
+
+    original = AgentTools.execute
+    interrupted, executed = False, []
+
+    async def execute(tools, name, arguments):
+        nonlocal interrupted
+        if name != "write_handoff":
+            return await original(tools, name, arguments)
+        value = json.loads(arguments)["current"][0]["text"]
+        if value == "MEMORY_B" and not interrupted:
+            interrupted = True
+            raise RuntimeError("synthetic interruption before second tool")
+        executed.append(value)
+        return await original(tools, name, arguments)
+
+    monkeypatch.setattr(AgentTools, "execute", execute)
+    try:
+        failed, _ = await turn(service, session, Batch())
+        assert failed["status"] == "error"
+        assert executed == ["MEMORY_A"]
+        progress = store.story_progress(failed["id"])
+        assert current_text(progress["snapshot"]["story"]) == "MEMORY_A"
+    finally:
+        await service.close()
+    store = Store(store.root)
+    service = runtime(store)
+    model = Model("done after restart")
+    service.story.provider_factory = lambda: model
+    try:
+        resumed = service.story.submit(
+            session["id"],
+            TurnRequest(
+                text=failed["request"]["text"],
+                operation_id=uuid4().hex,
+                expected_revision=0,
+                resume_turn_id=failed["id"],
+            ),
+        )
+        await service.story.tasks[resumed["id"]]
+        result = store.turn(resumed["id"])
+        assert result["status"] == "committed", result["error"]
+        assert executed == ["MEMORY_A", "MEMORY_B"]
+        assert len(model.requests) == 1
+        assert current_text(store.session(session["id"])["snapshot"]["story"]) == "MEMORY_B"
+    finally:
+        await service.close()
+
+
+async def test_anthropic_failed_tool_status_survives_committed_history_and_restart(tmp_path, monkeypatch):
+    import tavern.story.agent as agent_module
+
+    store, service, session = game(tmp_path)
+    requests = []
+
+    def route(request):
+        requests.append(json.loads(request.content))
+        items = (
+            [
+                {"type": "tool_use", "id": "bad", "name": "read_history", "input": {}},
+                {"type": "tool_use", "id": "good", "name": "read_state", "input": {}},
+            ]
+            if len(requests) == 1
+            else story_reply("anthropic", "继续故事")["content"]
+        )
+        payload = reply("anthropic", items)
+        if len(requests) > 1:
+            payload["stop_reason"] = "end_turn"
+        return httpx.Response(200, json=payload)
+
+    async def factory(settings, capture=None, *, request_context=None):
+        return transport(settings, route, request_context, capture)
+
+    monkeypatch.setattr(agent_module, "make_provider", factory)
+    try:
+        for _ in range(2):
+            result = service.story.submit(
+                session["id"],
+                TurnRequest(text="继续", operation_id=uuid4().hex, expected_revision=session["revision"]),
+            )
+            await service.story.tasks[result["id"]]
+            assert store.turn(result["id"])["status"] == "committed"
+            await service.close()
+            store = Store(tmp_path)
+            service = runtime(store)
+            session = store.session(session["id"])
+        assert len(requests) == 3
+        for body in requests[1:]:
+            results = [
+                b
+                for m in body["messages"]
+                for b in m.get("content", [])
+                if isinstance(b, dict) and b.get("type") == "tool_result"
+            ]
+            assert [
+                (b["tool_use_id"], b.get("is_error", False))
+                for b in results
+                if b["tool_use_id"] in ("bad", "good")
+            ] == [
+                ("bad", True),
+                ("good", False),
+            ]
+        assert "_tool_error" not in json.dumps(requests)
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("api", ["anthropic", "responses"])
+async def test_native_story_http_replay_final_reply_and_cache_anchor(tmp_path, monkeypatch, api):
+    import tavern.story.agent as agent_module
+
+    store, service, session = game(tmp_path, api)
+    session = store.set_cache_breakpoint(session["id"], session["revision"], True, None, 1, 1)
+    requests, responses = [], []
+    tool_items = [p for p in native_blocks(api) if p["type"] not in ("text", "message")]
+    final_items = (
+        [
+            {"type": "thinking", "thinking": "final thought", "signature": "final-signature"},
+            *story_reply("anthropic", "FINAL_NARRATIVE")["content"],
+        ]
+        if api == "anthropic"
+        else [
+            {"type": "reasoning", "id": "rs_final", "summary": [], "encrypted_content": "final-encrypted"},
+            *story_reply("responses", "FINAL_NARRATIVE")["output"],
+        ]
+    )
+
+    def route(request):
+        requests.append(request)
+        payload = reply(
+            api, tool_items if len(requests) == 1 else final_items if len(requests) in (2, 4) else None
+        )
+        responses.append(payload)
+        return httpx.Response(200, json=payload, headers={"x-codex-turn-state": "route-state"})
+
+    async def factory(settings, capture=None, *, request_context=None):
+        return transport(settings, route, request_context, capture)
+
+    monkeypatch.setattr(agent_module, "make_provider", factory)
+    try:
+        for _ in range(2):
+            result = service.story.submit(
+                session["id"],
+                TurnRequest(text="continue", operation_id=uuid4().hex, expected_revision=session["revision"]),
+            )
+            await service.story.tasks[result["id"]]
+            result = store.turn(result["id"])
+            assert result["status"] == "committed", result["error"]
+            session = store.session(session["id"])
+        bodies = [json.loads(r.content) for r in requests]
+        assert len(bodies) == 5
+        assert all(not b.get("stream") for b in bodies)
+        if api == "anthropic":
+            echoed = next(
+                m["content"]
+                for m in bodies[1]["messages"]
+                if m["role"] == "assistant" and any(p.get("type") == "tool_use" for p in m["content"])
+            )
+            assert echoed == tool_items
+            final = next(
+                m["content"]
+                for m in bodies[3]["messages"]
+                if any(p.get("input", {}).get("content") == "FINAL_NARRATIVE" for p in m["content"])
+            )
+            assert final[0] == final_items[0]
+            boundary = next(
+                part
+                for message in bodies[3]["messages"]
+                for part in message["content"]
+                if "以上回合已完成，正文为 H" in part.get("text", "")
+            )
+            assert boundary["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+            assert json.dumps(bodies[3]).count("FINAL_NARRATIVE") == 1
+        else:
+            at = next(i for i, m in enumerate(bodies[1]["input"]) if m.get("id") == "rs_1")
+            assert bodies[1]["input"][at : at + len(tool_items)] == tool_items
+            boundary = next(
+                part
+                for message in bodies[3]["input"]
+                for part in message.get("content", [])
+                if isinstance(part, dict) and part.get("text", "").startswith("以上回合已完成，正文为 H")
+            )
+            assert boundary["prompt_cache_breakpoint"] == {"mode": "explicit"}
+            assert any(m.get("encrypted_content") == "final-encrypted" for m in bodies[3]["input"])
+            assert requests[1].headers["x-codex-turn-state"] == "route-state"
+            assert "x-codex-turn-state" not in requests[3].headers
+        events = store.events(result["id"])
+        assert next(e for e in events if e["kind"] == "provider_request")["payload"]["headers"]
+        assert next(e for e in events if e["kind"] == "story_response")["payload"]["provider_response"][
+            "native"
+        ]
+        assert result["preview"]["cache"]["message_id"] == session["messages"][-3]["id"]
+    finally:
+        await service.close()
+
+
+async def test_preview_and_committed_replay_use_same_frames_without_new_memory(tmp_path):
+    from httpx import ASGITransport, AsyncClient
+
+    from tavern.application.api import create_app
+    from tavern.story.tools import tool_definitions
+
+    store, service, session = game(tmp_path)
+    session = set_handoff(store, session, "MEMORY_A")
+    try:
+        _, session = await turn(service, session, Model("first"), allow_content_edit=True)
+        app = create_app(store.root)
+        payload = {"text": "next", "update_variables": True, "allow_content_edit": True}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            response = await client.post(f"/api/sessions/{session['id']}/preview", json=payload)
+            assert response.status_code == 200, response.text
+            preview = response.json()
+        settings = store.settings().for_role("story")
+        actual = compile_window(
+            store.session_card(session["id"])["document"],
+            session,
+            session["messages"],
+            session["snapshot"],
+            "next",
+            settings,
+            tool_definitions(
+                session,
+                settings.story_config,
+                settings=settings,
+            ),
+            trace=load_trace(store, session["id"], session["messages"]),
+            require_state_patch=True,
+            allow_content_edit=True,
+        )
+        assert preview["messages"] == actual["messages"]
+        assert [m["content"] for m in actual["runtime_trace"] if m["source"] == "turn_instruction"] == [
+            "允许修改设定：True。"
+        ]
+        assert [m["sdk_role"] for m in preview["trace"] if m["source"] == "turn_instruction"] == ["system"]
+        assert len(handoff_frames(preview["messages"])) == 1
+        assert "handoff" not in [u["source"] for u in preview["context_ledger"]["updates"]]
+    finally:
+        await service.close()
+
+
+async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old_thinking(
+    tmp_path, monkeypatch
+):
+    import tavern.story.agent as agent_module
+
+    store, service, session = game(tmp_path)
+    requests = []
+
+    async def factory(settings, capture=None, *, request_context=None):
+        def route(request):
+            finishing = bool(requests) and len(requests) % 2 == 1
+            requests.append(request)
+            api = settings.api_mode
+            items = (
+                [
+                    {"type": "thinking", "thinking": "hidden", "signature": "MODEL_PRIVATE_SIGNATURE"},
+                    *story_reply("anthropic", "portable narrative")["content"],
+                ]
+                if api == "anthropic"
+                else [
+                    {
+                        "type": "reasoning",
+                        "id": "rs_private",
+                        "summary": [],
+                        "encrypted_content": "MODEL_PRIVATE_SIGNATURE",
+                    },
+                    *story_reply("responses", "portable narrative")["output"],
+                ]
+            )
+            return httpx.Response(
+                200,
+                json=reply(api, None if finishing else items),
+                headers={"x-codex-turn-state": "old-route"},
+            )
+
+        return transport(settings, route, request_context, capture)
+
+    monkeypatch.setattr(agent_module, "make_provider", factory)
+    session = set_handoff(store, session, "MEMORY_A")
+    try:
+        epochs = []
+        for api, model in [
+            ("anthropic", "claude-opus-5-5"),
+            ("anthropic", "claude-sonnet-4-6"),
+            ("anthropic", "claude-opus-5-5"),
+            ("responses", "gpt-6-sol"),
+        ]:
+            doc = store.settings_document()
+            doc.story.model.api_mode = api
+            doc.shared.card_author.api_mode = api
+            doc.story.model.model = model
+            store.save_settings(doc)
+            pending = service.story.submit(
+                session["id"],
+                TurnRequest(text="next", operation_id=uuid4().hex, expected_revision=session["revision"]),
+            )
+            await service.story.tasks[pending["id"]]
+            result = store.turn(pending["id"])
+            assert result["status"] == "committed", result["error"]
+            session = store.session(session["id"])
+            audit = result["preview"]["context_ledger"]
+            epochs.append(audit["epoch"])
+            assert len(handoff_frames(result["preview"]["messages"])) == 1
+            assert current_text(session["snapshot"]["story"]) == "MEMORY_A"
+            assert "MODEL_PRIVATE_SIGNATURE" not in requests[-2].content.decode()
+            if len(epochs) > 1:
+                assert any(
+                    e["kind"] == "context_baseline"
+                    and e["payload"]["rebuild_reason"] == "provider_or_model_changed"
+                    for e in store.events(pending["id"])
+                )
+                assert "portable narrative" in requests[-1].content.decode()
+        assert len(set(epochs)) == 4
+        assert (
+            len({r.headers.get("x-claude-code-session-id", r.headers.get("session-id")) for r in requests})
+            == 1
+        )
+    finally:
+        await service.close()
+
+
+async def test_rollover_rebases_without_reviving_old_runtime_memory(tmp_path):
+    store, service, session = game(tmp_path)
+    session = set_handoff(store, session, "MEMORY_A")
+    try:
+        _, session = await turn(service, session, Model("first"))
+        model = Model(("new_context", {"handoff": handoff("MEMORY_B"), "keep_recent": 0}), "after rollover")
+        result, session = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        messages = model.requests[-1]["messages"]
+        # The new window carries the chapter ledger and the current handoff.
+        assert len(handoff_frames(messages)) == 2
+        assert all("MEMORY_B" in frame["content"] for frame in handoff_frames(messages))
+        assert "MEMORY_A" not in json.dumps(messages)
+    finally:
+        await service.close()
+
+
+async def test_fork_remaps_runtime_references_and_uses_new_session_identity(tmp_path):
+    store, service, session = game(tmp_path)
+    try:
+        result, session = await turn(
+            service,
+            session,
+            Model(
+                ("read_state", {}),
+                ("patch_state", {"operations": [], "comment": "none"}),
+                (
+                    "patch_state",
+                    {"operations": [{"op": "add", "path": "/audit", "value": True}], "comment": "audit"},
+                ),
+                "first",
+            ),
+            update_variables=True,
+        )
+        assert result["status"] == "committed", result["error"]
+        fork = store.fork_session(session["id"], session["head"], session["revision"])
+        original_trace = load_trace(store, session["id"], session["messages"])
+        fork_trace = load_trace(store, fork["id"], fork["messages"])
+        old_ids = {m["id"] for m in session["messages"]}
+        for item in fork_trace:
+            value = item["message"].get("_runtime_context", {}).get("value")
+            if isinstance(value, dict) and value.get("input_id"):
+                assert value["input_id"] not in old_ids
+                assert value["input_id"] in {m["id"] for m in fork["messages"]}
+        assert [m["message"].get("tool_call_id") for m in original_trace] == [
+            m["message"].get("tool_call_id") for m in fork_trace
+        ]
+        result, fork = await turn(service, fork, Model("fork continuation"))
+        assert result["status"] == "committed", result["error"]
+        assert result["preview"]["cache"]["scope"] == fork["id"] != session["id"]
+    finally:
+        await service.close()
+
+
+async def test_responses_routing_state_and_successful_memory_survive_failed_request(tmp_path, monkeypatch):
+    import tavern.story.agent as agent_module
+
+    store, service, session = game(tmp_path, "responses")
+    requests = []
+
+    def route(request):
+        requests.append(request)
+        if len(requests) == 2:
+            raise httpx.ReadTimeout("synthetic timeout", request=request)
+        items = (
+            [
+                {"type": "reasoning", "id": "rs_memory", "summary": [], "encrypted_content": "opaque-memory"},
+                {
+                    "type": "function_call",
+                    "id": "fc_memory",
+                    "call_id": "call_memory",
+                    "name": "write_handoff",
+                    "arguments": json.dumps(handoff("MEMORY_B", through=None)),
+                },
+            ]
+            if len(requests) == 1
+            else story_reply("responses", "done")["output"]
+            if len(requests) == 3
+            else None
+        )
+        return httpx.Response(
+            200, json=reply("responses", items), headers={"x-codex-turn-state": "persisted-route"}
+        )
+
+    async def factory(settings, capture=None, *, request_context=None):
+        return transport(settings, route, request_context, capture)
+
+    monkeypatch.setattr(agent_module, "make_provider", factory)
+    try:
+        failed = service.story.submit(
+            session["id"], TurnRequest(text="next", operation_id=uuid4().hex, expected_revision=0)
+        )
+        await service.story.tasks[failed["id"]]
+        failed = store.turn(failed["id"])
+        assert failed["status"] == "error"
+        saved = store.story_progress(failed["id"])
+        assert saved["request_context"]["routing"]["turn_state"] == "persisted-route"
+    finally:
+        await service.close()
+    store = Store(store.root)
+    service = runtime(store)
+    try:
+        resumed = service.story.submit(
+            session["id"],
+            TurnRequest(
+                text="next", operation_id=uuid4().hex, expected_revision=0, resume_turn_id=failed["id"]
+            ),
+        )
+        await service.story.tasks[resumed["id"]]
+        result = store.turn(resumed["id"])
+        assert result["status"] == "committed", result["error"]
+        assert len(requests) == 4
+        assert requests[2].headers["session-id"] == requests[0].headers["session-id"]
+        assert requests[2].headers["x-codex-turn-state"] == "persisted-route"
+        state = store.session(session["id"])["snapshot"]["story"]
+        assert current_text(state) == "MEMORY_B" and state["handoff"]["revision"] == 1
+        body = json.loads(requests[2].content)
+        assert any(i.get("encrypted_content") == "opaque-memory" for i in body["input"])
+        assert sum(i.get("type") == "function_call_output" for i in body["input"]) == 1
+        request_event = next(
+            e["payload"] for e in store.events(result["id"]) if e["kind"] == "provider_request"
+        )
+        assert request_event["request_context"]["turn_id"] == saved["request_context"]["turn_id"]
+        assert "persisted-route" not in json.dumps(store.events(result["id"]))
+    finally:
+        await service.close()
+
+
+async def test_legacy_tool_trace_is_upgraded_without_inventing_native_data(tmp_path):
+    store, service, session = game(tmp_path)
+    try:
+        _, session = await turn(
+            service, session, Model(("write_handoff", handoff("MEMORY_B", through=None)), "old narrative")
+        )
+        with store.connection() as db:
+            rows = db.execute(
+                "SELECT seq,payload FROM story_trace WHERE message_id=?", (session["head"],)
+            ).fetchall()
+            for row in rows:
+                message = json.loads(row["payload"])
+                if message.get("tool_calls") or message["role"] == "tool":
+                    message = {k: v for k, v in message.items() if not k.startswith("_")}
+                    db.execute(
+                        "UPDATE story_trace SET payload=? WHERE message_id=? AND seq=?",
+                        (json.dumps(message), session["head"], row["seq"]),
+                    )
+                else:
+                    db.execute(
+                        "DELETE FROM story_trace WHERE message_id=? AND seq=?",
+                        (session["head"], row["seq"]),
+                    )
+        model = Model("new narrative")
+        result, session = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        assert result["preview"]["context_ledger"]["rebuild_reason"] == "legacy_context"
+        assert "old narrative" in json.dumps(model.requests[0]["messages"])
+        assert "MEMORY_B" in json.dumps(model.requests[0]["messages"])
+        assert any(m["role"] == "tool" for m in model.requests[0]["messages"])
+        assert not any(m.get("_native_response") for m in model.requests[0]["messages"])
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5, 6, 7])
+def test_legacy_permission_frames_are_removed_when_rebuilding_context(monkeypatch, version):
+    from tavern.story import context_ledger
+    from tavern.story.state import new_state
+
+    session = {"id": uuid4().hex, "persona": "user"}
+    snapshot = {"state": {}, "story": new_state()}
+    args = ({"name": "fixture"}, session, [], snapshot, "next", config(), [])
+    with monkeypatch.context() as legacy:
+        legacy.setattr(context_ledger, "VERSION", version)
+        first = compile_window(*args, input_id="u1", allow_content_edit=True)
+    second = compile_window(*args, input_id="u1", continuation=first["context_additions"])
+    assert second["context_ledger"]["rebuild_reason"] == "context_version_changed"
+    assert second["context_ledger"]["epoch"] != first["context_ledger"]["epoch"]
+    assert not any(m["source"] == "turn_instruction" for m in second["trace"])
+    assert not any("允许修改设定" in m["content"] for m in second["messages"])
+    third = compile_window(
+        *args, input_id="u1", continuation=first["context_additions"] + second["context_additions"]
+    )
+    assert third["context_ledger"]["rebuild_reason"] is None
+    assert third["messages"] == second["messages"]
+
+
+@pytest.mark.parametrize("version", [5, 7])
+def test_rebuild_retires_legacy_countdowns_and_keeps_tool_exchanges(monkeypatch, version):
+    from tavern.story import context_ledger
+    from tavern.story.state import new_state
+
+    session = {"id": uuid4().hex, "persona": "user"}
+    snapshot = {"state": {}, "story": new_state()}
+    args = ({"name": "fixture"}, session, [], snapshot, "next", config(), [])
+    with monkeypatch.context() as legacy:
+        legacy.setattr(context_ledger, "VERSION", version)
+        first = compile_window(*args, input_id="u1")
+    records = first["context_additions"]
+    old_status = next(m for m in records if m.get("source") == "context_status")
+    for remaining in (24, 23, 22):
+        notice = copy.deepcopy(old_status)
+        notice["content"] = f"本回合还可调用模型 {remaining} 次。"
+        notice["_runtime_context"]["value"] = notice["content"]
+        records.append(notice)
+    for source, content in (
+        ("call_budget", "本次运行模型请求上限：24；包含本次请求的剩余次数：1。"),
+        ("last_call_notice", "这是本回合最后一次模型请求。"),
+    ):
+        notice = copy.deepcopy(old_status)
+        notice.update(source=source, message_type=source, content=content)
+        notice["_runtime_context"]["value"] = content
+        records.append(notice)
+    records.extend(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "read", "type": "function", "function": {"name": "read_state", "arguments": "{}"}}
+                ],
+            },
+            {"role": "tool", "tool_call_id": "read", "content": "原有完整工具结果"},
+        ]
+    )
+    rebuilt = compile_window(*args, input_id="u1", continuation=records)
+    assert rebuilt["context_ledger"]["rebuild_reason"] == "context_version_changed"
+    assert not any("还可调用模型" in m.get("content", "") for m in rebuilt["messages"])
+    assert not any(m["source"] in ("call_budget", "last_call_notice") for m in rebuilt["trace"])
+    assert "剩余次数" not in str(rebuilt["messages"])
+    assert "最后一次模型请求" not in str(rebuilt["messages"])
+    assert sum(m["source"] == "context_status" for m in rebuilt["trace"]) == 1
+    assert [m["content"] for m in rebuilt["messages"] if m["role"] == "tool"] == ["原有完整工具结果"]
+    again = compile_window(*args, input_id="u1", continuation=records + rebuilt["context_additions"])
+    assert again["messages"] == rebuilt["messages"]
+
+
+def test_reasoning_change_preserves_story_runtime_frames():
+    from tavern.story.context_ledger import ContextLedger
+    from tavern.story.state import new_state
+
+    cfg = config("responses")
+    document = {"name": "fixture"}
+    snapshot = {"story": new_state()}
+    first = ContextLedger(cfg, [], [], document, snapshot, [], "input", {})
+    first.update("post", "完整后置要求")
+    records = copy.deepcopy(first.additions)
+    assistant = {
+        "role": "assistant",
+        "content": "完整正文",
+        "reasoning_content": "完整思考",
+        "_native_epoch": first.native_epoch,
+    }
+    cfg.reasoning_effort = "low"
+    cfg.reasoning_format = "reasoning"
+    second = ContextLedger(cfg, [], [], document, snapshot, records, "input", {})
+    assert second.reason is None and second.epoch == first.epoch
+    assert second.replay(records[1]) == records[1]
+    assert second.native_message(assistant) == assistant
+    assert not second.additions
+    changed = ContextLedger(cfg, [], [], {"name": "changed"}, snapshot, records, "input", {})
+    assert changed.reason == "context_sources_changed"
+
+
+def test_history_macro_change_rebuilds_once_and_records_why():
+    from tavern.story.state import new_state
+
+    settings = config()
+    session = {"id": uuid4().hex, "persona": "user"}
+    snapshot = {"state": {"audit": 0}, "story": new_state()}
+    history = [{"id": "u1", "parent": None, "role": "user", "raw": "Value {{getvar::audit}}"}]
+    args = ({"name": "fixture"}, session, history, snapshot, "next", settings, [])
+    first = compile_window(*args, input_id="u2")
+    snapshot["state"]["audit"] = 1
+    second = compile_window(*args, input_id="u2", continuation=first["context_additions"])
+    assert second["context_ledger"]["rebuild_reason"] == "history_content_changed"
+    assert second["context_ledger"]["epoch"] != first["context_ledger"]["epoch"]
+    third = compile_window(
+        *args, input_id="u2", continuation=first["context_additions"] + second["context_additions"]
+    )
+    assert third["context_ledger"]["rebuild_reason"] is None
+    assert third["messages"] == second["messages"]
+
+
+def test_committed_story_replays_only_final_model_text_without_draft_revocation():
+    from tavern.story.state import new_state
+
+    session = {"id": uuid4().hex, "persona": "user"}
+    snapshot = {"state": {}, "story": new_state()}
+    # Callbacks or a model-placement regex removed hidden text from the draft.
+    history = [
+        {"id": "u1", "parent": None, "role": "user", "raw": "开门"},
+        {"id": "a1", "parent": "u1", "role": "assistant", "raw": "门开了。[隐藏]", "model": "门开了。"},
+    ]
+    draft = json.dumps({"content": "门开了。[隐藏]"}, ensure_ascii=False)
+    exchange = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "roleplay", "arguments": draft}}
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "c1",
+            "content": "{}",
+            "_roleplay_received": {"input_id": "u1", "content_hash": "draft"},
+        },
+    ]
+    trace = [
+        {"message_id": "a1", "window_id": snapshot["story"]["window"]["id"], "message": message}
+        for message in exchange
+    ]
+    compiled = compile_window(
+        {"name": "fixture"}, session, history, snapshot, "继续", config(), [], trace=trace
+    )
+    sent = json.dumps(compiled["messages"], ensure_ascii=False)
+    assert "[隐藏]" not in sent and sent.count("门开了。") == 1
+    assert "以上回合已完成，正文为 H" in sent
+    # A previous turn's delivery is history, not a draft this turn revokes.
+    assert not any(m.get("source") == "roleplay_draft" for m in compiled["context_additions"])
+
+
+@pytest.mark.parametrize(
+    "previous",
+    [
+        "before_ledger",
+        "before_read_guards",
+        "before_plot",
+        "before_agency",
+        "before_plot_guide",
+        "before_plot_control",
+    ],
+)
+def test_only_exact_old_default_memory_prompt_is_migrated(previous):
+    from tavern.core.settings import SettingsDocument, migrate_settings
+    from tavern.story.config import STORY_PROMPT
+
+    raw = SettingsDocument().model_dump()
+    old = Path(f"tests/fixtures/story_prompt_{previous}.txt").read_text(encoding="utf-8")
+    raw["story"]["system_prompt"]["options"][0]["text"] = old
+    migrated = migrate_settings(raw)
+    assert migrated.story.system_prompt.current == STORY_PROMPT != old
+    assert migrated.revisions["story"] == raw["revisions"]["story"] + 1
+    assert migrate_settings(migrated.model_dump()) == migrated
+    custom = old + "\nA custom instruction."
+    raw["story"]["system_prompt"]["options"][0]["text"] = custom
+    assert migrate_settings(raw).story.system_prompt.current == custom
+    legacy = Settings(story_system_prompt=old).model_dump()
+    assert migrate_settings(legacy).story.system_prompt.current == STORY_PROMPT
+    legacy["story_system_prompt"] = custom
+    assert migrate_settings(legacy).story.system_prompt.current == custom
+
+
+@pytest.mark.parametrize("api", ["anthropic", "responses"])
+async def test_explicit_identity_overrides_survive_cloud_mode(api):
+    cfg = config(api, "cloud")
+    cfg.cache.request = {"metadata": {"user_id": "custom-user"}, "prompt_cache_key": "custom-affinity"}
+    context = ProviderRequestContext(uuid4().hex, "turn", "window", "device")
+    p = transport(cfg, lambda _: httpx.Response(200, json=reply(api)), context)
+    try:
+        body = await request_payload(p, [{"role": "user", "content": "hello"}])
+        if api == "anthropic":
+            assert body["metadata"]["user_id"] == "custom-user"
+        else:
+            assert body["prompt_cache_key"] == "custom-affinity"
+    finally:
+        await p.close()
+
+
+@pytest.mark.parametrize("api", ["anthropic", "responses"])
+async def test_source_rebase_preserves_unchanged_native_replies_from_same_model(tmp_path, monkeypatch, api):
+    import tavern.story.agent as agent_module
+
+    store, service, session = game(tmp_path, api)
+    requests, original = [], [p for p in native_blocks(api) if p["type"] not in ("text", "message")]
+
+    def route(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json=reply(
+                api,
+                original
+                if len(requests) == 1
+                else story_reply(api, "done")["content" if api == "anthropic" else "output"]
+                if len(requests) in (2, 4)
+                else None,
+            ),
+        )
+
+    async def factory(settings, capture=None, *, request_context=None):
+        return transport(settings, route, request_context, capture)
+
+    monkeypatch.setattr(agent_module, "make_provider", factory)
+    try:
+        for index in range(2):
+            if index:
+                # Tool limits change the fixed source; per-turn authorization does not.
+                settings = store.settings()
+                settings.story_config.note_tokens += 1
+                store.save_settings(settings)
+            pending = service.story.submit(
+                session["id"],
+                TurnRequest(
+                    text="next",
+                    operation_id=uuid4().hex,
+                    expected_revision=session["revision"],
+                ),
+            )
+            await service.story.tasks[pending["id"]]
+            result = store.turn(pending["id"])
+            assert result["status"] == "committed", result["error"]
+            session = store.session(session["id"])
+        assert any(
+            e["kind"] == "context_baseline" and e["payload"]["rebuild_reason"] == "context_sources_changed"
+            for e in store.events(pending["id"])
+        )
+        if api == "anthropic":
+            echoed = next(
+                m["content"]
+                for m in requests[-1]["messages"]
+                if any(p.get("type") == "tool_use" for p in m["content"])
+            )
+            assert echoed == original
+        else:
+            at = next(i for i, m in enumerate(requests[-1]["input"]) if m.get("id") == "rs_1")
+            assert requests[-1]["input"][at : at + len(original)] == original
+    finally:
+        await service.close()
+
+
+async def test_story_limit_preserves_three_segments_and_independent_tools(tmp_path):
+    store, service, session = game(tmp_path)
+    doc = store.settings_document()
+    doc.story.tools.max_steps = 2
+    store.save_settings(doc)
+    try:
+        model = Model(
+            {
+                "calls": [
+                    ("submit_story", {"content": "accepted one"}),
+                    ("submit_story", {"content": "accepted two"}),
+                    ("submit_story", {"content": "accepted three"}),
+                    ("read_history", {"ref": "H3"}),
+                ]
+            },
+            {"content": "rejected four", "calls": [("write_handoff", handoff("still runs", through=None))]},
+        )
+        result, current = await turn(service, session, model)
+        assert result["status"] == "error" and current["revision"] == 0
+        assert len(model.requests) == 2
+        progress = store.story_progress(result["id"])
+        assert progress["story"]["content"] == "accepted one\n\naccepted two\n\naccepted three"
+        assert len(progress["story"]["breaks"]) == 2
+        assert current_text(progress["snapshot"]["story"]) == "still runs"
+        duplicate = next(
+            e["payload"]["result"]
+            for e in store.events(result["id"])
+            if e["kind"] == "story_tool"
+            and e["payload"]["name"] == "submit_story"
+            and not e["payload"]["result"]["ok"]
+        )
+        assert duplicate["error"]["code"] == "STORY_LIMIT_REACHED"
+        assert not progress["model_completed"]
+    finally:
+        await service.close()
+
+
+async def test_native_pause_then_empty_end_preserves_the_one_story(tmp_path):
+    store, service, session = game(tmp_path, "anthropic")
+    requests = []
+
+    def route(request):
+        requests.append(json.loads(request.content))
+        payload = reply(
+            "anthropic", story_reply("anthropic", "唯一正文")["content"] if len(requests) == 1 else []
+        )
+        if len(requests) == 1:
+            payload["stop_reason"] = "pause_turn"
+        return httpx.Response(200, json=payload)
+
+    provider = transport(store.settings(), route)
+    try:
+        result, current = await turn(service, session, provider)
+        assert result["status"] == "committed", result["error"]
+        assert len(requests) == 2 and current["messages"][-1]["raw"] == "唯一正文"
+        assert provider.last_completion.reason == "end_turn"
+        responses = [
+            e["payload"]["completion"] for e in store.events(result["id"]) if e["kind"] == "story_response"
+        ]
+        assert responses == [
+            {"action": "continue", "reason": "pause_turn"},
+            {"action": "end", "reason": "end_turn"},
+        ]
+        assert json.dumps(requests[1], ensure_ascii=False).count("唯一正文") == 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("api,field", [("anthropic", "metadata.user_id"), ("responses", "prompt_cache_key")])
+async def test_rejected_identity_does_not_trigger_a_cache_fallback_retry(api, field):
+    cfg = config(api)
+    cfg.cache.request = {"metadata": {"user_id": "explicit"}} if api == "anthropic" else {}
+    requests = []
+
+    def route(request):
+        requests.append(request)
+        return httpx.Response(
+            400, json={"error": {"message": f"Unsupported parameter: {field}", "param": field}}
+        )
+
+    context = ProviderRequestContext(uuid4().hex, "turn", "window", "device")
+    p = transport(cfg, route, context)
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            await p.chat_complete([{"role": "user", "content": "fixture", "_cache_breakpoint": True}])
+        assert len(requests) == 1
+    finally:
+        await p.close()

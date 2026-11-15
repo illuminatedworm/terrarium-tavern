@@ -5,17 +5,17 @@ from tavern.storage.retrieval_cleanup import prune_orphan_retrieval
 from tavern.storage.store import Store
 
 
-def test_delete_full_session_removes_owned_records_and_exclusive_indexes(tmp_path):
+def test_delete_story_session_removes_owned_records_and_exclusive_indexes(tmp_path):
     store = Store(tmp_path)
     card = store.import_card(b'{"name":"fixture","first_mes":"opening"}')
-    full = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+    full = store.new_session(SessionCreate(card_id=card["id"]))
     live = store.new_session(SessionCreate(card_id=card["id"]))
     tid, _ = store.create_turn(full["id"], TurnRequest(operation_id="delete-test", expected_revision=0))
     store.set_turn(tid, status="cancelled")
     store.event(tid, "diagnostic", {"test": True})
     with store.connection() as db:
         db.execute(
-            "INSERT INTO full_agent_trace VALUES (?,?,?,?,?)", (full["id"], full["head"], 0, "window", "{}")
+            "INSERT INTO story_trace VALUES (?,?,?,?,?)", (full["id"], full["head"], 0, "window", "{}")
         )
         db.execute("CREATE TABLE retrieval_collections(session TEXT PRIMARY KEY, keys TEXT NOT NULL)")
         for table in ("retrieval_indexes", "retrieval_vectors"):
@@ -33,7 +33,7 @@ def test_delete_full_session_removes_owned_records_and_exclusive_indexes(tmp_pat
     store.delete_session(full["id"])
     assert store.session(live["id"])["messages"] == live["messages"]
     with store.connection() as db:
-        for table in ("messages", "turns", "full_agent_trace", "retrieval_collections"):
+        for table in ("messages", "turns", "story_trace", "retrieval_collections"):
             assert (
                 db.execute(f"SELECT count(*) FROM {table} WHERE session=?", (full["id"],)).fetchone()[0] == 0
             )

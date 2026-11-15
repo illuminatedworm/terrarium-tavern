@@ -33,13 +33,7 @@ const contents = computed<StoryContent[]>(() =>
   messageContents(props.message, props.session, { panel: props.panelOnly }),
 );
 const visualAnchor = ref<HTMLElement>();
-const showVisuals = computed(
-  () =>
-    !props.panelOnly &&
-    !!props.hasVisuals &&
-    !props.session.kemini &&
-    props.session.agent_mode === 'full_agent',
-);
+const showVisuals = computed(() => !props.panelOnly && !!props.hasVisuals && !props.session.kemini);
 const { output, error, loading, retry } = useStoryVisuals(
   () => ({ enabled: showVisuals.value, session: props.session.id, message: props.message.id }),
   visualAnchor,

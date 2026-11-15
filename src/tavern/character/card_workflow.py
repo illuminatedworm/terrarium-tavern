@@ -7,25 +7,14 @@ from tavern.character.card_initialization_diagnostics import initialization_warn
 from tavern.character.card_regex_diagnostics import regex_warnings
 from tavern.character.card_status_diagnostics import status_display_warnings
 from tavern.character.card_template_diagnostics import template_warnings
-from tavern.character.cards import is_initvar, lore_entries, parse_card
-
-AUDIENCES = {"writer", "tracker_mvu"}
-
-
-def audience(entry):
-    # Callers pass lore_entries views, whose terrarium already resolves extension
-    # precedence and treats null as unset.
-    metadata = entry.get("terrarium", {})
-    if not isinstance(metadata, dict):
-        raise ValueError("世界书 terrarium 扩展必须为对象")
-    return metadata.get("audience", "writer")
+from tavern.character.cards import card_view, is_initvar, lore_entries, parse_card
+from tavern.character.lore_purpose import NARRATIVE, lore_purpose, validate_lore_purposes
 
 
 def validate_document(document):
     parse_card(json.dumps(document, ensure_ascii=False).encode())
-    for entry in lore_entries(document):
-        if audience(entry) not in AUDIENCES:
-            raise ValueError(f"条目 {entry['id']} 的用途无效")
+    lore_entries(document)  # Validate entry IDs and retrieval fields as read by the runtime.
+    validate_lore_purposes(card_view(document).get("character_book"))
 
 
 def validation_report(document):
@@ -44,8 +33,12 @@ def validation_report(document):
     # Existing inline MVU initialization stays outside ordinary adaptation;
     # model-written status displays have separate, advisory diagnostics.
     for entry in lore_entries(document):
-        if audience(entry) == "writer" and not is_initvar(entry) and marker.search(entry.get("content", "")):
-            warnings.append(f"Writer 条目 {entry['id']} 可能包含变量规则，请确认或拆分")
+        if (
+            lore_purpose(entry) == NARRATIVE
+            and not is_initvar(entry)
+            and marker.search(entry.get("content", ""))
+        ):
+            warnings.append(f"叙事条目 {entry['id']} 可能包含变量规则，请确认或拆分")
     warnings.extend(status_display_warnings(document))
     warnings.extend(regex_warnings(document))
     warnings.extend(initialization_warnings(document))

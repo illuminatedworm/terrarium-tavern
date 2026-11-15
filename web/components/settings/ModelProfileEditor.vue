@@ -20,7 +20,7 @@ import ModelSelect from './ModelSelect.vue';
 const props = defineProps<{
   profile: ModelProfile;
   providers: Provider[];
-  role: string;
+  role: 'story' | 'novel_research' | 'advisor' | 'card_author';
   label: string;
   effortOptions: Array<{ value: string; label: string }>;
   flush: () => Promise<unknown>;
@@ -108,15 +108,13 @@ watch(
   },
 );
 const errorPrefix = computed(() =>
-  props.role === 'full_agent'
-    ? `full_agent.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
+  props.role === 'story'
+    ? `story.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
     : props.role === 'novel_research'
-      ? `full_agent.novel_research.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
+      ? `story.novel_research.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
       : props.role === 'advisor'
         ? `shared.advisor.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
-        : props.role === 'card_author'
-          ? 'shared.card_author.'
-          : 'half_agent.' + (props.channel === 'chatgpt' ? 'official_' : '') + props.role + '.',
+        : 'shared.card_author.',
 );
 const common = computed<SettingField[]>(() => [
   { path: 'context_tokens', label: '上下文窗口（tokens）', min: 2048, max: 2000000 },

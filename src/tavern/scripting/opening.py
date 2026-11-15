@@ -31,9 +31,7 @@ async def prepare_opening(runtime, dependencies, session, card, greeting):
         mirror = await script.call("snapshot")
         snapshot.update(state=mirror["state"], scopes=mirror["scopes"])
         rules = regex_scripts(document)
-        # Preserve each engine's existing evaluation order for scripted regexes.
-        channels = ("model", "display") if session["agent_mode"] == "full_agent" else ("display", "model")
-        for channel in channels:
+        for channel in ("model", "display"):
             value = await script.call("transform", greeting["raw"], rules, 2, channel, 0)
             if channel == "display" and card["permission"] and "<" in value:
                 value = dependencies.markup(assets, value)

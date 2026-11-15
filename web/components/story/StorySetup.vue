@@ -10,13 +10,13 @@ import CharacterPortrait from '../character/CharacterPortrait.vue';
 import { cardPortraitUrl } from '../../lib/portraits';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { channelLabels, type Channel } from '../../lib/channels';
-import type { AgentMode, CardDefaults, CardRecord, WorldbookSummary } from '../../lib/types';
+import type { CardDefaults, CardRecord, WorldbookSummary } from '../../lib/types';
 
 const props = defineProps<{ card: CardRecord; settings?: any }>();
 const emit = defineEmits<{
   started: [session: any];
   back: [];
-  settings: [channel: Channel, mode: string];
+  settings: [channel: Channel];
   cardChanged: [card: CardRecord];
 }>();
 const channel = ref<Channel>('standard');
@@ -27,18 +27,6 @@ const personas = ref<any[]>([]),
 const greeting = ref(0),
   busy = ref(false),
   error = ref('');
-const agentMode = ref<AgentMode>('full_agent');
-const agentModes: { value: AgentMode; label: string }[] = [
-  { value: 'full_agent', label: 'Full Agent' },
-  { value: 'half_agent', label: 'Half Agent' },
-];
-function moveMode(event: KeyboardEvent, index: number) {
-  const next = agentModes[(index + agentModes.length) % agentModes.length].value;
-  agentMode.value = next;
-  (event.currentTarget as HTMLElement).parentElement
-    ?.querySelector<HTMLButtonElement>(`[data-mode="${next}"]`)
-    ?.focus();
-}
 // Step 2 sets the user and opening; step 3 picks library worldbooks to mount.
 const step = ref<2 | 3>(2);
 const worldbooks = ref<WorldbookSummary[]>([]),
@@ -50,14 +38,10 @@ const keminiAvailable = computed(() => !!(props.settings || settings.value)?.sha
 watch(channel, (value) => {
   if (value !== 'standard') kemini.value = false;
 });
-const models = computed(() => {
-  const scope = (props.settings || settings.value)?.[agentMode.value];
-  const prefix = channel.value === 'chatgpt' ? 'official_' : '';
-  return agentMode.value === 'full_agent'
-    ? [scope?.[prefix + 'model']]
-    : [scope?.[prefix + 'foreground'], scope?.[prefix + 'background']];
+const modelLabel = computed(() => {
+  const scope = (props.settings || settings.value)?.story;
+  return scope?.[channel.value === 'chatgpt' ? 'official_model' : 'model']?.model || '待配置';
 });
-const modelLabel = computed(() => models.value.map((model) => model?.model || '待配置').join(' / '));
 const data = computed<any>(() => props.card.document.data || props.card.document);
 // Session creation runs the card scripts and refuses without the shelf card's permission,
 // so ask here instead of failing at the last step.
@@ -107,7 +91,6 @@ async function start() {
       greeting: greeting.value,
       persona: personaName.value,
       persona_id: personaId.value || null,
-      agent_mode: agentMode.value,
       channel_origin: channel.value,
       kemini: kemini.value,
       // Mount order follows the library list, as shown in step 3.
@@ -127,7 +110,7 @@ onMounted(async () => {
       api('/worldbooks'),
       api(`/cards/${props.card.id}/defaults`),
     ]);
-    channel.value = settings.value?.[agentMode.value]?.default_channel || 'standard';
+    channel.value = settings.value?.story?.default_channel || 'standard';
     // Card defaults only preselect; deleted targets were already dropped with them.
     personaId.value = defaults.value?.persona_id || '';
     chosen.value = new Set(defaults.value?.worldbook_ids);
@@ -197,7 +180,7 @@ useTimedError(error);
           <section class="story-setup-section">
             <h3>对话渠道</h3>
             <ChannelSwitch v-model="channel" label="对话渠道" />
-            <p class="muted">创建后渠道固定；可在同一渠道内更换模型。</p>
+            <p class="muted">创建后渠道固定，可在同一渠道内更换支持工具调用的模型。</p>
             <template v-if="keminiAvailable">
               <label class="check"
                 ><input v-model="kemini" type="checkbox" :disabled="channel !== 'standard'" />Kemini
@@ -210,38 +193,10 @@ useTimedError(error);
             </template>
             <div class="story-channel-model">
               <span>当前模型</span><strong>{{ modelLabel }}</strong>
-              <button class="quiet" @click="emit('settings', channel, agentMode)">
+              <button class="quiet" @click="emit('settings', channel)">
                 配置{{ channelLabels[channel] }}模型
               </button>
             </div>
-          </section>
-          <section class="story-setup-section">
-            <h3 id="story-mode-title">运行模式</h3>
-            <div class="panel-tabs story-mode-switch" role="radiogroup" aria-labelledby="story-mode-title">
-              <button
-                v-for="(mode, i) in agentModes"
-                :key="mode.value"
-                type="button"
-                role="radio"
-                :data-mode="mode.value"
-                :aria-checked="agentMode === mode.value"
-                :tabindex="agentMode === mode.value ? 0 : -1"
-                :class="{ active: agentMode === mode.value }"
-                @click="agentMode = mode.value"
-                @keydown.right.prevent="moveMode($event, i + 1)"
-                @keydown.left.prevent="moveMode($event, i - 1)"
-              >
-                {{ mode.label }}
-              </button>
-            </div>
-            <p class="muted">
-              {{
-                agentMode === 'full_agent'
-                  ? '单一 Agent 通过工具自行检索、维护笔记和切换工作窗口。需要支持原生工具调用的模型。'
-                  : 'Writer 负责正文，Tracker 负责后台整理，运行时管理上下文。'
-              }}上下文方式：{{ agentMode === 'full_agent' ? '本地换窗' : '本地滚动窗口'
-              }}{{ channel === 'chatgpt' ? '（创建后可切换云端 compact）' : '' }}
-            </p>
           </section>
           <section class="story-setup-section story-persona">
             <label

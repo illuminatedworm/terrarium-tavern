@@ -1,1 +1,1 @@
-"""Independent, story-aware consultation for both roleplay modes."""
+"""Independent consultation with access to the current story."""

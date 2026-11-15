@@ -1,15 +1,14 @@
 """Mount library worldbooks into a conversation-level card.
 
 Mounted entries are copied into the card's single ``character_book``, so every
-reader (retrieval, both agents, Tracker, Advisor, scripts, MVU, review and
+reader (retrieval, the story model, Advisor, scripts, MVU, review and
 transfer) treats them exactly like card entries. Each copy gets a fresh ID:
-entry IDs key usage, cooldown and MVU ledgers, Full Agent rejects duplicates,
+entry IDs key usage, cooldown and MVU ledgers, the story runtime rejects duplicates,
 and a later shelf sync may add an entry carrying the library's original ID.
 
 Which entries came from which book is recorded in ``snapshot["worldbooks"]``
 rather than in the card: the card document is shown to models, and library
-IDs must not enter model input. Card-content writes (Tracker, scripts, Full
-Agent) replace ``snapshot["content"]`` wholesale, so the record lives beside it.
+IDs must not enter model input. Card-content writes (story tools and scripts) replace ``snapshot["content"]`` wholesale, so the record lives beside it.
 """
 
 import copy
@@ -67,7 +66,7 @@ def _remove(document, ids):
     entries = book.get("entries", [])
     keys = list(entries) if isinstance(entries, dict) else list(range(len(entries)))
     effective = [entry["id"] for entry in lore_entries({"character_book": book})]
-    # IDs already deleted by Tracker, scripts or manual edits are simply absent.
+    # IDs already deleted by the story model, scripts or manual edits are simply absent.
     doomed = [key for key, eid in zip(keys, effective, strict=True) if eid in ids]
     for key in reversed(doomed):
         del entries[key]

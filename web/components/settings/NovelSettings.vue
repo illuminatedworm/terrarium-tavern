@@ -31,7 +31,7 @@ function follow(value: boolean) {
   <div class="agent-settings">
     <ChannelSwitch v-model="channel" />
     <label class="settings-check"
-      ><span>跟随 Full Agent 的实际模型（含对话内选择）</span
+      ><span>跟随当前对话的模型</span
       ><input
         type="checkbox"
         :checked="!profile"
@@ -39,7 +39,7 @@ function follow(value: boolean) {
         @change="follow(($event.target as HTMLInputElement).checked)"
     /></label>
     <p v-if="!profile" class="muted">
-      创建时使用主 agent 的模型与生成参数；不继承剧情上下文或消息适配。当前全局模型：{{
+      创建时沿用当前对话的模型与生成参数，并建立独立的上下文。当前全局模型：{{
         base?.model || '尚未配置此渠道'
       }}。
     </p>
@@ -59,15 +59,15 @@ function follow(value: boolean) {
       <GlobalMessageAdapter
         :model-value="main.message_adapter"
         :api-mode="deliveryApi"
-        lane="full_agent"
+        lane="story"
         :type-ids="['novel_research', 'novel_status']"
         @update:model-value="main.message_adapter = $event"
       />
     </div>
     <p class="muted">
-      汇报消息适配用于主 agent 接收报告、提问、失败通知和运行状态，当前接口：{{ deliveryApiLabel }}。 与 Full
-      Agent → 模型与生成 → 普通 API →
-      消息适配共用新建对话默认值，与调查模型选择无关；撤回本页也会撤回这份共享设置。
+      汇报消息适配决定剧情模型如何接收报告、提问、失败通知和运行状态。当前接口：{{
+        deliveryApiLabel
+      }}。设置与「游玩 → 模型与生成 → 普通 API → 消息适配」共用新建对话默认值，撤回本页也会撤回这份设置。
     </p>
     <p class="muted">
       调查者不能选择或更换模型。配置在创建时固定，修改只影响新建调查者；旧调查的实际模型在原著面板显示。
@@ -87,7 +87,7 @@ function follow(value: boolean) {
       </div>
     </fieldset>
     <p class="muted">
-      压缩计入调用次数，工具和网络等待计时；等待主 agent
+      压缩计入调用次数，工具和网络等待计时；等待剧情模型
       回答、完成后空闲不计时。跨轮、恢复和追问不刷新额度。每个分支同时最多三个调查者，每轮最多新建五次，重试不刷新启动次数。
     </p>
     <p class="muted">

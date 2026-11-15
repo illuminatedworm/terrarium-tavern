@@ -13,7 +13,7 @@
 ## 步骤
 
 1. 完整读取并列出每处插件语法的位置和意图：插值、条件文本、状态栏、初值、变量写入、注入位置，或生成时的副作用。
-2. 先按 MVU 三要素归位：初值进入标准初始化，变量变化进入 `tracker_mvu` 规则，展示进入展示正则。要求模型输出状态栏的段落，无论是否包在条件里，都按 `references/status-display.md` 迁移，不需要转换条件。
+2. 先按 MVU 三要素归位：初值进入标准初始化，变量变化进入 `mvu_rules` 规则，展示进入展示正则。要求模型输出状态栏的段落，无论是否包在条件里，都按 `references/status-display.md` 迁移，不需要转换条件。
 3. 其余内容按下面的映射改写。改写后原位置不再保留插件语法。
 4. 不能可靠改写的保留原文，列为未转换项，说明影响：插件语法会原样进入模型文本或界面。不擅自删除作者逻辑，删除或改设计前先和用户商定。
 5. 报告时逐处写明位置、原用途、改写方式和可靠性（等价、近似、降级、未转换）。有未转换项时报告为部分适配；降级项要逐项说明行为差异。
@@ -22,7 +22,7 @@
 
 | 插件用法 | 改写为 | 可靠性 |
 |---|---|---|
-| `<%- getvar('stat_data.x') %>`、`<%= variables.stat_data.x %>`、`print(…)` 输出变量 | 模型文本用 `{{getvar::stat_data.x}}`；展示用 `{{format_message_variable::stat_data.x}}` 或 `get_message_variable` | 等价（只读）。放在角色字段或常驻条目会使请求前缀随取值变化；Half Agent 默认配方提供完整变量，确认状态块启用且未被条件或脚本编排排除后，通常可删掉重复插值、写清变量含义 |
+| `<%- getvar('stat_data.x') %>`、`<%= variables.stat_data.x %>`、`print(…)` 输出变量 | 模型文本用 `{{getvar::stat_data.x}}`；展示用 `{{format_message_variable::stat_data.x}}` 或 `get_message_variable` | 等价（只读）。放在角色字段或常驻条目会使请求前缀随取值变化；如需基于状态推理，可写清变量含义并使用变量查询工具 |
 | `[InitialVariables]` 标题、`@@initial_variables` 装饰器 | 标题改为 `[InitVar] …`，正文保留 YAML/JSON 对象，删除装饰器行 | 等价。插件初值位于变量根，本项目初值位于 `stat_data` 下；正文顶层若是 `stat_data:` 则去掉这一层，其他位置引用这些变量的路径统一补上 `stat_data.` |
 | `userName`、`charName`、`assistantName` | `{{user}}`、`{{char}}` | 等价 |
 | `<#escape-ejs>` 包裹、`<%%` 转义 | 去掉包裹标签，`<%%` 改为字面 `<%` | 等价 |
@@ -33,11 +33,11 @@
 | `[RENDER:BEFORE/AFTER]`、`@@render_*`、`@@iframe`、`@@message_formatting` 面板 | 按 `references/regex-display.md` 写展示正则和 HTML 面板。`@@if !is_user && !is_system` 对应 `placement: [2]`；`@@iframe 标题` 的折叠效果用 `<details><summary>标题</summary>`；面板里的 `<%- … %>` 改为变量宏，或用面板脚本 `getAllVariables()` 读取 | 等价或近似；面板脚本需要用户开启脚本权限 |
 | 渲染时的显示计算（格式化数值、按变量选择显示文本） | 展示面板脚本读取变量后计算 | 近似；只影响显示，不进入模型文本 |
 | `activateRegex(模式, 字符串)` | `extensions.regex_scripts`：选项 `generate` 对应 `promptOnly`，`message` 与 `html` 对应 `markdownOnly`，`placement` 按作用对象填写 | 等价（仅字符串替换） |
-| 模型输出 `<% setvar/incvar/decvar/delvar/insvar/patchVariables %>`，或要求模型这样输出的指令 | 删除输出要求，把每个变量何时变化、何时保持写进 `tracker_mvu` 规则 | 近似：数值由变量任务判断后提交，不再由代码确定计算；变量只在用户勾选“本轮更新变量”时更新 |
+| 模型输出 `<% setvar/incvar/decvar/delvar/insvar/patchVariables %>`，或要求模型这样输出的指令 | 删除输出要求，把每个变量何时变化、何时保持写进 `mvu_rules` 规则 | 近似：用户勾选“本轮更新变量”时，由剧情模型按规则判断数值并提交补丁 |
 | `[GENERATE:BEFORE]`、`@@generate_before` 中的普通文本 | 启用的常驻条目 | 近似：文本进入固定前缀，不执行插件代码或复现其精确位置 |
-| `[GENERATE:AFTER]`、`@@generate_after`、`@INJECT pos/target … role=` | 若保留为常驻资料，放入启用的常驻条目 | 降级：常驻条目集中在固定前缀，`position`、`depth` 仅用于区内排序，不能复现剧情插入位置。Half Agent 的“按角色卡位置注入”只对非常驻条目按位置生效；改为非常驻会改变触发条件，须说明并确认 |
+| `[GENERATE:AFTER]`、`@@generate_after`、`@INJECT pos/target … role=` | 若保留为常驻资料，放入启用的常驻条目 | 降级：常驻条目集中在固定前缀，`position`、`depth` 仅用于区内排序，不能复现剧情插入位置。改为非常驻条目时，须说明检索与注入时机的变化 |
 | `@INJECT regex=`、`[GENERATE:REGEX:模式]` | 普通条目，把模式改为关键词或关键词正则 | 近似：本项目关键词还要通过准入过滤；`matched_message` 等插值无法保留 |
-| `injectPrompt(键, 文本)` 配合 `getPromptsInjected(键)` | 文本写入 `position: 7` 的条目，`outletName` 填原键 | 近似：仅适用于 Half Agent“按角色卡位置注入”的非常驻条目；常驻条目不会进入出口。出口位置由用户在会话配方中添加 `outlet:键` 块，卡片无法自带；接收端在预设中时提醒用户手动配置 |
+| `injectPrompt(键, 文本)` 与 `getPromptsInjected(键)` | 评估能否改写为独立世界书条目 | 降级。游玩按常驻设定或查找结果提供内容，原出口位置和动态绑定须单独核对 |
 
 ## 低可靠改写（降级）
 
@@ -46,10 +46,10 @@
 | 插件用法 | 改写为 | 行为差异 |
 |---|---|---|
 | `@@if 条件`，或整条正文包在 `<% if (…) { %> … <% } %>` 中 | 正文保留，开头写明适用条件，例如“仅当 stat_data.世界.战斗判断 为 true 时适用以下规则”；条件与剧情用词强相关时，也可改为关键词触发 | 插件在条件为假时不发送这段文本；改写后文本常驻，由模型自行判断是否适用，可能误用，也会多占 tokens |
-| `<% if %>` 多分支选择不同文本（好感阶段、事件阶段） | 合并为一张分级说明，如“好感 0–20：……；21–50：……”，放在 `writer` 条目 | 全部分支同时可见，模型按当前变量选用；分支越多越容易混用 |
-| `getwi(条目)` 按条件加载、`activewi(条目)`、`@@preprocessing` / `[Preprocessing]` 预处理激活 | 被加载的条目改为普通 `writer` 条目（关键词或常驻），并写明适用条件 | 失去按变量确定激活；关键词条目还要经过检索准入 |
+| `<% if %>` 多分支选择不同文本（好感阶段、事件阶段） | 合并为一张分级说明，如“好感 0–20：……；21–50：……”，放在 `narrative` 条目 | 全部分支同时可见，模型按当前变量选用；分支越多越容易混用 |
+| `getwi(条目)` 按条件加载、`activewi(条目)`、`@@preprocessing` / `[Preprocessing]` 预处理激活 | 被加载的条目改为普通 `narrative` 条目（关键词或常驻），并写明适用条件 | 失去按变量确定激活；关键词条目还要经过检索准入 |
 
-Full Agent 的变量不自动进入上下文，模型需要用 `read_state` 读取，条件改写在该模式下更不可靠。卡片以 Full Agent 为目标时要向用户说明。
+变量由模型按需用 `read_state` 读取。改写条件时应说明误用条件的风险。
 
 ## 目前未实现
 
@@ -65,7 +65,7 @@ Full Agent 的变量不自动进入上下文，模型需要用 `read_state` 读�
 - **精确的消息结构操作**：把独立 `role` 消息插到第 N 条消息（`[GENERATE:{idx}:…]`）或按内容匹配的位置。只能用 `depth` 近似。
 - **插件内置的 token 统计变量**（`LAST_SEND_TOKENS` 等）。
 
-遇到这些用法时，先看能否换一种设计：把计算结果改为 Tracker 维护的变量（例如“好感阶段”由变量任务按规则更新，Writer 直接读取），或者把只影响显示的逻辑移到展示面板脚本。这属于重新设计，要和用户确认后再做；不能确认时保留原文，列为未转换项。
+遇到这些用法时，先看能否换一种设计：把计算结果改为剧情模型按变量规则维护的状态（例如“好感阶段”），或者把只影响显示的逻辑移到展示面板脚本。这属于重新设计，要和用户确认后再做；不能确认时保留原文，列为未转换项。
 
 ## 示例
 
@@ -77,7 +77,7 @@ Full Agent 的变量不自动进入上下文，模型需要用 `read_state` 读�
 <%_ } _%>
 ```
 
-这是“要求模型输出状态栏”，按 `references/status-display.md` 迁移：战斗数据改为变量，规则写入 `tracker_mvu`，`<fighting_info>` 面板改为读取变量的展示正则，原条目的输出要求删除。条件随之消失，不属于降级。
+这是“要求模型输出状态栏”，按 `references/status-display.md` 迁移：战斗数据改为变量，规则写入 `mvu_rules`，`<fighting_info>` 面板改为读取变量的展示正则，原条目的输出要求删除。条件随之消失，不属于降级。
 
 原条目：
 
@@ -85,7 +85,7 @@ Full Agent 的变量不自动进入上下文，模型需要用 `read_state` 读�
 <% if (getvar('stat_data.林默.好感') > 50) { %>林默把 {{user}} 当作朋友。<% } else { %>林默仍对 {{user}} 保持戒备。<% } %>
 ```
 
-改写为 `writer` 条目，报告为降级：
+改写为 `narrative` 条目，报告为降级：
 
 ```text
 林默对 {{user}} 的态度取决于 stat_data.林默.好感：大于 50 时把 {{user}} 当作朋友，否则仍保持戒备。

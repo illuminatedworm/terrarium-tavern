@@ -38,9 +38,6 @@ def select_runtime(settings, role, selection, channel):
     if selection:
         profile = ModelSelection.model_validate(selection).profile(getattr(settings, role))
         setattr(settings, role, profile)
-        if role == "full_agent":
-            settings.foreground = profile.model_copy(deep=True)
-            settings.background = profile.model_copy(deep=True)
     result = settings.for_role(role)
     require_channel(result, channel)
     result.channel_origin = channel

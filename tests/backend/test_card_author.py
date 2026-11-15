@@ -11,17 +11,15 @@ from kohakuterrarium.llm.base import NativeToolCall
 from kohakuterrarium.testing.llm import ScriptedLLM
 from PIL import Image, PngImagePlugin
 
-from tavern.application.service import RoleplayRuntime
+from tavern.application.service import StoryService
 from tavern.character.card_author import CardAuthorService
 from tavern.character.card_author_store import EditorStore
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.cards import export_card, parse_card
-from tavern.conversation.context import compile_context
 from tavern.core.models import CardAuthorRequest, SessionCreate
 from tavern.scripting.native_response import ResponseCompletion
 from tavern.storage.store import Conflict, Store
-from tavern.tracker.task import TrackerTask
-from tests.support.tracker_model import PatchModel
+from tavern.story.context import compile_window
 
 
 def fixture():
@@ -46,7 +44,7 @@ def fixture():
                     "content": "变量秘密规则 {{user}}",
                     "constant": True,
                     "enabled": True,
-                    "extensions": {"terrarium": {"audience": "tracker_mvu"}},
+                    "extensions": {"terrarium": {"purpose": "mvu_rules"}},
                 },
                 {"id": "init", "comment": "[InitVar] 默认值", "content": "hp: 5", "enabled": True},
             ]
@@ -204,7 +202,6 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
             "read_skill",
             "create_draft",
             "set_portrait",
-            "configure_card",
             "revert_draft",
             "test_draft",
             "write_handoff",
@@ -244,42 +241,32 @@ async def test_mvu_routing_and_opening_initialization(tmp_path):
     validate_document(doc)
     card = store.import_card(json.dumps(doc).encode())
     session = store.new_session(SessionCreate(card_id=card["id"], greeting=1))
-    service = RoleplayRuntime(store)
+    service = StoryService(store)
     try:
-        session = await service.initialize_session(session["id"])
+        session = await service.story.initialize_session(session["id"])
         assert session["snapshot"]["state"]["stat_data"]["hp"] == 10
         assert session["messages"][0]["raw"] == "开场二\n<initvar>hp: 10</initvar>"
-        reopened = await service.initialize_session(session["id"])
+        reopened = await service.story.initialize_session(session["id"])
         assert reopened["snapshot"]["state"]["stat_data"]["hp"] == 10
         snapshot = copy.deepcopy(session["snapshot"])
         snapshot["lore_injections"] = [
             {"id": "rules", "anchor_id": session["head"], "content": "变量秘密规则", "source_ids": []}
         ]
-        compiled = compile_context(
-            doc, session, session["messages"], snapshot, "继续", store.settings(), "test"
-        )
+        compiled = compile_window(doc, session, session["messages"], snapshot, "继续", store.settings(), [])
         wire = json.dumps(compiled["messages"], ensure_ascii=False)
         assert "变量秘密规则" not in wire
         assert "普通世界设定" in wire
-        provider = PatchModel([])
-        work = TrackerTask(
-            store,
-            "test",
-            store.settings(),
-            {**session, "persona": "测试玩家"},
+        variable_context = compile_window(
             doc,
-            [],
+            {**session, "persona": "测试玩家"},
+            session["messages"],
             snapshot,
-            phase="post",
-            variables=True,
-            user_input="继续",
-            narrative="剧情",
-            provider=provider,
+            "继续",
+            store.settings(),
+            [],
+            require_state_patch=True,
         )
-        await work.run()
-        request = json.dumps(provider.last_messages, ensure_ascii=False)
-        assert "变量秘密规则 测试玩家" in request
-        assert "普通世界设定" not in request
+        assert "变量秘密规则 测试玩家" in json.dumps(variable_context["messages"], ensure_ascii=False)
     finally:
         await service.close()
 

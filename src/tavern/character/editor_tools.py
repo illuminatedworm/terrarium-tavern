@@ -197,15 +197,6 @@ class Create(Arguments):
     )
 
 
-class Configure(Card):
-    target_mode: Literal["half_agent", "full_agent"] = Field(
-        description="Optional user-selected compatibility target, needed only when specific script capabilities affect the design. Ordinary authoring and MVU rules work in both modes without this selection."
-    )
-    confirmation_ref: str = Field(
-        description="H reference of the user's runtime choice; original text is retained with the card."
-    )
-
-
 class Portrait(Card):
     file_ref: str | None = Field(
         pattern=r"^F[1-9]\d*$",
@@ -243,8 +234,7 @@ class Skill(Arguments):
         "card-guide.md",
         "card-format.md",
         "runtime-guide.md",
-        "half-agent.md",
-        "full-agent.md",
+        "story.md",
         "SKILL.md",
         "references/workflow.md",
         "references/status-display.md",
@@ -252,7 +242,7 @@ class Skill(Arguments):
         "references/prompt-template.md",
     ] = Field(
         default="card-guide.md",
-        description="Built-in documentation resource. card-guide.md: from-scratch creation steps; card-format.md: card fields, injection and worldbook entry format; runtime-guide.md: variables, initialization, regex and scripts; half-agent.md/full-agent.md: how each play mode consumes a card; SKILL.md: adaptation procedure, followed by references/workflow.md (initialization and opening checks), references/status-display.md (status migration), references/regex-display.md (executable regex/HTML/MVU display recipe and test_draft assertions) and references/prompt-template.md (rewriting ST-Prompt-Template EJS syntax, with reliability levels and unsupported features).",
+        description="Built-in documentation resource. card-guide.md: from-scratch creation steps; card-format.md: card fields, injection and worldbook entry format; runtime-guide.md: variables, initialization, regex and scripts; story.md: how play uses cards; SKILL.md: adaptation procedure, followed by references/workflow.md (initialization and opening checks), references/status-display.md (status migration), references/regex-display.md (executable regex/HTML/MVU display recipe and test_draft assertions) and references/prompt-template.md (rewriting ST-Prompt-Template EJS syntax, with reliability levels and unsupported features).",
     )
 
 
@@ -358,13 +348,9 @@ SPECS = {
         Portrait,
         "Set or remove a card portrait from an image the user attached in this conversation, only when the user wants that image as the card's avatar/cover. Runtime stores it as a standard PNG card image; card text is unchanged. CHARX cards are not supported.",
     ),
-    "configure_card": (
-        Configure,
-        "Record an optional user-confirmed compatibility target when requested or when specific script capabilities affect the design. Not required for ordinary authoring or MVU rules. Does not migrate content by itself.",
-    ),
     "patch_draft": (
         Patch,
-        "Apply a batch to the specified current draft; a reference is promoted without changing its C handle. Read affected values first. Paths start at the document root (/data/... for wrapped cards). Write display regex to extensions.regex_scripts, with findRegex, replaceString, placement:[2], markdownOnly:true, promptOnly:false; read references/regex-display.md for the full contract. New lore entries omit IDs; hidden fields are preserved by Runtime. A failed batch changes nothing.",
+        "Apply a batch to the specified current draft; a reference is promoted without changing its C handle. Read affected values first. Paths start at the document root (/data/... for wrapped cards). Write display regex to extensions.regex_scripts, with findRegex, replaceString, placement:[2], markdownOnly:true, promptOnly:false; read references/regex-display.md for the full contract. For worldbook entry purpose, extensions.terrarium.purpose accepts narrative or mvu_rules. New lore entries omit IDs; hidden fields are preserved by Runtime. A failed batch changes nothing.",
     ),
     "revert_draft": (
         Revert,
@@ -384,7 +370,7 @@ SPECS = {
     ),
     "read_skill": (
         Skill,
-        "Read complete bundled card-authoring or runtime adaptation documentation. Only listed resources are accessible.",
+        "Read one complete bundled card-authoring guide or adaptation reference by its listed resource name.",
     ),
     "write_handoff": (
         Handoff,
@@ -412,7 +398,6 @@ SPECS = {
 CARD_ONLY = {
     "set_opening": "开场",
     "set_portrait": "头像",
-    "configure_card": "目标模式",
     "test_draft": "开场，无法做本地开场验证",
 }
 
@@ -499,7 +484,6 @@ class EditorTools(PersonaTools):
                     {"type": "worldbook"}
                     if is_worldbook(item)
                     else {
-                        "target_mode": item.get("target_mode"),
                         "portrait": item.get("source", {}).get("container") == "png",
                         "format": document.get("spec", "legacy"),
                     }
@@ -665,7 +649,6 @@ class EditorTools(PersonaTools):
             "base_revision": None,
             "base_document": blank_card(args.name),
             "document": document,
-            "target_mode": source.get("target_mode") if source else None,
             "brief": (f"方案原文（{proposal['ref']}）：\n{proposal['content']}\n\n" if proposal else "")
             + f"用户要求/确认原文（{confirmation['ref']}）：\n{confirmation['content']}",
         }
@@ -692,16 +675,6 @@ class EditorTools(PersonaTools):
             "draft_change", {"card_ref": args.card_ref, "reason": "设置头像" if digest else "移除头像"}
         )
         return {"card_ref": args.card_ref, "portrait": bool(digest), "saved_to_library": False}
-
-    async def configure_card(self, args):
-        message = self.source_message(args.confirmation_ref, "user")
-        item = self.card(args.card_ref)
-        item["target_mode"] = args.target_mode
-        item["brief"] = (
-            item.get("brief", "")
-            + f"\n目标模式 {args.target_mode} 的用户依据（{message['ref']}）：\n{message['content']}"
-        )
-        return {"card_ref": args.card_ref, "target_mode": args.target_mode}
 
     async def revert_draft(self, args):
         current = self.card(args.card_ref)
@@ -821,14 +794,15 @@ class EditorTools(PersonaTools):
 
     async def read_skill(self, args):
         root = Path(__file__).parents[1] / "skills"
+        resource = args.resource
         folder = (
             "adapt-card-to-tavern"
-            if args.resource == "SKILL.md" or args.resource.startswith("references/")
+            if resource == "SKILL.md" or resource.startswith("references/")
             else "card-authoring"
         )
         return {
-            "resource": args.resource,
-            "text": (root / folder / args.resource).read_text(encoding="utf-8"),
+            "resource": resource,
+            "text": (root / folder / resource).read_text(encoding="utf-8"),
         }
 
     async def write_handoff(self, args):

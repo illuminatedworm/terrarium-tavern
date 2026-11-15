@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from kohakuterrarium.testing.llm import ScriptedLLM
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import Conflict, Store, dump
+from tests.backend.test_story import Model
 
 
 def test_deleted_card_disappears_from_shelf_but_existing_progress_survives(tmp_path):
@@ -113,7 +113,7 @@ async def test_story_can_preview_and_continue_after_card_is_physically_deleted(t
     store, service = app.state.store, app.state.service
     card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
-    service.provider_factory = lambda: ScriptedLLM(["故事继续。"])
+    service.story.provider_factory = lambda: Model("故事继续。")
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             assert (await client.delete(f"/api/cards/{card['id']}")).status_code == 200
@@ -133,7 +133,7 @@ async def test_story_can_preview_and_continue_after_card_is_physically_deleted(t
             )
             assert response.status_code == 202
             tid = response.json()["id"]
-            await service.tasks[tid]
+            await service.story.tasks[tid]
             assert store.turn(tid)["status"] == "committed", store.turn(tid)["error"]
             assert store.session(session["id"])["messages"][-1]["raw"] == "故事继续。"
     finally:

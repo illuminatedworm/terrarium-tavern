@@ -4,13 +4,12 @@ import copy
 
 import pytest
 
-from tavern.application.service import RoleplayRuntime
+from tavern.application.service import StoryService
 from tavern.character.card_author import CardAuthorService
 from tavern.character.card_workflow import validation_report
-from tavern.conversation.context import compile_context
 from tavern.core.models import SessionCreate
-from tavern.full_agent.context import compile_window
 from tavern.storage.store import Store, dump
+from tavern.story.context import compile_window
 from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_card_authoring import run
 
@@ -44,12 +43,12 @@ def fixture():
     }
 
 
-async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_contexts(tmp_path):
+async def test_inline_overrides_survive_editor_and_are_hidden_from_story_context(tmp_path):
     store = Store(tmp_path)
     original = fixture()
     card = store.import_card(dump(original).encode())
     editor = CardAuthorService(store)
-    service = RoleplayRuntime(store)
+    service = StoryService(store)
     wid = editor.edits.create(card["id"])["id"]
     try:
         provider = ToolLLM(
@@ -84,23 +83,18 @@ async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_co
         ]
         for index, initial in enumerate(expected):
             session = store.new_session(SessionCreate(card_id=imported["id"], greeting=index))
-            session = await service.initialize_session(session["id"])
+            session = await service.story.initialize_session(session["id"])
             assert session["snapshot"]["state"]["stat_data"] == initial
             message = session["messages"][0]
             assert message["raw"] == openings[index]
             assert message["model"].strip() == openings[index].split("\n")[0]
             assert message["display"] == message["model"]
-            for compiled in (
-                compile_context(
-                    doc, session, session["messages"], session["snapshot"], "继续", store.settings(), "test"
-                ),
-                compile_window(
-                    doc, session, session["messages"], session["snapshot"], "继续", store.settings(), []
-                ),
-            ):
-                wire = dump(compiled["messages"])
-                assert "<initvar>" not in wire.lower() and "<updatevariable>" not in wire.lower()
-                assert "hp: 100" not in wire and message["model"].strip() in wire
+            compiled = compile_window(
+                doc, session, session["messages"], session["snapshot"], "继续", store.settings(), []
+            )
+            wire = dump(compiled["messages"])
+            assert "<initvar>" not in wire.lower() and "<updatevariable>" not in wire.lower()
+            assert "hp: 100" not in wire and message["model"].strip() in wire
         assert store.card(card["id"])["document"] == original
     finally:
         await editor.close()
@@ -126,8 +120,7 @@ def test_ambiguous_sources_are_reported_without_deleting_data(problem, warning):
     assert doc == original
 
 
-@pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
-async def test_new_story_uses_saved_worldbook_money_without_resetting_existing_story(tmp_path, mode):
+async def test_new_story_uses_saved_worldbook_money_without_resetting_existing_story(tmp_path):
     store = Store(tmp_path)
     doc = {
         "name": "初值更新",
@@ -136,15 +129,15 @@ async def test_new_story_uses_saved_worldbook_money_without_resetting_existing_s
         "character_book": {"entries": [{"comment": "[InitVar]", "enabled": False, "content": "Money: 0"}]},
     }
     card = store.import_card(dump(doc).encode())
-    service = RoleplayRuntime(store)
+    service = StoryService(store)
     try:
-        previous = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
-        previous = await service.initialize_session(previous["id"])
+        previous = store.new_session(SessionCreate(card_id=card["id"]))
+        previous = await service.story.initialize_session(previous["id"])
         assert previous["snapshot"]["state"]["stat_data"]["Money"] == 0
         doc["character_book"]["entries"][0]["content"] = "Money: 500000"
         store.edit_card(card["id"], doc, card["revision"])
-        current = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
-        current = await service.initialize_session(current["id"])
+        current = store.new_session(SessionCreate(card_id=card["id"]))
+        current = await service.story.initialize_session(current["id"])
         assert current["snapshot"]["state"]["stat_data"]["Money"] == 500000
         assert store.session(previous["id"])["snapshot"]["state"]["stat_data"]["Money"] == 0
         assert current["card_data"]["document"]["extensions"] == {}

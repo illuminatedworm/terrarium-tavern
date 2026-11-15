@@ -130,7 +130,7 @@ watch(opening, () => {
           ><small>{{
             entry.stateLabel === '仅初始化'
               ? '仅初始化'
-              : `${entry.stateLabel ? `${entry.stateLabel} · ` : ''}${entry.purpose}${entry.audience === 'writer' ? ` · ${entry.trigger}` : ''}`
+              : `${entry.stateLabel ? `${entry.stateLabel} · ` : ''}${entry.purposeLabel}${entry.purpose === 'narrative' ? ` · ${entry.trigger}` : ''}`
           }}</small>
         </summary>
         <div class="draft-lore-content">

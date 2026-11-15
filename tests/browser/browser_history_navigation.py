@@ -13,14 +13,13 @@ from playwright.async_api import async_playwright, expect
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
 from tavern.desktop_browser import system_browser
-from tavern.full_agent.state import new_state
-from tavern.memories.memory import fingerprint
 from tavern.scripting.network_guard import NETWORK_GUARD
 from tavern.storage.store import dump, uid
+from tavern.story.state import new_state
 
 
-def seed(store, card, mode, count, interactive=False):
-    session = store.new_session(SessionCreate(card_id=card, agent_mode=mode))
+def seed(store, card, count, interactive=False):
+    session = store.new_session(SessionCreate(card_id=card))
     parent = session["head"]
     messages = list(session["messages"])
     inserts = []
@@ -39,17 +38,15 @@ def seed(store, card, mode, count, interactive=False):
             )
             parent = message_id
     covered = max(0, len(messages) - 20)
-    snapshot["context_window"] = {"covered_count": covered, "fingerprint": fingerprint(messages[:covered])}
-    if mode == "full_agent":
-        snapshot["full_agent"] = new_state()
-        snapshot["full_agent"]["window"]["start"] = covered
+    snapshot["story"] = new_state()
+    snapshot["story"]["window"]["start"] = covered
     with store.connection() as database:
         database.executemany(
             "INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created) VALUES (?,?,?,?,?,?,?,?,?)",
             inserts,
         )
         database.execute(
-            "UPDATE sessions SET head=?,title=? WHERE id=?", (parent, f"导航 {mode} {count}", session["id"])
+            "UPDATE sessions SET head=?,title=? WHERE id=?", (parent, f"导航 {count}", session["id"])
         )
         database.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), parent))
     return session["id"], messages, frame_id
@@ -65,11 +62,7 @@ async def main():
         card = store.import_card(Path("samples/雾港来信.json").read_bytes())
         with store.connection() as database:
             database.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
-        cases = [
-            (mode, size, *seed(store, card["id"], mode, size, size == 5000))
-            for mode in ("half_agent", "full_agent")
-            for size in (8, 5000)
-        ]
+        cases = [(size, *seed(store, card["id"], size, size == 5000)) for size in (8, 5000)]
         sock = socket.socket()
         sock.bind(("127.0.0.1", 0))
         address = f"http://127.0.0.1:{sock.getsockname()[1]}"
@@ -87,7 +80,7 @@ async def main():
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 await page.goto(address)
-                for mode, size, sid, messages, frame_id in cases:
+                for size, sid, messages, frame_id in cases:
                     await page.evaluate('(sid) => localStorage.setItem("tavern-session", sid)', sid)
                     started = time.perf_counter()
                     await page.reload()
@@ -165,7 +158,7 @@ async def main():
                     else:
                         jump_ms = None
                         assert mounted == len(messages)
-                    await page.screenshot(path=str(output / f"{mode}-{size}.png"))
+                    await page.screenshot(path=str(output / f"{size}.png"))
                     await page.get_by_role("button", name="折叠左侧栏", exact=True).click()
                     await page.get_by_role("button", name="折叠右侧栏", exact=True).click()
                     await page.set_viewport_size({"width": 390, "height": 844})
@@ -174,10 +167,10 @@ async def main():
                     await rail.focus()
                     await rail.press("Home")
                     await expect(page.locator(f'[data-message-id="{messages[0]["id"]}"]')).to_be_visible()
-                    await page.screenshot(path=str(output / f"{mode}-{size}-mobile.png"))
+                    await page.screenshot(path=str(output / f"{size}-mobile.png"))
                     await page.get_by_role("button", name="展开右侧栏", exact=True).click()
                     await expect(panel).to_be_visible()
-                    await page.screenshot(path=str(output / f"{mode}-{size}-mobile-cache.png"))
+                    await page.screenshot(path=str(output / f"{size}-mobile-cache.png"))
                     await page.get_by_role("button", name="折叠右侧栏", exact=True).click()
                     await page.set_viewport_size({"width": 1440, "height": 900})
                     await page.get_by_role("button", name="展开左侧栏", exact=True).click()
@@ -185,19 +178,15 @@ async def main():
                         for control_mode in ("cloud", "runtime"):
                             await page.get_by_role("button", name="设置", exact=True).click()
                             dialog = page.get_by_role("dialog", name="设置", exact=True)
-                            await dialog.get_by_role(
-                                "button", name=mode.replace("_", " ") + " 模型与生成", exact=True
-                            ).click()
-                            profile = dialog.get_by_role(
-                                "region", name="模型连接" if mode == "full_agent" else "正文生成", exact=True
-                            )
+                            await dialog.get_by_role("button", name="游玩 模型与生成", exact=True).click()
+                            profile = dialog.get_by_role("region", name="模型连接", exact=True)
                             await profile.get_by_text(
                                 "更多参数：采样细项、分词器与提示缓存", exact=True
                             ).click()
                             async with page.expect_response(
                                 lambda response: (
                                     response.request.method == "PATCH"
-                                    and response.url.endswith("/settings/" + mode)
+                                    and response.url.endswith("/settings/story")
                                 )
                             ):
                                 await profile.get_by_label("缓存控制", exact=True).select_option(control_mode)
@@ -216,7 +205,6 @@ async def main():
                                 await expect(panel.get_by_label("倒数位置", exact=True)).to_have_text("2")
                     report["cases"].append(
                         {
-                            "mode": mode,
                             "messages": len(messages),
                             "load_ms": load_ms,
                             "six_jumps_ms_including_waits": jump_ms,

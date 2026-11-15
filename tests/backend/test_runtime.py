@@ -8,11 +8,9 @@ from playwright.async_api import Error as PlaywrightError
 
 from tavern.character.card_workflow import validation_report
 from tavern.core.models import SessionCreate
-from tavern.full_agent.context import compile_window
 from tavern.scripting.runtime import ScriptRuntime
 from tavern.storage.store import Store, dump
-from tavern.tracker.task import TrackerTask
-from tests.support.tracker_model import TrackerModel
+from tavern.story.context import compile_window
 
 
 @pytest.mark.parametrize(
@@ -152,7 +150,7 @@ async def test_desktop_window_closure_shuts_down_service_and_releases_window(mon
     assert released == ["service", "window"]
 
 
-async def test_full_agent_patch_failure_restores_server_and_message_frame_mirrors():
+async def test_story_patch_failure_restores_server_and_message_frame_mirrors():
     runtime = ScriptRuntime()
     document = {
         "name": "rollback",
@@ -282,7 +280,7 @@ async def test_selected_opening_initializes_state_and_preserves_it_on_reopen(mon
 
 async def test_disabled_initvar_entries_initialize_without_enabling_other_lore(tmp_path):
     runtime = ScriptRuntime()
-    tracker_id = "8ebd384f-9379-4ec9-8147-b32808d06bdb"
+    rule_id = "8ebd384f-9379-4ec9-8147-b32808d06bdb"
     document = {
         "name": "fixture",
         "first_mes": "开门。",
@@ -293,7 +291,7 @@ async def test_disabled_initvar_entries_initialize_without_enabling_other_lore(t
                     "comment": "[InitVar]初始化",
                     "enabled": False,
                     "content": 'hp: 100\nname: "{{user}}"\ncharacter: "{{char}}"',
-                    "terrarium": {"audience": "tracker_mvu"},
+                    "extensions": {"terrarium": {"purpose": "mvu_rules"}},
                 },
                 {
                     "id": "legacy-off",
@@ -303,17 +301,17 @@ async def test_disabled_initvar_entries_initialize_without_enabling_other_lore(t
                 },
                 {"id": "story", "comment": "普通设定", "enabled": False, "content": "unexpected: true"},
                 {
-                    "id": tracker_id,
+                    "id": rule_id,
                     "comment": "[initvar]",
                     "enabled": False,
                     "content": 'tracked: [8, "仅在 {{user}} 实际收到款项后增加"]',
-                    "extensions": {"terrarium": {"audience": "tracker_mvu"}},
+                    "extensions": {"terrarium": {"purpose": "mvu_rules"}},
                 },
                 {
                     "id": "disabled-rule",
                     "enabled": False,
                     "content": "DISABLED_RULE",
-                    "extensions": {"terrarium": {"audience": "tracker_mvu"}},
+                    "extensions": {"terrarium": {"purpose": "mvu_rules"}},
                 },
             ]
         },
@@ -341,8 +339,8 @@ async def test_disabled_initvar_entries_initialize_without_enabling_other_lore(t
             "items": [],
             "tracked": [8, "仅在 测试玩家 实际收到款项后增加"],
         }
-        assert set(state["initialized_lorebooks"]) == {"card:off", "card:legacy-off", f"card:{tracker_id}"}
-        # Both diagnostics must recognize disabled Tracker-marked initialization
+        assert set(state["initialized_lorebooks"]) == {"card:off", "card:legacy-off", f"card:{rule_id}"}
+        # Both diagnostics must recognize disabled variable-rule initialization
         # and rules, even when a display requires the complete variable contract.
         display = {**document, "first_mes": "<div>TIME: 08:20 MONEY: 12</div>"}
         assert not any(
@@ -350,34 +348,17 @@ async def test_disabled_initvar_entries_initialize_without_enabling_other_lore(t
         )
         snapshot = {**story["snapshot"], "state": state}
         story["persona"] = "测试玩家"
-        model = TrackerModel(("patch_state", {"operations": [], "comment": "无变化"}), "完成")
-        work = TrackerTask(
-            store,
-            "fixture",
-            settings,
-            story,
-            document,
-            story["messages"],
-            snapshot,
-            phase="post",
-            variables=True,
-            provider=model,
-        )
-        try:
-            await work.run()
-        finally:
-            await work.close()
         ordinary = compile_window(document, story, story["messages"], snapshot, "继续", settings, [])
         assert not any(m["content"].startswith("<mvu_rules>") for m in ordinary["messages"])
         full = compile_window(
             document, story, story["messages"], snapshot, "继续", settings, [], require_state_patch=True
         )
-        for messages in (model.requests[0]["messages"], full["messages"]):
-            [rules] = [m["content"] for m in messages if m["content"].startswith("<mvu_rules>")]
-            assert 'tracked: [8, "仅在 测试玩家 实际收到款项后增加"]' in rules
-            assert 'hp: 100\nname: "测试玩家"\ncharacter: "fixture"' in rules
-            assert all(text not in rules for text in ("DISABLED_RULE", "unexpected", "mp: 50"))
-            assert tracker_id not in dump(messages)
+        messages = full["messages"]
+        [rules] = [m["content"] for m in messages if m["content"].startswith("<mvu_rules>")]
+        assert 'tracked: [8, "仅在 测试玩家 实际收到款项后增加"]' in rules
+        assert 'hp: 100\nname: "测试玩家"\ncharacter: "fixture"' in rules
+        assert all(text not in rules for text in ("DISABLED_RULE", "unexpected", "mp: 50"))
+        assert rule_id not in dump(messages)
         assert document == original
         assert store.card(card["id"])["document"] == original
     finally:

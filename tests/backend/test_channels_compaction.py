@@ -7,13 +7,14 @@ import httpx
 import pytest
 
 from tavern.application.api import create_app
-from tavern.application.context_operations import ContextOperationRequest
+from tavern.application.context_operations import ContextOperationRequest, ContextOperations
 from tavern.conversation.compaction import checkpoint_items, replay_groups
 from tavern.core.settings import migrate_settings
-from tavern.storage.store import Conflict
+from tavern.storage.legacy_story import OLD_STORY_KEY
+from tavern.storage.store import Conflict, Store
 from tests.backend.chatgpt_fixtures import completed, sse
 from tests.backend.test_chatgpt_integration import connected_store, story
-from tests.backend.test_full_agent import Model, current_text, handoff, prepared, runtime, turn
+from tests.backend.test_story import Model, current_text, handoff, prepared, runtime, turn
 
 
 def compact_response(text="OK", number=1):
@@ -37,7 +38,7 @@ def reported_pressure(monkeypatch, tokens=1000000):
 
     def usage(meter, current, lane):
         value = original_usage(meter, current, lane)
-        if lane in ("foreground", "full_agent") and meter.owner not in started:
+        if lane == "story" and meter.owner not in started:
             return {**value, "tokens": tokens, "source": "provider", "coverage": "exact", "pending": False}
         return value
 
@@ -54,13 +55,13 @@ def long_story(store):
     from tavern.core.models import SessionCreate
 
     config = store.settings_document()
-    config.full_agent.official_model.context_tokens = 10000
-    config.full_agent.official_model.reply_tokens = 1024
+    config.story.official_model.context_tokens = 10000
+    config.story.official_model.reply_tokens = 1024
     store.save_settings(config)
     card = store.import_card(
         json.dumps({"name": "Long fixture", "first_mes": "完整开场原文。" * 6000}).encode()
     )
-    return store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+    return store.new_session(SessionCreate(card_id=card["id"]))
 
 
 async def operate(service, session, kind):
@@ -82,15 +83,14 @@ def test_old_official_settings_move_to_separate_profiles_without_copying_connect
     from tavern.core.settings import SettingsDocument
 
     raw = SettingsDocument().model_dump()
-    for scope in ("full_agent", "half_agent"):
-        raw[scope].pop("default_channel")
+    raw["story"].pop("default_channel")
     raw["shared"]["providers"][0]["auth_mode"] = "chatgpt_subscription"
-    raw["full_agent"]["model"]["model"] = "official-example"
+    raw["story"]["model"]["model"] = "official-example"
     migrated = migrate_settings(raw)
-    assert migrated.full_agent.official_model.model == "official-example"
-    assert migrated.full_agent.model.model == "" and migrated.full_agent.model.provider_id == ""
-    assert migrated.runtime("full_agent", "chatgpt").model == "official-example"
-    assert migrated.runtime("full_agent", "standard").model == ""
+    assert migrated.story.official_model.model == "official-example"
+    assert migrated.story.model.model == "" and migrated.story.model.provider_id == ""
+    assert migrated.runtime("chatgpt").model == "official-example"
+    assert migrated.runtime("standard").model == ""
 
 
 def test_unconfigured_independent_editor_does_not_break_story_settings():
@@ -102,7 +102,7 @@ def test_unconfigured_independent_editor_does_not_break_story_settings():
     config.shared.card_author = ModelProfile(provider_id="", model="")
     config = SettingsDocument.model_validate(config.model_dump())
     runtime_settings = config.runtime()
-    assert runtime_settings.for_role("foreground").channel_origin == "standard"
+    assert runtime_settings.for_role("story").channel_origin == "standard"
     editor = runtime_settings.for_role("card_author")
     assert editor.model == "" and editor.channel_origin is None
     with pytest.raises(ValueError, match="模型名称"):
@@ -155,7 +155,7 @@ async def test_channel_boundary_is_enforced_in_settings_creation_and_origin_assi
             created = (
                 await client.post(
                     "/api/sessions",
-                    json={"card_id": card["id"], "agent_mode": "full_agent", "channel_origin": "standard"},
+                    json={"card_id": card["id"], "channel_origin": "standard"},
                 )
             ).json()
             assert created["channel_origin"] == "standard"
@@ -183,10 +183,10 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
 ):
     store, _, _ = connected_store(tmp_path)
     config = store.settings_document()
-    config.full_agent.official_model.context_tokens = 10000
-    config.full_agent.official_model.reply_tokens = 1024
+    config.story.official_model.context_tokens = 10000
+    config.story.official_model.reply_tokens = 1024
     store.save_settings(config)
-    _, session = story(store, "full_agent")
+    _, session = story(store)
     service = runtime(store)
     initial = Model(
         ("write_note", {"key": "plan", "content": "Keep this note", "kind": "plan"}),
@@ -196,7 +196,7 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
     try:
         saved, session = await turn(service, session, initial)
         assert saved["status"] == "committed", saved["error"]
-        before_notes = copy.deepcopy(session["snapshot"]["full_agent"]["notes"])
+        before_notes = copy.deepcopy(session["snapshot"]["story"]["notes"])
         before_history = copy.deepcopy(session["messages"])
         wire = []
         story_requests = 0
@@ -238,7 +238,7 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
         reset_observation = reported_pressure(monkeypatch)
         result, session = await operate(service, session, "enable_compact")
         assert result["compacted"] and session["context_strategy"] == "openai_compact"
-        assert session["snapshot"]["full_agent"]["notes"] == before_notes
+        assert session["snapshot"]["story"]["notes"] == before_notes
         assert [m["raw"] for m in session["messages"]] == [m["raw"] for m in before_history]
         first = wire[0]
         assert first["context_management"] == [{"type": "compaction", "compact_threshold": 1024}]
@@ -249,17 +249,17 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
         )
         assert any(i.get("type") == "function_call_output" for i in first["input"])
         assert "new_context" not in {t["name"] for n in first["tools"] for t in n["tools"]}
-        service.full.provider_factory = None
+        service.story.provider_factory = None
         saved, session = await turn(service, session, None)
         assert saved["status"] == "committed", saved["error"]
         assert any(i.get("type") == "compaction" for i in wire[-1]["input"])
         assert "context_management" not in wire[-1]
-        assert session["snapshot"]["full_agent"]["notes"] == before_notes
+        assert session["snapshot"]["story"]["notes"] == before_notes
         reset_observation()
         _, session = await operate(service, session, "enable_local")
         assert session["context_strategy"] == "new_context"
-        assert current_text(session["snapshot"]["full_agent"]).startswith("NEW HANDOFF")
-        assert session["snapshot"]["full_agent"]["notes"] == before_notes
+        assert current_text(session["snapshot"]["story"]).startswith("NEW HANDOFF")
+        assert session["snapshot"]["story"]["notes"] == before_notes
         export = wire[-1]
         assert not any(item.get("type") == "compaction" for item in export["input"])
         assert "A committed story." in json.dumps(export["input"])
@@ -306,6 +306,37 @@ async def test_cancelled_replay_is_resumable_and_blocks_story_requests(tmp_path)
         await service.close()
 
 
+async def test_upgrade_cannot_resume_context_operations_without_matching_settings(tmp_path):
+    store, _, _ = connected_store(tmp_path)
+    _, session = story(store)
+    sid = session["id"]
+    original = {"head": session["head"], "source_settings": "legacy-settings-digest"}
+    erased = {"head": session["head"]}
+    with store.connection() as db:
+        db.execute(f"ALTER TABLE sessions ADD COLUMN agent_mode TEXT NOT NULL DEFAULT '{OLD_STORY_KEY}'")
+        db.execute("UPDATE sessions SET context_strategy='openai_compact' WHERE id=?", (sid,))
+        db.execute("UPDATE meta SET value='25' WHERE key='schema_version'")
+        db.execute("UPDATE meta SET value=json_set(value,'$.version',20) WHERE key='settings'")
+        for oid, payload in (("original", original), ("erased", erased)):
+            db.execute(
+                "INSERT INTO context_operations VALUES (?,?,?,'compact','interrupted',0,?,NULL,0)",
+                (oid, sid, oid, json.dumps(payload)),
+            )
+    upgraded = Store(tmp_path)
+    operations = ContextOperations(upgraded)
+    model_requests = []
+    operations.provider_factory = model_requests.append
+    for oid, payload in (("original", original), ("erased", erased)):
+        operations.resume(oid)
+        await operations.tasks[oid]
+        result = operations.get(oid, private=True)
+        assert result["status"] == "error" and "请重新发起整理" in result["error"]
+        assert result["payload"] == payload
+    assert not model_requests
+    current = upgraded.session(sid)
+    assert current["revision"] == session["revision"] and current["snapshot"] == session["snapshot"]
+
+
 async def test_plain_acknowledgement_cannot_be_committed_as_handoff(tmp_path, monkeypatch):
     store, _, _ = connected_store(tmp_path)
     session = long_story(store)
@@ -343,10 +374,10 @@ async def test_plain_acknowledgement_cannot_be_committed_as_handoff(tmp_path, mo
 
 async def test_local_handoff_repairs_total_limit_once_without_applying_failed_edits():
     from tavern.core.models import Settings
-    from tavern.full_agent.compaction import make_handoff
-    from tavern.full_agent.handoff import HandoffError, HandoffWrite, apply_write, check_limits, render_text
+    from tavern.story.compaction import make_handoff
+    from tavern.story.handoff import HandoffError, HandoffWrite, apply_write, check_limits, render_text
 
-    settings = Settings(full_agent_config={"chapters_total_tokens": 4096})
+    settings = Settings(story_config={"chapters_total_tokens": 4096})
     history = [{"id": f"m{i}", "role": ("assistant", "user")[i % 2], "raw": f"原文{i}"} for i in range(20)]
     ledger = {"chapters": [], "current": [], "revision": 0}
     point = {"text": "a " * 410}
@@ -361,7 +392,7 @@ async def test_local_handoff_repairs_total_limit_once_without_applying_failed_ed
             ),
             history,
         )
-    check_limits(ledger, history, settings.full_agent_config, settings)
+    check_limits(ledger, history, settings.story_config, settings)
     before = copy.deepcopy(ledger)
     add = {"op": "add", "title": "下一章", "points": [point]}
     bad = {"chapters": [add], "current": [{"text": "当前场景"}]}
@@ -381,7 +412,7 @@ async def test_local_handoff_repairs_total_limit_once_without_applying_failed_ed
     assert "章节总量" in model.requests[1]["messages"][-1]["content"]
     assert "提案未应用" in model.requests[1]["messages"][-1]["content"]
     assert result["chapters"][-1]["end"] == history[-1]["id"] and ledger == before
-    check_limits(result, history, settings.full_agent_config, settings)
+    check_limits(result, history, settings.story_config, settings)
     stubborn = Model(*[("prepare_handoff", bad)] * 3)
     with pytest.raises(HandoffError, match="章节总量"):
         await make_handoff(compiled, settings, stubborn, ledger, history, 20)
@@ -518,7 +549,7 @@ async def test_subscription_stream_compaction_item_survives_empty_terminal_outpu
     from tavern.core.provider import make_provider
 
     store, _, _ = connected_store(tmp_path)
-    settings = store.settings("full_agent", "chatgpt")
+    settings = store.settings("chatgpt")
     settings.context_strategy = "openai_compact"
     compaction = {"type": "compaction", "id": "cmp_stream", "encrypted_content": "opaque-stream"}
     captured = []
@@ -559,10 +590,10 @@ async def test_subscription_stream_compaction_item_survives_empty_terminal_outpu
 
 @pytest.mark.parametrize("played", [False, True])
 async def test_short_mode_switches_use_complete_sources_without_maintenance_requests(tmp_path, played):
-    from tavern.full_agent.context import compile_window, load_trace
+    from tavern.story.context import compile_window, load_trace
 
     store, _, _ = connected_store(tmp_path)
-    _, session = story(store, "full_agent")
+    _, session = story(store)
     service = runtime(store)
 
     def unexpected_provider(_):
@@ -582,7 +613,7 @@ async def test_short_mode_switches_use_complete_sources_without_maintenance_requ
             )
             assert saved["status"] == "committed"
         originals = [m["raw"] for m in session["messages"]]
-        notes = copy.deepcopy(session["snapshot"]["full_agent"]["notes"])
+        notes = copy.deepcopy(session["snapshot"]["story"]["notes"])
         result, session = await operate(service, session, "enable_compact")
         assert result["usage"] == [] and not result["converted"]
         revision = session["revision"]
@@ -590,8 +621,8 @@ async def test_short_mode_switches_use_complete_sources_without_maintenance_requ
         assert session["revision"] == revision
         result, session = await operate(service, session, "enable_local")
         assert result["usage"] == [] and not result["converted"]
-        assert session["snapshot"]["full_agent"]["window"]["start"] == 0
-        assert current_text(session["snapshot"]["full_agent"]) == ""
+        assert session["snapshot"]["story"]["window"]["start"] == 0
+        assert current_text(session["snapshot"]["story"]) == ""
         compiled = compile_window(
             store.session_card(session["id"])["document"],
             session,
@@ -609,7 +640,7 @@ async def test_short_mode_switches_use_complete_sources_without_maintenance_requ
                 for call in m.get("tool_calls", [])
             )
         assert [m["raw"] for m in session["messages"]] == originals
-        assert session["snapshot"]["full_agent"]["notes"] == notes
+        assert session["snapshot"]["story"]["notes"] == notes
         _, session = await operate(service, session, "enable_compact")
         model = Model("Only the requested story response.")
         saved, session = await turn(service, session, model)
@@ -625,7 +656,7 @@ async def test_replay_preserves_oversized_whole_exchanges_and_resumes(strategy):
     from tavern.conversation.compaction import rebuild
     from tavern.core.models import Settings
     from tavern.core.tokens import request_tokens
-    from tavern.full_agent.compaction import rebuild_local
+    from tavern.story.compaction import rebuild_local
 
     settings = Settings(
         model="fixture", context_tokens=8192, reply_tokens=1024, chunk_mode="off", context_strategy=strategy
@@ -765,10 +796,10 @@ async def test_user_turn_compacts_before_story_only_when_enabled_and_never_durin
 
     store, _, _ = connected_store(tmp_path)
     config = store.settings_document()
-    config.full_agent.official_model.context_tokens = 10000
-    config.full_agent.official_model.reply_tokens = 1024
+    config.story.official_model.context_tokens = 10000
+    config.story.official_model.reply_tokens = 1024
     store.save_settings(config)
-    _, session = story(store, "full_agent")
+    _, session = story(store)
     service = runtime(store)
     wire, stages = [], []
     text = "本轮输入必须完整保留。" * 4000
@@ -799,11 +830,11 @@ async def test_user_turn_compacts_before_story_only_when_enabled_and_never_durin
         assert wire == []
         session = store.update_session(session["id"], session["revision"], compact_auto=int(automatic))
         reported_pressure(monkeypatch)
-        started = service.submit(
+        started = service.story.submit(
             session["id"],
             TurnRequest(text=text, operation_id="long-user-input", expected_revision=session["revision"]),
         )
-        await service.tasks[started["id"]]
+        await service.story.tasks[started["id"]]
         saved = store.turn(started["id"])
         assert saved["status"] == "committed", saved.get("error")
         assert stages == (["maintenance"] if automatic else []) + ["story", "story", "story"]
@@ -817,10 +848,10 @@ async def test_failed_pre_turn_compaction_does_not_generate_or_commit_story(tmp_
 
     store, _, _ = connected_store(tmp_path)
     config = store.settings_document()
-    config.full_agent.official_model.context_tokens = 10000
-    config.full_agent.official_model.reply_tokens = 1024
+    config.story.official_model.context_tokens = 10000
+    config.story.official_model.reply_tokens = 1024
     store.save_settings(config)
-    _, session = story(store, "full_agent")
+    _, session = story(store)
     service = runtime(store)
     requests = []
 
@@ -835,7 +866,7 @@ async def test_failed_pre_turn_compaction_does_not_generate_or_commit_story(tmp_
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
         reported_pressure(monkeypatch)
-        started = service.submit(
+        started = service.story.submit(
             session["id"],
             TurnRequest(
                 text="Whole oversized input. " * 15000,
@@ -843,7 +874,7 @@ async def test_failed_pre_turn_compaction_does_not_generate_or_commit_story(tmp_
                 expected_revision=session["revision"],
             ),
         )
-        await service.tasks[started["id"]]
+        await service.story.tasks[started["id"]]
         saved = store.turn(started["id"])
         assert saved["status"] == "error"
         assert "未生成压缩状态" in saved["error"]
@@ -861,7 +892,7 @@ async def test_fixed_source_edit_rebuilds_before_tool_continuation_without_repla
     from tavern.core.models import TurnRequest
 
     store, _, _ = connected_store(tmp_path)
-    _, session = story(store, "full_agent")
+    _, session = story(store)
     service = runtime(store)
     stages = []
     current_input = "本轮正在修改设定，必须完整保留这个输入。"
@@ -904,7 +935,7 @@ async def test_fixed_source_edit_rebuilds_before_tool_continuation_without_repla
     try:
         _, session = await operate(service, session, "enable_compact")
         reported_pressure(monkeypatch)
-        started = service.submit(
+        started = service.story.submit(
             session["id"],
             TurnRequest(
                 text=current_input,
@@ -913,7 +944,7 @@ async def test_fixed_source_edit_rebuilds_before_tool_continuation_without_repla
                 allow_content_edit=True,
             ),
         )
-        await service.tasks[started["id"]]
+        await service.story.tasks[started["id"]]
         saved = store.turn(started["id"])
         assert saved["status"] == "committed", saved.get("error")
         assert stages == ["maintenance", "story", "maintenance", "story", "story"]

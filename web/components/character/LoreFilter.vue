@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { audiences, emptyLoreFilter, type LoreFilter } from '../../lib/loreFilter';
+import { emptyLoreFilter, purposeLabels, type LoreFilter } from '../../lib/loreFilter';
 defineProps<{ filter: LoreFilter; count: number; total: number }>();
 </script>
 <template>
@@ -15,16 +15,16 @@ defineProps<{ filter: LoreFilter; count: number; total: number }>();
       </select></label
     >
     <label
-      >触发方式<select v-model="filter.trigger" aria-label="触发方式">
+      >触发设置<select v-model="filter.trigger" aria-label="触发设置">
         <option value="all">全部</option>
         <option value="constant">常驻</option>
         <option value="conditional">条件触发</option>
       </select></label
     >
     <label
-      >条目用途<select v-model="filter.audience" aria-label="条目用途">
+      >条目用途<select v-model="filter.purpose" aria-label="条目用途">
         <option value="all">全部</option>
-        <option v-for="(label, key) in audiences" :value="key">{{ label }}</option>
+        <option v-for="(label, key) in purposeLabels" :value="key">{{ label }}</option>
       </select></label
     >
     <span role="status">{{ count }} / {{ total }} 条</span>

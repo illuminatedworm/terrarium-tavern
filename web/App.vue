@@ -17,12 +17,11 @@ import { useContextOperations } from './composables/useContextOperations';
 import { useModelWarmup, type LocalModelStatus, type StartupModels } from './composables/useModelWarmup';
 import { japaneseDictionaryKey, useJapaneseDictionary } from './composables/useJapaneseDictionary';
 import JapaneseDictionaryNotice from './components/common/JapaneseDictionaryNotice.vue';
-import { channelLabels, profileKey, type Channel } from './lib/channels';
+import { channelLabels, storyProfileKey, type Channel } from './lib/channels';
 import { api } from './lib/api';
 import { appendVisualInput, hasVisuals } from './lib/visuals';
 import { saveDownload } from './lib/download';
 import { androidHost } from './lib/hostCapabilities';
-import { loreTitle } from './lib/loreBook';
 import type { ConversationModelSelection, SettingsDocument, SettingsObject } from './lib/settingsDocument';
 import { conversationModelProfile } from './lib/modelConnections';
 import { usesChatGPT } from './lib/chatgptAccounts';
@@ -37,8 +36,7 @@ import { historyMessageIntervals } from './lib/storyHistory';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
 import { dialogueLoreRecords, type LoreRecord } from './lib/loreRecords';
 import ContextPreview from './components/story/ContextPreview.vue';
-import FullAgentDialogue from './components/story/FullAgentDialogue.vue';
-import HalfAgentDialogue from './components/story/HalfAgentDialogue.vue';
+import StoryDialogue from './components/story/StoryDialogue.vue';
 import DialogueMessage from './components/story/DialogueMessage.vue';
 import InlineMessageEditor from './components/story/InlineMessageEditor.vue';
 import MessageOoc from './components/story/MessageOoc.vue';
@@ -46,7 +44,6 @@ import ConversationRail from './components/story/ConversationRail.vue';
 import DialogueTools from './components/story/DialogueTools.vue';
 import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
 import PromptField from './components/common/PromptField.vue';
-import { highlightSource } from './lib/sceneNotes';
 import StoryProse from './components/story/StoryProse.vue';
 import StoryDraft from './components/story/StoryDraft.vue';
 import { splitStorySegments } from './lib/storySegments';
@@ -65,8 +62,7 @@ import MvuInspector from './components/story/MvuInspector.vue';
 import SceneInspector from './components/story/SceneInspector.vue';
 import SessionOptions, { type SessionOptionsDraft } from './components/story/SessionOptions.vue';
 import StoryStatePanel, { type StateTab } from './components/story/StoryStatePanel.vue';
-import MemoryRebuildConfirm from './components/story/MemoryRebuildConfirm.vue';
-import FullAgentWindowPanel from './components/story/FullAgentWindowPanel.vue';
+import StoryWindowPanel from './components/story/StoryWindowPanel.vue';
 import ForkSelectPanel from './components/story/ForkSelectPanel.vue';
 import ForkConfirmPanel from './components/story/ForkConfirmPanel.vue';
 import DeleteCardConfirm from './components/character/DeleteCardConfirm.vue';
@@ -90,7 +86,6 @@ import type {
   CardConversationSummary,
   JsonObject,
   CardRecord,
-  MemoryRebuildEstimate,
   OrphanDraft,
   PendingInput,
   Session,
@@ -111,18 +106,11 @@ const SettingsPanel = defineAsyncComponent({
 });
 const AdvisorPanel = defineAsyncComponent(() => import('./components/story/AdvisorPanel.vue'));
 const NovelPanel = defineAsyncComponent(() => import('./components/story/NovelPanel.vue'));
-const FullAgentTools = defineAsyncComponent(() => import('./components/story/FullAgentTools.vue'));
+const StoryTools = defineAsyncComponent(() => import('./components/story/StoryTools.vue'));
 const CacheBreakpointPanel = defineAsyncComponent(
   () => import('./components/story/CacheBreakpointPanel.vue'),
 );
 let stopNovelObservation: (() => void) | undefined;
-// Session-level editors and the share dialog open from the inspector on demand.
-const RecipeEditor = defineAsyncComponent({
-  loader: () => import('./components/settings/RecipeEditor.vue'),
-  delay: 0,
-  loadingComponent: { render: () => h('p', { role: 'status' }, '正在加载上下文配方…') },
-  errorComponent: { render: () => h('p', { role: 'alert' }, '上下文配方加载失败，请刷新页面后重试。') },
-});
 const ShareDialog = defineAsyncComponent({
   loader: () => import('./components/story/ShareDialog.vue'),
   delay: 0,
@@ -165,7 +153,6 @@ const sessionPortraits = computed(() =>
 );
 const storyPortrait = computed(() => sessionPortraitUrl(session.value));
 const savingSessionTitle = ref(false);
-const isFullAgent = computed(() => session.value?.agent_mode === 'full_agent');
 /** Turn actions are reachable only while a turn is shown. */
 function currentTurn(): TurnRecord {
   if (!activeTurn.value) throw new Error('没有进行中的回合');
@@ -239,8 +226,7 @@ const panel = ref(''),
   settings = ref<SettingsDocument | null>(null),
   selected = ref<CardRecord | null>(null);
 const preview = ref<StoryContextPreview | null>(null),
-  trace = ref<TraceEvent[]>([]),
-  savingRecipe = ref(false);
+  trace = ref<TraceEvent[]>([]);
 const previewMessagesBusy = ref(false);
 const settingsPanel = ref<InstanceType<typeof SettingsPanel>>();
 const settingsInitialPage = ref('');
@@ -259,16 +245,9 @@ function loadedSettings(): SettingsDocument {
   if (!settings.value) throw new Error('设置尚未载入');
   return settings.value;
 }
-const activeSettings = computed<SettingsObject>(
-  () => settings.value?.[isFullAgent.value ? 'full_agent' : 'half_agent'] ?? {},
-);
+const activeSettings = computed<SettingsObject>(() => settings.value?.story ?? {});
 const configuredModel = computed(
-  () =>
-    (isFullAgent.value
-      ? activeSettings.value[session.value?.channel_origin === 'chatgpt' ? 'official_model' : 'model']
-      : activeSettings.value[
-          session.value?.channel_origin === 'chatgpt' ? 'official_foreground' : 'foreground'
-        ]) || {},
+  () => activeSettings.value[session.value?.channel_origin === 'chatgpt' ? 'official_model' : 'model'] || {},
 );
 const activeModel = computed(() =>
   conversationModelProfile(
@@ -300,31 +279,7 @@ async function selectStoryModel(selection: ConversationModelSelection) {
   }
 }
 const activeSubscription = computed(() => usesChatGPT(activeModel.value, settings.value?.shared.providers));
-const channelModelsReady = computed(
-  () =>
-    !!activeModel.value.model &&
-    (isFullAgent.value ||
-      !!activeSettings.value[
-        session.value?.channel_origin === 'chatgpt' ? 'official_background' : 'background'
-      ]?.model),
-);
-const trackerSubscription = computed(
-  () =>
-    !isFullAgent.value &&
-    usesChatGPT(
-      activeSettings.value[
-        session.value?.channel_origin === 'chatgpt' ? 'official_background' : 'background'
-      ],
-      settings.value?.shared.providers,
-    ),
-);
-const storySubscriptionLabel = computed(() =>
-  activeSubscription.value
-    ? trackerSubscription.value || isFullAgent.value
-      ? '使用 SIWC'
-      : '正文使用 SIWC'
-    : '后台使用 SIWC',
-);
+const channelModelsReady = computed(() => !!activeModel.value.model);
 function closePanel() {
   if (panel.value === 'settings' && settingsPanel.value) void settingsPanel.value.requestClose();
   else panel.value = '';
@@ -346,25 +301,6 @@ watch([input, ooc], () => {
 const workCount = ref(0),
   rewriteExpanded = ref(false);
 const rewriteToggle = ref<HTMLButtonElement>();
-const updatingVariables = computed(
-  () =>
-    busy.value &&
-    [...trace.value]
-      .reverse()
-      .find((event) =>
-        ['variable_update_started', 'variable_update_completed', 'variable_update_failed'].includes(
-          event.kind,
-        ),
-      )?.kind === 'variable_update_started',
-);
-const updatingTracker = computed(
-  () =>
-    busy.value &&
-    [...trace.value]
-      .reverse()
-      .find((event) => ['tracker_started', 'tracker_completed', 'tracker_failed'].includes(event.kind))
-      ?.kind === 'tracker_started',
-);
 const retryNote = ref(''),
   retryIncludeReply = ref(false);
 const turnContinuation = createTurnContinuation();
@@ -399,29 +335,13 @@ function retryStoryLoad() {
   const pending = storyLoad.value;
   if (pending) void openSession(pending.id, pending.creating);
 }
-const memoryWarning = ref('');
-watch(
-  () => [session.value?.id, session.value?.snapshot?.memory_warning],
-  () => {
-    memoryWarning.value = session.value?.snapshot?.memory_warning || '';
-  },
-);
-useTimedError(memoryWarning);
-const memoryDiscardNotice = ref('');
-useTimedError(memoryDiscardNotice, 5000);
-watch(
-  () => session.value?.id,
-  () => {
-    memoryDiscardNotice.value = '';
-  },
-);
 const pendingInput = ref<PendingInput | null>(null);
 // Finished turns are reopened without replaying SSE, so recover their input
 // from the persisted request, including replacements awaiting an atomic commit.
 const visiblePendingInput = computed((): PendingInput | null => {
   if (pendingInput.value) return pendingInput.value;
   const request = activeTurn.value?.request;
-  if (!request || request.scene_refresh) return null;
+  if (!request) return null;
   const text = request.mode === 'regenerate' ? request.replacement_text : request.text;
   return text || request.ooc ? { raw: text || '', ooc: request.ooc } : null;
 });
@@ -429,7 +349,6 @@ const pendingLore = ref<LoreRecord[]>([]);
 const pendingVisible = computed(
   () =>
     activeTurn.value &&
-    !currentTurn().request.scene_refresh &&
     (['queued', 'running', 'awaiting_review'].includes(currentTurn().status) ||
       canRetryTurn(activeTurn.value, session.value)),
 );
@@ -462,7 +381,7 @@ watch(
       turn && ['queued', 'running', 'awaiting_review'].includes(turn.status) ? turn.request : null;
     updateVariables.value =
       !!(request?.update_variables ?? session.value?.update_variables) &&
-      !(session.value?.agent_mode === 'full_agent' && openStory().disabled_tools?.includes('patch_state'));
+      !session.value?.disabled_tools?.includes('patch_state');
   },
 );
 async function saveUpdateVariables() {
@@ -533,22 +452,12 @@ const editingMessageId = ref(''),
   editingMessageOoc = ref('');
 const savingMessageEdit = ref(false);
 let editingWasFollowing = false;
-const sceneSaving = ref<'memory' | null>(null);
-const memoryRebuildEstimate = ref<MemoryRebuildEstimate | null>(null);
-const memoryProgress = computed(() => {
-  if (sceneUpdating.value !== 'memory') return '';
-  const batch = [...trace.value].reverse().find((e) => e.kind === 'memory_batch');
-  return batch
-    ? `正在整理第 ${batch.payload.primary_calls} 批，已提交的旧记忆保持不变。`
-    : '正在准备重建记忆…';
-});
-const sourceHighlight = ref<{ id: string; excerpt: string; fallback: boolean } | null>(null);
 const cacheBreakpointBusy = ref(false);
-const writerResponseCache = computed(() => {
+const runtimeCacheBreakpoints = computed(() => {
   const profile = activeModel.value;
-  return !!session.value && profile?.cache?.mode === 'runtime' && writerCacheRetention.value.explicit;
+  return !!session.value && profile?.cache?.mode === 'runtime' && storyCacheRetention.value.explicit;
 });
-const writerCacheRetention = computed(() => {
+const storyCacheRetention = computed(() => {
   const profile = activeModel.value;
   const cache = profile?.cache || {
     mode: 'cloud',
@@ -572,7 +481,7 @@ const writerCacheRetention = computed(() => {
     channel:
       (session.value?.channel_origin && channelLabels[session.value.channel_origin as Channel]) ||
       '渠道待确认',
-    role: isFullAgent.value ? 'Full Agent 正文模型' : 'Half Agent Writer',
+    role: '正文模型',
     preset: cache.preset,
     control: activeSubscription.value
       ? ('subscription' as const)
@@ -601,7 +510,7 @@ const cacheRequestState = computed(
         (event) =>
           event.kind === 'provider_request' &&
           event.payload?.cache &&
-          ['full_agent', 'narrative'].includes(event.payload.purpose),
+          ['story', 'narrative'].includes(event.payload.purpose),
       )?.payload.cache,
 );
 const cacheBreakpointId = computed(() => {
@@ -615,7 +524,6 @@ const sentCacheLabel = computed(() => {
   const at = session.value?.messages.findIndex((m) => m.id === cache?.message_id) ?? -1;
   return at >= 0 ? `H${at + 1}` : contextLabel(cache?.source || '固定前缀');
 });
-const sceneSubmitting = ref<'memory' | null>(null);
 const storyView = ref<'dialogue' | 'work'>('dialogue');
 // Phones fold the header tools into a menu so the header stays one row (story.css).
 const storyToolsOpen = ref(false);
@@ -629,9 +537,7 @@ async function openDialogueFind() {
   await nextTick();
   window.dispatchEvent(new Event('tavern-dialogue-find'));
 }
-const sceneUpdating = computed(
-  () => sceneSubmitting.value || (busy.value ? activeTurn.value?.request?.scene_refresh : null),
-);
+
 const sidebarSection = ref(
   ['cards', 'worldbooks', 'editor'].includes(localStorage.getItem('tavern-sidebar-section') || '')
     ? localStorage.getItem('tavern-sidebar-section')!
@@ -646,17 +552,15 @@ const deleteBubble = ref<
 >(null);
 const inspectorTab = ref('mvu'),
   optionsNotice = ref('');
-const inspectorPages = computed(() =>
-  [
-    { id: 'advisor', label: '参谋', icon: 'compass' },
-    { id: 'cache', label: '缓存', icon: 'bolt' },
-    isFullAgent.value ? { id: 'tools', label: '工具', icon: 'wrench' } : null,
-    isFullAgent.value ? { id: 'novel', label: '原著', icon: 'book' } : null,
-    { id: 'mvu', label: 'MVU 变量', icon: 'braces' },
-    { id: 'scene', label: '场景', icon: 'map' },
-    { id: 'options', label: '会话设置', icon: 'sliders' },
-  ].filter((page) => !!page),
-);
+const inspectorPages = computed(() => [
+  { id: 'advisor', label: '参谋', icon: 'compass' },
+  { id: 'cache', label: '缓存', icon: 'bolt' },
+  { id: 'tools', label: '工具', icon: 'wrench' },
+  { id: 'novel', label: '原著', icon: 'book' },
+  { id: 'mvu', label: 'MVU 变量', icon: 'braces' },
+  { id: 'scene', label: '场景', icon: 'map' },
+  { id: 'options', label: '会话设置', icon: 'sliders' },
+]);
 // Mirrors the left rail: clicking the open page collapses, any other page opens there.
 function openInspector(id: string) {
   if (inspectorTab.value === id && !layout.value.rightCollapsed) return void toggleRightSidebar();
@@ -826,7 +730,7 @@ const retryableTurn = computed(() =>
 );
 // Continuing and starting over are separate, explicit choices; continuing
 // replays the saved context and can keep failing the same way.
-const canOfferResume = computed(() => isFullAgent.value && !!retryableTurn.value?.resumable);
+const canOfferResume = computed(() => !!retryableTurn.value?.resumable);
 const resumeBlocked = computed(() =>
   retryableTurn.value
     ? resumeBlocker(retryableTurn.value, openStory(), {
@@ -837,7 +741,7 @@ const resumeBlocked = computed(() =>
     : null,
 );
 const suggestRestart = computed(() => (retryableTurn.value?.resume_failures ?? 0) >= 2);
-// Sending a new message while a Full Agent turn is unfinished waits for the
+// Sending a new message while a story turn is unfinished waits for the
 // user's choice; the chosen retry then sends it once the turn is saved.
 const sendAfterRetry = ref(false);
 watch(
@@ -1048,10 +952,6 @@ const storyRounds = computed(() =>
 function contextItemTitle(item: JsonObject) {
   if (item.title) return item.title;
   const source = String(item.source || '');
-  if (source.startsWith('lore:')) {
-    const entry = preview.value?.lore?.find((e) => String(e.id) === source.slice(5));
-    return loreTitle(entry);
-  }
   if (source === 'persona') return `用户 · ${session.value?.persona || ''}`;
   if (source === 'agent_tools') {
     if (item.role === 'tool') {
@@ -1163,7 +1063,6 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
   pageMode.value = '';
   inspectorTab.value = 'mvu';
   clearOptionsNotice();
-  sourceHighlight.value = null;
   trace.value = [];
   draft.value = '';
   cancelMessageEdit();
@@ -1746,7 +1645,7 @@ async function send(
   // Only the composer carries ooc text; plain regeneration reuses the stored message's.
   const oocValue = mode === 'send' && text === undefined ? ooc.value.trim() : '';
   if (mode === 'send' && !value.trim() && !oocValue) return;
-  if (mode === 'send' && isFullAgent.value && retryableTurn.value) {
+  if (mode === 'send' && retryableTurn.value) {
     input.value = value;
     sendAfterRetry.value = true;
     return;
@@ -1769,7 +1668,7 @@ async function send(
   }
 }
 async function submitStoryTurn(request: TurnRequest, continueWithInput = false): Promise<TurnRecord | false> {
-  if (!session.value || busy.value || sceneSubmitting.value || variablePreferenceSaving.value) return false;
+  if (!session.value || busy.value || variablePreferenceSaving.value) return false;
   if (modelSaving.value || contextBusy.value || !session.value.channel_origin || !channelModelsReady.value) {
     notify(
       contextBusy.value
@@ -1836,22 +1735,14 @@ function observe(id: string) {
       } else {
         const reading = draftReadingOffset();
         trace.value.push(event);
-        if (event.kind === 'full_agent_prefix_debug') notify(event.payload.message);
+        if (event.kind === 'story_prefix_debug') notify(event.payload.message);
         if (event.kind === 'input_ready') {
           pendingInput.value = event.payload.message;
           pendingLore.value = event.payload.lore_injections || [];
         }
         if (reading !== undefined) void holdDraft(reading);
         else void scroll();
-        if (event.kind === 'scene_refresh_ready' && event.payload.purpose === 'memory') {
-          delete openStory().snapshot.memory_warning;
-          memoryWarning.value = '';
-          error.value = '';
-        }
         if (event.kind === 'error') error.value = turnError(event.payload.message);
-        if (event.kind === 'memory_failed') openStory().snapshot.memory_warning = event.payload.message;
-        if (event.kind === 'memory_ready') delete openStory().snapshot.memory_warning;
-        if (event.kind === 'memory_records_discarded') memoryDiscardNotice.value = event.payload.message;
       }
     },
     async () => {
@@ -1865,7 +1756,7 @@ function observe(id: string) {
           top = chat.value?.scrollTop || 0,
           reading = draftReadingOffset();
         const completedReply =
-          turn.status === 'committed' && !turn.request?.scene_refresh
+          turn.status === 'committed'
             ? updated.messages
                 .slice()
                 .reverse()
@@ -1908,87 +1799,6 @@ function observe(id: string) {
   );
 }
 
-async function saveMemoryRecord(change: any) {
-  if (sceneSaving.value || busy.value) return;
-  sceneSaving.value = 'memory';
-  try {
-    await guarded(async () => {
-      session.value = await viewApi(
-        `/sessions/${openStory().id}/memory/records`,
-        { ...change, expected_revision: openStory().revision },
-        'PUT',
-      );
-      await refreshContextStats();
-    });
-  } finally {
-    sceneSaving.value = null;
-  }
-}
-async function locateSource(id: string, excerpt: string) {
-  const message = session.value?.messages.find((m) => m.id === id);
-  if (!message) return;
-  panel.value = '';
-  storyView.value = 'dialogue';
-  followLatest.value = false;
-  sourceHighlight.value = { id, excerpt, fallback: false };
-  await navigateMessage(id);
-  dialogue.value?.releaseAnchor();
-  const target = Array.from(chat.value?.querySelectorAll<HTMLElement>('[data-message-id]') || []).find(
-    (node) => node.dataset.messageId === id,
-  );
-  target?.scrollIntoView({ block: 'center' });
-  chat.value?.querySelectorAll('mark.source-sentence-highlight').forEach((mark) => {
-    const parent = mark.parentElement;
-    mark.replaceWith(...Array.from(mark.childNodes));
-    parent?.normalize();
-  });
-  const prose = target?.querySelector<HTMLElement>('.prose');
-  if (excerpt && (!prose || !highlightSource(prose, excerpt))) {
-    sourceHighlight.value = { id, excerpt, fallback: true };
-    await nextTick();
-    target?.querySelector('.source-excerpt')?.scrollIntoView({ block: 'center' });
-  }
-  followLatest.value = false;
-}
-async function refreshScene(kind: 'memory') {
-  if (!session.value || busy.value || sceneSubmitting.value) return;
-  memoryRebuildEstimate.value = null;
-  sceneSubmitting.value = kind;
-  try {
-    await guarded(async () => {
-      memoryRebuildEstimate.value = await viewApi(`/sessions/${openStory().id}/memory/rebuild-estimate`);
-      panel.value = 'memory-rebuild';
-    });
-  } finally {
-    sceneSubmitting.value = null;
-  }
-}
-async function startSceneRefresh(kind: 'memory') {
-  if (
-    !session.value ||
-    busy.value ||
-    sceneSubmitting.value ||
-    editingMessageId.value ||
-    activeTurn.value?.status === 'awaiting_review'
-  )
-    return;
-  sceneSubmitting.value = kind;
-  try {
-    await guarded(async () => {
-      activeTurn.value = await viewApi(`/sessions/${openStory().id}/scene/${kind}/regenerate`, {
-        operation_id: crypto.randomUUID(),
-        expected_revision: openStory().revision,
-      });
-      panel.value = '';
-      busy.value = true;
-      draft.value = '';
-      trace.value = [];
-      observe(currentTurn().id);
-    });
-  } finally {
-    sceneSubmitting.value = null;
-  }
-}
 async function stop() {
   turnContinuation.cancel();
   if (activeTurn.value) await guarded(() => api(`/turns/${currentTurn().id}/cancel`, {}));
@@ -2293,14 +2103,14 @@ function toggleCacheBreakpointFollow() {
   void saveCacheBreakpoint(automatic, automatic ? null : cacheBreakpointId.value);
 }
 async function saveCacheRetention(value: string) {
-  if (busy.value || cacheBreakpointBusy.value || !writerCacheRetention.value.enabled) return;
+  if (busy.value || cacheBreakpointBusy.value || !storyCacheRetention.value.enabled) return;
   const channel = openStory().channel_origin;
   if (!channel) {
     notify('请先确认此旧对话的渠道归属，再修改缓存时效。');
     return;
   }
-  const scope = isFullAgent.value ? 'full_agent' : 'half_agent';
-  const path = profileKey(isFullAgent.value ? 'full_agent' : 'foreground', channel) + '.cache.retention';
+  const scope = 'story';
+  const path = storyProfileKey(channel) + '.cache.retention';
   cacheBreakpointBusy.value = true;
   try {
     await guarded(async () => {
@@ -2328,48 +2138,7 @@ async function saveOptions(draft: SessionOptionsDraft) {
     showOptionsNotice('已保存');
   });
 }
-async function saveRecipe(recipe: JsonObject) {
-  if (savingRecipe.value) return;
-  savingRecipe.value = true;
-  try {
-    await guarded(async () => {
-      session.value = await viewApi(
-        `/sessions/${openStory().id}/recipe`,
-        { recipe, expected_revision: openStory().revision },
-        'PUT',
-      );
-      panel.value = '';
-      await refreshContextStats();
-    });
-  } finally {
-    savingRecipe.value = false;
-  }
-}
-async function resetRecipe() {
-  if (!session.value || savingRecipe.value || busy.value || activeTurn.value?.status === 'awaiting_review')
-    return;
-  savingRecipe.value = true;
-  try {
-    await guarded(async () => {
-      session.value = await viewApi(
-        `/sessions/${openStory().id}/recipe`,
-        { use_global: true, expected_revision: openStory().revision },
-        'PUT',
-      );
-      showOptionsNotice('已采用当前全局编排');
-      await refreshContextStats();
-    });
-  } finally {
-    savingRecipe.value = false;
-  }
-}
-async function frameAction(
-  method: string,
-  args: any,
-  resolve: (v: any) => void,
-  reject: (e: any) => void,
-  onStream: (chunk: string) => void,
-) {
+async function frameAction(method: string, args: any, resolve: (v: any) => void, reject: (e: any) => void) {
   const token = viewScope.current();
   try {
     if (method === 'visual-input') {
@@ -2387,63 +2156,7 @@ async function frameAction(
       resolve(null);
       return;
     }
-    if (method === 'cancel') {
-      await stop();
-      resolve(true);
-      return;
-    }
-    if (method === 'generate') {
-      if (busy.value) throw Error('当前回合正在运行');
-      // Card generation has the same submission lifetime as the composer. In particular,
-      // switching stories during the POST must not attach this turn to the new view.
-      const turn = await submitStoryTurn({
-        text: args.user_input || '继续',
-        generate: args,
-        expected_revision: openStory().revision,
-        operation_id: crypto.randomUUID(),
-        reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
-      });
-      if (!turn) {
-        if (!viewScope.owns(token)) throw new StaleView('已切换对话，生成结果保留在原对话。');
-        throw Error(error.value || '当前状态无法启动回合，请检查对话的模型与上下文设置。');
-      }
-      const stream = args.should_stream
-        ? observeTurn(
-            turn.id,
-            () => viewScope.owns(token),
-            (event) => {
-              if (event.kind === 'text') onStream(event.payload.text);
-            },
-            async () => {},
-          )
-        : null;
-      const poll = async (): Promise<any> => {
-        const t = await api(`/turns/${turn.id}`);
-        if (['running', 'queued'].includes(t.status)) {
-          await new Promise((r) => setTimeout(r, 300));
-          return poll();
-        }
-        if (t.status !== 'committed') throw Error(t.error || '回合未提交');
-        return t.draft;
-      };
-      try {
-        resolve(await poll());
-      } finally {
-        stream?.close();
-      }
-      return;
-    }
-    const updated: Session = await viewApi(`/sessions/${openStory().id}/interaction`, {
-      method,
-      args,
-      expected_revision: openStory().revision,
-      operation_id: crypto.randomUUID(),
-      allow_content_edit: allowEdit.value,
-    });
-    session.value = updated;
-    const review = updated.turns.find((t) => t.status === 'awaiting_review');
-    if (review) activeTurn.value = await viewApi(`/turns/${review.id}`);
-    resolve(null);
+    throw Error('角色脚本的生成或直接写入请求不受支持。');
   } catch (e: any) {
     if (viewScope.owns(token) && !(e instanceof StaleView)) error.value = e.message;
     reject(e.message);
@@ -2664,7 +2377,6 @@ useTimedError(error);
         <Icon name="menu" :size="19" />
       </button>
       <AppNotification :message="error" />
-      <AppNotification :message="memoryDiscardNotice" />
       <JapaneseDictionaryNotice
         @settings="
           settingsInitialPage = 'shared.local';
@@ -2732,9 +2444,9 @@ useTimedError(error);
         @started="cardStarted"
         @card-changed="(card) => (cards = cards.map((item) => (item.id === card.id ? card : item)))"
         @settings="
-          (channel, mode) => {
+          (channel) => {
             settingsChannel = channel;
-            settingsInitialPage = mode + '.model';
+            settingsInitialPage = 'story.model';
             panel = 'settings';
           }
         "
@@ -2765,13 +2477,11 @@ useTimedError(error);
             <CharacterPortrait :src="storyPortrait" :name="name" />
             <div>
               <h1>{{ session.title || name }}</h1>
-              <div class="story-meta" aria-label="角色、运行模式与渠道">
+              <div class="story-meta" aria-label="角色与渠道">
                 <template v-if="session.title && session.title !== name"
                   ><span>{{ name }}</span
                   ><span class="story-meta-separator" aria-hidden="true">·</span></template
                 >
-                <span>{{ isFullAgent ? 'Full Agent' : 'Half Agent' }}</span>
-                <span class="story-meta-separator" aria-hidden="true">·</span>
                 <span class="story-channel-label">{{
                   channelLabels[session.channel_origin as Channel] || '渠道待确认'
                 }}</span>
@@ -2791,8 +2501,7 @@ useTimedError(error);
               :title="workCount ? `${workCount} 条工作记录` : undefined"
               @click="storyView = 'work'"
             >
-              <span class="tab-label-full">{{ isFullAgent ? 'Agent 工作记录' : '后台工作记录' }}</span
-              ><span class="tab-label-short">记录</span>
+              <span class="tab-label-full">Agent 工作记录</span><span class="tab-label-short">记录</span>
               <span v-if="busy" class="work-live-dot" aria-label="任务运行中"></span
               ><span v-else-if="workCount" class="tab-count" aria-hidden="true">{{ workCount }}</span>
             </button>
@@ -2822,12 +2531,7 @@ useTimedError(error);
               >
                 <Icon name="search" /><span class="tool-label">搜索对话</span>
               </button>
-              <button
-                v-if="isFullAgent"
-                aria-label="窗口与笔记"
-                title="窗口与笔记"
-                @click="panel = 'context-management'"
-              >
+              <button aria-label="窗口与笔记" title="窗口与笔记" @click="panel = 'context-management'">
                 <Icon name="notebook" /><span class="tool-label">窗口与笔记</span>
               </button>
               <button aria-label="变量与记忆" title="变量与记忆" @click="panel = 'state'">
@@ -2867,7 +2571,7 @@ useTimedError(error);
           ><button
             @click="
               settingsChannel = session.channel_origin;
-              settingsInitialPage = session.agent_mode + '.model';
+              settingsInitialPage = 'story.model';
               panel = 'settings';
             "
           >
@@ -2878,16 +2582,8 @@ useTimedError(error);
           v-if="storyView === 'work'"
           :key="session.id"
           :session-id="session.id"
-          :agent-mode="session.agent_mode"
           :turn-id="activeTurn?.id"
           :events="trace"
-        />
-        <AppNotification
-          :message="
-            memoryWarning
-              ? `记忆整理失败：${memoryWarning}。旧记忆保留；${session.context_strategy === 'openai_compact' ? '云端上下文仍独立保留，切回本地时会检查记忆覆盖。' : '需要裁剪时将暂停发送。'}`
-              : ''
-          "
         />
         <div
           v-show="storyView === 'dialogue'"
@@ -2904,7 +2600,7 @@ useTimedError(error);
             @pointerdown="grabScrollbar"
             @keydown="readingPinned = false"
           >
-            <div v-if="writerResponseCache && !cacheBreakpointId" class="cache-breakpoint-fallback">
+            <div v-if="runtimeCacheBreakpoints && !cacheBreakpointId" class="cache-breakpoint-fallback">
               <button
                 class="cache-breakpoint-dot"
                 :class="{ manual: !session.cache_breakpoint_auto }"
@@ -2922,8 +2618,7 @@ useTimedError(error);
                 {{ session.cache_breakpoint_auto ? '自动跟进' : '已固定' }}</span
               >
             </div>
-            <component
-              :is="isFullAgent ? FullAgentDialogue : HalfAgentDialogue"
+            <StoryDialogue
               ref="dialogue"
               :key="session.id"
               :messages="session.messages"
@@ -2932,17 +2627,11 @@ useTimedError(error);
               :editing-id="editingMessageId"
               :retain-interactive="!!sessionCard?.permission"
               @reading="readingMessageId = $event"
-              v-bind="
-                isFullAgent
-                  ? {
-                      sessionId: session.id,
-                      turn: activeTurn,
-                      events: trace,
-                      pending: !!pendingVisible,
-                      kemini: !!session.kemini,
-                    }
-                  : {}
-              "
+              :session-id="session.id"
+              :turn="activeTurn"
+              :events="trace"
+              :pending="!!pendingVisible"
+              :kemini="!!session.kemini"
               @content-change="scroll()"
             >
               <template #before-message="{ message }">
@@ -2963,8 +2652,7 @@ useTimedError(error);
                   :session="session"
                   :name="name"
                   :portrait-src="storyPortrait"
-                  :source-highlight="sourceHighlight"
-                  :writer-response-cache="writerResponseCache"
+                  :runtime-cache-breakpoints="runtimeCacheBreakpoints"
                   :cache-eligible="eligibleCacheReplies.has(message.id)"
                   :cache-breakpoint-id="cacheBreakpointId"
                   :cache-breakpoint-busy="cacheBreakpointBusy"
@@ -3053,17 +2741,7 @@ useTimedError(error);
                   <header class="message-meta">
                     <CharacterPortrait class="avatar" :src="storyPortrait" :name="name" size="message" />
                     <strong>{{ name }}</strong
-                    ><span class="badge">{{
-                      updatingTracker
-                        ? '后台维护中'
-                        : updatingVariables
-                          ? '正在更新变量'
-                          : busy
-                            ? isFullAgent
-                              ? '本轮预览 · 未提交'
-                              : '正在书写'
-                            : '未提交草稿'
-                    }}</span>
+                    ><span class="badge">{{ busy ? '本轮预览 · 未提交' : '未提交草稿' }}</span>
                   </header>
                   <div class="message-body">
                     <div class="draft">
@@ -3080,17 +2758,9 @@ useTimedError(error);
                 </article>
               </template>
               <template #waiting>
-                <div v-if="busy && !draft" class="thinking" role="status">
-                  {{
-                    isFullAgent
-                      ? 'Agent 正在处理当前回合…'
-                      : activeTurn?.request?.scene_refresh
-                        ? '正在重新整理记忆…'
-                        : '正在读取设定，酝酿下一个瞬间…'
-                  }}
-                </div>
+                <div v-if="busy && !draft" class="thinking" role="status">正在处理当前回合…</div>
               </template>
-            </component>
+            </StoryDialogue>
             <TurnReview
               v-if="activeTurn?.status === 'awaiting_review'"
               :changes="activeTurn.pending?.review_changes"
@@ -3111,7 +2781,7 @@ useTimedError(error);
             :key="session.id"
             :messages="session.messages"
             :reading-id="readingMessageId"
-            :breakpoint-id="writerResponseCache ? cacheBreakpointId : null"
+            :breakpoint-id="runtimeCacheBreakpoints ? cacheBreakpointId : null"
             @navigate="navigateMessage"
           />
           <section
@@ -3264,7 +2934,7 @@ useTimedError(error);
                   <span class="turn-options"
                     ><label
                       :title="
-                        isFullAgent && session?.disabled_tools?.includes('patch_state')
+                        session?.disabled_tools?.includes('patch_state')
                           ? '变量更新工具已停用，当前不会更新变量；重新启用工具后恢复此对话保存的选择。'
                           : '让模型按本轮剧情更新变量；无变化时不修改。勾选状态自动保存到当前对话，后续回合沿用；保存方式在对话设置中选择。'
                       "
@@ -3279,18 +2949,13 @@ useTimedError(error);
                           variablePreferenceSaving ||
                           contextBusy ||
                           activeTurn?.status === 'awaiting_review' ||
-                          (isFullAgent && session?.disabled_tools?.includes('patch_state'))
+                          session?.disabled_tools?.includes('patch_state')
                         "
                       />
                       更新变量<span v-if="variablePreferenceSaving" class="muted" role="status">
                         · 保存中…</span
                       ></label
-                    ><label
-                      :title="
-                        session?.agent_mode === 'full_agent'
-                          ? '本轮允许修改设定：仅授权本轮修改对话内的角色设定与世界书；不会修改书架原卡'
-                          : '本轮允许修改设定：先处理输入中的明确设定修改，再生成正文；正文后允许 Tracker 更新对话内角色设定与世界书'
-                      "
+                    ><label title="本轮允许修改设定：仅授权本轮修改对话内的角色设定与世界书；不会修改书架原卡"
                       ><input
                         v-model="allowEdit"
                         type="checkbox"
@@ -3326,8 +2991,8 @@ useTimedError(error);
               </div>
               <p class="composer-meta" aria-label="游玩上下文用量">
                 <ChatGPTUsage
-                  :active="activeSubscription || trackerSubscription"
-                  :label="storySubscriptionLabel"
+                  :active="activeSubscription"
+                  label="使用 SIWC"
                   :error="error || activeTurn?.error || undefined"
                 />
                 <span
@@ -3459,20 +3124,20 @@ useTimedError(error);
             :breakpoint-id="cacheBreakpointId"
             :request-state="cacheRequestState"
             :sent-label="sentCacheLabel"
-            :retention="writerCacheRetention"
-            :runtime="writerResponseCache"
+            :retention="storyCacheRetention"
+            :runtime="runtimeCacheBreakpoints"
             :disabled="storyLocked || cacheBreakpointBusy || switchingVersion"
             @save="saveCacheBreakpoint"
             @save-retention="saveCacheRetention"
             @locate="locateCacheBreakpoint"
             @settings="
               settingsChannel = session.channel_origin ?? undefined;
-              settingsInitialPage = session.agent_mode + '.model';
+              settingsInitialPage = 'story.model';
               panel = 'settings';
             "
           />
           <NovelPanel
-            v-if="isFullAgent && inspectorTab === 'novel'"
+            v-if="inspectorTab === 'novel'"
             :key="session.id"
             :session-id="session.id"
             :providers="loadedSettings().shared.providers"
@@ -3488,14 +3153,14 @@ useTimedError(error);
               session.novel_active = $event.active;
             "
             @settings="
-              settingsInitialPage = 'full_agent.novel';
+              settingsInitialPage = 'story.novel';
               settingsChannel = session.channel_origin ?? undefined;
               panel = 'settings';
             "
             @stopped="guarded(async () => applyFullSession(await viewApi('/sessions/' + openStory().id)))"
           />
-          <FullAgentTools
-            v-if="isFullAgent && inspectorTab === 'tools'"
+          <StoryTools
+            v-if="inspectorTab === 'tools'"
             :key="session.id"
             :session="session"
             :disabled="storyLocked"
@@ -3521,29 +3186,17 @@ useTimedError(error);
           <SceneInspector
             v-show="inspectorTab === 'scene'"
             :session="session"
-            :full-agent="isFullAgent"
             :locked="storyLocked"
             :lore-disabled="busy || activeTurn?.status === 'awaiting_review'"
-            :context-busy="contextBusy"
-            :submitting="!!sceneSubmitting"
-            :updating="sceneUpdating"
-            :progress="memoryProgress"
-            :saving="sceneSaving === 'memory'"
             @edit-lore="editSessionLore"
             @saved="applyFullSession"
-            @refresh="refreshScene('memory')"
-            @change="saveMemoryRecord"
-            @cancel="stop"
-            @locate="locateSource"
           />
           <SessionOptions
             v-show="inspectorTab === 'options'"
             :session="session"
-            :full-agent="isFullAgent"
             :notice="optionsNotice"
             :scripts-enabled="!!sessionCard?.permission"
             :permission-disabled="scriptPermissionDisabled"
-            :recipe-disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
             :preference-prompt="activeSettings.preference_prompt || ''"
             :inherited-policy="activeSettings.policy"
             :presets="settings?.shared.preference_presets || []"
@@ -3555,8 +3208,6 @@ useTimedError(error);
             @script-permission="setSessionScriptPermission"
             @presets-saved="settings = $event"
             @manage-presets="managePreferencePresets"
-            @edit-recipe="panel = 'recipe'"
-            @reset-recipe="resetRecipe"
           />
         </div>
       </div>
@@ -3617,7 +3268,7 @@ useTimedError(error);
             'settings-modal': panel === 'settings',
           }"
           :size="
-            ['settings', 'context', 'state', 'recipe', 'message-adapter', 'share'].includes(panel)
+            ['settings', 'context', 'state', 'message-adapter', 'share'].includes(panel)
               ? 'large'
               : ['delete-card', 'fork', 'warmup'].includes(panel)
                 ? 'small'
@@ -3638,7 +3289,6 @@ useTimedError(error);
           <SettingsPanel
             v-if="panel === 'settings'"
             ref="settingsPanel"
-            :initial-mode="session?.agent_mode"
             :initial-channel="settingsChannel || session?.channel_origin || undefined"
             :initial-page="settingsInitialPage"
             :warmup="modelWarmup"
@@ -3664,21 +3314,8 @@ useTimedError(error);
             :endpoint="`/sessions/${session.id}/message-adapter`"
             :kemini-enabled="session.kemini"
           />
-          <RecipeEditor
-            v-else-if="panel === 'recipe' && session"
-            :recipe="session.recipe"
-            :saving="savingRecipe"
-            @save="saveRecipe"
-          />
           <ReadingLayoutPanel v-else-if="panel === 'layout'" v-model:layout="layout" />
-          <MemoryRebuildConfirm
-            v-else-if="panel === 'memory-rebuild' && session"
-            :estimate="memoryRebuildEstimate"
-            :disabled="busy || !!sceneSubmitting"
-            @start="startSceneRefresh('memory')"
-            @cancel="panel = ''"
-          />
-          <FullAgentWindowPanel
+          <StoryWindowPanel
             v-else-if="panel === 'context-management' && session"
             :session="session"
             :channel="(session.channel_origin && channelLabels[session.channel_origin]) || '渠道待确认'"
@@ -3690,14 +3327,8 @@ useTimedError(error);
             v-else-if="panel === 'state' && session"
             v-model:tab="stateTab"
             :session="session"
-            :full-agent="isFullAgent"
-            :progress="memoryProgress"
             :disabled="busy || activeTurn?.status === 'awaiting_review'"
-            :saving="sceneSaving === 'memory'"
             @saved="applyFullSession"
-            @change="saveMemoryRecord"
-            @cancel="stop"
-            @locate="locateSource"
           />
           <ForkSelectPanel
             v-else-if="panel === 'fork-select' && session"

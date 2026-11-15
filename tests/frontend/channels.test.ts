@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { blankChannelProfile, channelProviders, profileKey, providerChannel } from '../../web/lib/channels';
+import {
+  blankChannelProfile,
+  channelProviders,
+  providerChannel,
+  storyProfileKey,
+} from '../../web/lib/channels';
 import type { ModelProfile, Provider } from '../../web/lib/settingsDocument';
 
 const providers: Provider[] = [
@@ -24,11 +29,9 @@ describe('channel origin', () => {
     expect(channelProviders(providers, 'chatgpt').map((p) => p.id)).toEqual(['official']);
     expect(channelProviders(providers, 'standard').map((p) => p.id)).toEqual(['api']);
   });
-  it('keeps official Writer and Tracker profiles separate from ordinary profiles', () => {
-    expect(profileKey('foreground', 'chatgpt')).toBe('official_foreground');
-    expect(profileKey('background', 'chatgpt')).toBe('official_background');
-    expect(profileKey('full_agent', 'standard')).toBe('model');
-    expect(profileKey('card_author', 'chatgpt')).toBe('card_author');
+  it('keeps the official model profile separate from ordinary profiles', () => {
+    expect(storyProfileKey('standard')).toBe('model');
+    expect(storyProfileKey('chatgpt')).toBe('official_model');
   });
   it('does not copy a model or capabilities across channels', () => {
     const base = {

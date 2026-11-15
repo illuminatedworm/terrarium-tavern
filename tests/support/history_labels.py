@@ -1,6 +1,6 @@
 """Strip an optional runtime ``[H52]`` prefix from captured test fixtures.
 
-Full Agent still adds these prefixes; Writer no longer does. This fixture-only
+Story requests include these history prefixes. This fixture-only
 helper must not be used to process user or assistant prose in production.
 """
 

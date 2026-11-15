@@ -1,6 +1,6 @@
 # 兼容矩阵
 
-“可导入”表示数据可解析。下表分别说明导入、显示和脚本宿主能力。HTML 交互生成及脚本嵌套模型请求适用于 Half Agent；Full Agent 的能力见[模式边界](../design/full-agent.md#权限与执行边界)。社区卡按实际使用的接口逐项确认。
+“可导入”表示数据可解析。下表分别说明导入、显示和脚本宿主能力。脚本与变量边界见 [剧情执行约定](../design/story.md#权限与执行边界)。社区卡按实际使用的接口逐项确认。
 
 | 能力 | 实现与边界 |
 |---|---|
@@ -9,7 +9,7 @@
 | CHARX | card.json 与内嵌资源，路径/大小限制，资源保真导出 |
 | 世界书 | 内嵌、独立 JSON（可存入[世界书库](worldbooks.md)）；保守关键词准入、辅助逻辑、常驻、概率、受原始查询约束的递归、深度、滚动注入及离开请求后概率冷却（旧持续字段保留但不执行） |
 | 正则 | 原生 JavaScript RegExp；显示/模型阶段、placement 与 min/max depth |
-| 原始提示词 | 角色正文、system、post history、开场与示例映射到配方 |
+| 原始提示词 | 角色描述、system、post history 与示例进入剧情上下文，开场作为首条剧情消息 |
 | 宏 | 模型文本保留 char、user、getvar / getglobalvar 读取；Helper 的 get / format / format_quoted 变量宏支持 message、chat、character、preset、global，用于模型上下文和文字、Markdown、HTML 展示；未知宏保留 |
 | 剧情 Markdown | 使用 GFM；仅对汉字后紧接 `**`、内容以 `‘`、`“`、`「`、`『` 开头的粗体放宽起始边界，闭合仍遵循原解析规则；纯英文、代码、转义与存档原文不变，角色编辑预览不启用此扩展 |
 | HTML 美化 | 原始 HTML 和代码块共用结构解析器，统一为正文／面板内容块，保留多个 HTML 界面及前、中、后的剧情；完整 head/body 按 HTML 文档处理；每个界面独立 sandbox iframe；CSS 的 url()/@import 和字体递归缓存后离线使用 |
@@ -19,9 +19,9 @@
 | MVU 命令 | 上游 set/add/insert/delete/move 与 JSON Patch 解析；上游错误通知提升为回合失败 |
 | 变量 API | 全局函数及 TavernHelper 命名空间；chat、message、character、script、global、preset、extension 镜像；getAllVariables 按顶层键覆盖作用域，数组赋值整体替换，避免复活旧字段；所有 scope 隔离在会话分支中 |
 | 消息读取 | 楼层号、负索引、latest、简单范围；返回角色、正文、variables 和 ID，旧 HTML 示例的 data 读取别名保留；message_id 省略时为 latest，取当前界面楼层需显式传 getCurrentMessageId() |
-| 消息写入 | 回合脚本镜像；界面写入仅支持当前楼层，历史操作需先切换分支 |
-| 世界书写入 | 受设定修改策略控制，保存为当前分支的内容草稿 |
-| generate / generateRaw | Half Agent 支持当前模型、文本、取消、流式通知、覆盖和有序内容块；使用本项目模型配置 |
+| 消息写入 | 仅修改回合脚本镜像；HTML 界面不能直接写入剧情消息 |
+| 世界书写入 | 回合脚本修改受本轮设定修改授权控制，保存为当前分支的内容草稿；HTML 界面不能直接提交修改 |
+| generate / generateRaw | 游玩脚本调用会返回不支持模型请求的错误 |
 | 外部模块 | 下载和哈希缓存，离线 esbuild 打包静态可解析的浏览器模块 |
 | 中途 system | 普通请求保留适配后的角色；Google GenAI 仅接受开头连续的 system，正文中的不支持角色在发送前报错。Kemini 剧情请求按独立保序规则将中途 system 转为 user，见[消息适配](message-adapter.md) |
 
@@ -46,9 +46,9 @@ MVU 管理 `stat_data`，HTML 只是可选的展示方式。文字或 Markdown �
 
 普通文字、Markdown 和无 MVU 读取脚本的 HTML 留在消息原位置。含已识别 MVU 读取脚本的界面放到右栏，其他文字与 Markdown 状态展示沿原位置保留；整条消息都被移走且右栏未显示 MVU 页时，原位置显示打开该页的按钮。实际页面、消息回调和制卡 `test_draft` 共用内容拆分规则。
 
-变量更新由 Tracker 或 Full Agent 工具提交 JSON Patch；Half Agent 的正文由 Writer 生成，普通 Full Agent 用 submit_story 追加 1–3 段并合成一条正文，普通 assistant 文本只作备注。开场初始化和受支持的脚本回调由 Runtime 校验，并与剧情原子提交。
+剧情模型用工具提交变量 JSON Patch，并用 `submit_story` 追加 1–3 段并合成一条正文，普通 assistant 文本只作备注。开场初始化和受支持的脚本回调由 Runtime 校验，并与剧情原子提交。
 
-Full Agent 的非空变量补丁只触发 MVU 变量事件；`MESSAGE_RECEIVED` 在正文及变量草稿就绪、开始收尾时触发一次，异步处理完成后才保存。依赖旧版“补丁阶段也触发 MESSAGE_RECEIVED”的卡片需把变量专用逻辑改挂 MVU 事件；按消息计次的逻辑保留在 MESSAGE_RECEIVED。正文交付本身、过程说明、网络结束和预览重放都不触发该消息事件。
+剧情模型的非空变量补丁只触发 MVU 变量事件；`MESSAGE_RECEIVED` 在正文及变量草稿就绪、开始收尾时触发一次，异步处理完成后才保存。依赖旧版“补丁阶段也触发 MESSAGE_RECEIVED”的卡片需把变量专用逻辑改挂 MVU 事件；按消息计次的逻辑保留在 MESSAGE_RECEIVED。正文交付本身、过程说明、网络结束和预览重放都不触发该消息事件。
 
 接口依据：[MVU 教程](https://github.com/MagicalAstrogy/MagVarUpdate/blob/master/doc/tutorial.md)、[酒馆助手变量 API](https://github.com/N0VI028/JS-Slash-Runner/blob/c0196caee03955aa39e00db1a2623b2591bd3c6f/src/function/variables.ts)、[变量宏契约](https://github.com/N0VI028/JS-Slash-Runner/blob/c0196caee03955aa39e00db1a2623b2591bd3c6f/src/function/macro_like.ts)。上述接口由项目独立适配；EJS、父页面 DOM 依赖和未编译框架源码需按本宿主调整。
 
@@ -80,8 +80,7 @@ Full Agent 的非空变量补丁只触发 MVU 变量事件；`MESSAGE_RECEIVED` 
 | ST DOM、内部模块、完整 `getContext()`、STscript、EJS 与插件机制 | 需要改写为本项目支持的接口和展示方式；EJS 见下文“ST-Prompt-Template（EJS）” |
 | `global`、`character`、`preset` 等变量 | 作为当前会话分支内的命名空间保存 |
 | 脚本持久状态 | 通过变量 API 保存，后台脚本按回合重新加载 |
-| 世界书位置 | Half Agent“按角色卡位置注入”的非常驻条目支持角色前后、作者注释、示例前后、深度和命名 outlet；常驻条目集中在固定前缀，位置与深度只用于区内排序。复杂 JavaScript 正则需适配 Python 检索环境 |
-| `generateRaw` | 支持角色描述、性格、场景、世界书、示例、历史及输入占位符，复杂预设脚本另行适配 |
+| 世界书位置 | 常驻条目集中在固定前缀，中途条目由检索确定并随剧情锚定。复杂 JavaScript 正则需适配 Python 检索环境 |
 | HTML 中的 ES module | 将模块放入角色脚本，或预先适配为可执行的浏览器脚本 |
 | 外部资源 | 静态依赖下载并固定缓存；图片的正则捕获组、变量宏与 JavaScript 模板在展开后加载，支持动态 `src`、`srcset`、SVG 图片引用、视频封面与内联背景图；特殊 CDN 加载器和 ST 相对导入仍需适配 |
 | MVU/Zod 扩展 | 按具体接口检查固定核心与本项目宿主的组合行为 |
@@ -107,7 +106,7 @@ Full Agent 的非空变量补丁只触发 MVU 变量事件；`MESSAGE_RECEIVED` 
 ## 可复现样本
 
 - `samples/雾港来信.json`：原创文本卡、中文世界书、角色提示词与未知扩展。
-- `samples/星航状态卡.json`：原创美化卡、按钮生成、InitVar、能量变量与修正回调。
+- `samples/星航状态卡.json`：原创美化卡、InitVar、能量变量与修正回调。
 - 测试动态构造 PNG 和 CHARX，检查导入/导出；浏览器测试运行真实 Chromium 与 KohakuTerrarium。
 - 上游差分测试比较固定输入下的 MVU 核心与适配流程输出。
 
@@ -122,8 +121,8 @@ Full Agent 的非空变量补丁只触发 MVU 变量事件；`MESSAGE_RECEIVED` 
 | 等级 | 典型用法 | 说明 |
 |---|---|---|
 | 等价 | 变量插值、`[InitialVariables]`、`activateRegex` 字符串替换、`[RENDER]`/`@@iframe` 面板、启停类装饰器 | 改为变量宏、`[InitVar]`（路径补 `stat_data.`）、`regex_scripts` 与展示正则 |
-| 近似 | `[GENERATE]`/`@INJECT` 位置注入、`[GENERATE:REGEX]`、`injectPrompt` 出口、模型输出 `setvar` | 改为条目位置与深度、关键词、命名 outlet、`tracker_mvu` 规则；位置只对 Half Agent“按角色卡位置注入”的非常驻条目生效，常驻条目不能复现剧情插入位置；outlet 需用户在会话配方中添加，变量变化由变量任务判断 |
-| 降级（低可靠） | `@@if`、`<% if %>` 条件段与多分支文本、`getwi`/`activewi`/`@@preprocessing` 按状态激活 | 插件在条件为假时不发送文本；改写后文本常驻，写明适用条件，由模型按当前变量判断，可能误用并多占 tokens。Full Agent 的变量需按需读取，可靠性更低 |
+| 近似 | 位置注入、`[GENERATE:REGEX]`、模型输出 `setvar` | 改写为有明确触发条件的世界书条目、展示正则或 `mvu_rules` 变量规则，说明注入与更新时机的变化 |
+| 降级（低可靠） | `@@if`、`<% if %>` 条件段与多分支文本、`getwi`/`activewi`/`@@preprocessing` 按状态激活 | 插件在条件为假时不发送文本；改写后文本常驻，写明适用条件，由模型按当前变量判断，可能误用并多占 tokens。剧情模型的变量需按需读取，可靠性更低 |
 | 未转换 | 见下 | 保留原文并列为待处理项，适配报告为部分适配 |
 
 目前未实现、无法通过改写获得等价行为的能力：
@@ -137,7 +136,7 @@ Full Agent 的非空变量补丁只触发 MVU 变量事件；`MESSAGE_RECEIVED` 
 - 把独立 `role` 消息插到第 N 条或按内容匹配的位置，只能以深度近似；
 - 插件的 token 统计变量。
 
-只影响显示的计算可移到展示面板脚本；需要进入模型的判断可改为由 Tracker 维护的变量。两者都属于重新设计，需用户确认。要求模型按条件输出状态栏的段落，按状态栏迁移处理，不涉及条件转换。
+只影响显示的计算可移到展示面板脚本；需要进入模型的判断可改为由剧情模型维护的变量。两者都属于重新设计，需用户确认。要求模型按条件输出状态栏的段落，按状态栏迁移处理，不涉及条件转换。
 
 ## MVU 与 Schema 适配
 
@@ -147,7 +146,7 @@ Full Agent 的非空变量补丁只触发 MVU 变量事件；`MESSAGE_RECEIVED` 
 
 初始化读取开场原文后，卡内正则再生成 model/display；`promptOnly` 控制模型提示通道，`markdownOnly` 控制界面通道，两者均启用时同时处理。首次模型任务前[编辑开场白](story-history.md)会清空旧开场的变量、脚本状态及初始化标记，再按新原文初始化；全部成功后与文本原子保存。已经正确初始化并从模型文本剥离的内联数据应保留，不因状态栏迁移而删除。MVU 上游还支持初始化后执行开场增量指令；本项目目前不自动执行原文中的 UpdateVariable/JSONPatch 增量，需已有脚本处理，并验证实际结果。初始化只读取世界书与开场原文，不支持扩展字段中的隐藏初值覆盖。
 
-同一世界书或开场中的多个初始化片段按顺序合并，后面的数组完整替换前面的数组；与已有状态合并时只处理根字段，已有根对象或数组完整保留，不递归补缺。`[InitVar]` 初始化不受条目用途限制，标记 `tracker_mvu` 的条目也参与初始化；变量任务以 `tracker_mvu` 为依据，读取全部启用条目，以及关闭但标题含 `[InitVar]` 的条目。普通变量规则不因 `tracker_mvu` 用途自动成为初值。已有对话快照不会因修改初值自动重置。
+同一世界书或开场中的多个初始化片段按顺序合并，后面的数组完整替换前面的数组；与已有状态合并时只处理根字段，已有根对象或数组完整保留，不递归补缺。`[InitVar]` 初始化不受条目用途限制，标记 `mvu_rules` 的条目也参与初始化；变量任务以 `mvu_rules` 为依据，读取全部启用条目，以及关闭但标题含 `[InitVar]` 的条目。普通变量规则不因 `mvu_rules` 用途自动成为初值。已有对话快照不会因修改初值自动重置。
 
 ## 剧情修改与世界书行为
 

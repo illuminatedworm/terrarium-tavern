@@ -1,6 +1,8 @@
 """A read-only story snapshot and a separately managed consultation window."""
 
 import copy
+import hashlib
+import json
 
 from tavern.character.cards import card_view, is_initvar, lore_entries, normalize
 from tavern.conversation.context import macros
@@ -11,9 +13,8 @@ from tavern.core.history_refs import message_positions, message_ref
 from tavern.core.message_adapter import project_context
 from tavern.core.model_selection import ModelSelection
 from tavern.core.model_view import HANDLE, ModelView
-from tavern.full_agent.state import read_full_state
-from tavern.memories.memory_records import read_memory, render_document, source_hash, with_source_status
 from tavern.scripting.request_context import response_origin
+from tavern.story.state import read_story_state
 
 
 def runtime_config(store, session, options):
@@ -26,7 +27,7 @@ def runtime_config(store, session, options):
         raise ValueError("请在设置 → 参谋 agent 中配置此渠道的模型")
     if options.get("model_selection"):
         profile = ModelSelection.model_validate(options["model_selection"]).profile(profile)
-    cfg = store.settings(session["agent_mode"], channel)
+    cfg = store.settings(channel)
     cfg.advisor = profile.model_copy(deep=True)
     cfg = cfg.for_role("advisor")
     require_channel(cfg, channel)
@@ -55,7 +56,6 @@ def freeze_story(store, session):
             "id",
             "revision",
             "head",
-            "agent_mode",
             "channel_origin",
             "persona",
             "persona_data",
@@ -67,6 +67,16 @@ def freeze_story(store, session):
             "title",
         )
     } | {"document": copy.deepcopy(document)}
+
+
+def source_hash(message):
+    # Hash stored text AND its macro inputs: a displayed identical template can
+    # describe a different event after its snapshot variables have changed.
+    snap = message.get("snapshot", {})
+    if isinstance(snap, str):
+        snap = json.loads(snap)
+    payload = [message.get("model", message.get("raw", "")), snap.get("state", {}), snap.get("content")]
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def sources(story):
@@ -85,34 +95,6 @@ def recent_history(history, count):
     # while there are fewer exchanges than the requested range.
     completed = [group for group in groups if any(m["role"] == "assistant" for m in group)]
     return [m for group in completed[-count:] for m in group]
-
-
-def memory_rows(story):
-    memory = with_source_status(read_memory(story["snapshot"]), story["messages"])
-    refs = {mid: message_ref(position) for mid, position in message_positions(story["messages"]).items()}
-    return [
-        {
-            "ref": f"R{i + 1}",
-            **{
-                k: r[k]
-                for k in (
-                    "category",
-                    "kind",
-                    "content",
-                    "status",
-                    "manual",
-                    "source_stale",
-                    "people",
-                    "known_to",
-                    "story_time",
-                )
-                if k in r
-            },
-            "sources": [refs[s["message_id"]] for s in r.get("sources", []) if s.get("message_id") in refs],
-        }
-        for i, r in enumerate(memory["records"])
-        if r["status"] not in ("deleted", "superseded")
-    ]
 
 
 def expanded(story, text, message=None):
@@ -153,7 +135,7 @@ def background(story, config):
             "content": f"<user_character>\n{story['persona']}\n{(story.get('persona_data') or {}).get('description', '')}\n</user_character>",
         }
     )
-    for entry in lore_entries(story["document"], "writer"):
+    for entry in lore_entries(story["document"], "narrative"):
         if entry["enabled"] and entry.get("constant") and not is_initvar(entry):
             header.append(
                 {
@@ -167,18 +149,12 @@ def background(story, config):
             "content": "<turn_preference>\n" + story.get("turn_preference", "") + "\n</turn_preference>",
         }
     ]
-    if story["agent_mode"] == "full_agent":
-        from tavern.full_agent.handoff import render_text
+    from tavern.story.handoff import render_text
 
-        full = read_full_state(story["snapshot"])
-        handoff = render_text(full["handoff"], story["messages"]) if full else ""
-        if handoff and story.get("context_strategy") != "openai_compact":
-            dynamic.append({"role": "system", "content": "<handoff>\n" + handoff + "\n</handoff>"})
-    else:
-        # Full records, never a token-budget abridgement of selected memory.
-        rendered = render_document({"records": memory_rows(story)})
-        if rendered:
-            dynamic.append({"role": "system", "content": "<story_memory>\n" + rendered + "\n</story_memory>"})
+    full = read_story_state(story["snapshot"])
+    handoff = render_text(full["handoff"], story["messages"]) if full else ""
+    if handoff and story.get("context_strategy") != "openai_compact":
+        dynamic.append({"role": "system", "content": "<handoff>\n" + handoff + "\n</handoff>"})
     recent = recent_history(story["messages"], config.recent_exchanges)
     refs = {mid: message_ref(position) for mid, position in message_positions(story["messages"]).items()}
     for message in recent:

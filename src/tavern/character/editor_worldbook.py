@@ -7,8 +7,9 @@ library ID stays in the item and never enters model input; models address the dr
 by its ``C`` number like any card.
 """
 
-from tavern.character.card_workflow import audience, validation_report
+from tavern.character.card_workflow import validation_report
 from tavern.character.cards import is_initvar, lore_entries, lore_title
+from tavern.character.lore_purpose import NARRATIVE, lore_purpose
 from tavern.character.worldbooks import validate_book
 
 KEYS = {"name", "character_book"}
@@ -49,17 +50,17 @@ def worldbook_report(document):
             title = lore_title(entry) or f"第 {index} 条"
             if not str(entry.get("content", "")).strip():
                 completeness.append(f"条目「{title}」内容为空")
-            # Only enabled Writer entries rely on keys: Tracker and InitVar entries take
-            # other paths, and Full Agent can still find keyless entries by searching.
+            # Only enabled narrative entries rely on keys: MVU rules and InitVar entries take
+            # other paths, and the story model can still find keyless entries by searching.
             if (
                 entry["enabled"]
-                and audience(entry) == "writer"
+                and lore_purpose(entry) == NARRATIVE
                 and not is_initvar(entry)
                 and not entry["keys"]
                 and not entry.get("constant")
             ):
                 completeness.append(
-                    f"条目「{title}」没有主触发词且不是常驻条目：Half Agent 不会按关键词召回，Full Agent 只能靠主动检索找到"
+                    f"条目「{title}」没有主触发词且不是常驻条目：自动检索可用语义相关性召回，也可由 剧情模型主动查找"
                 )
     return {
         "valid": validation["valid"],

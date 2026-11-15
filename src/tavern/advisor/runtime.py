@@ -99,10 +99,8 @@ class AdvisorService:
         state, session = self.data.get(sid), self.store.session(sid)
         cfg, config = runtime_config(self.store, session, state["options"])
         web = WebSession(config.web.mode, cfg, "advisor")
-        novel_access = None
-        if session["agent_mode"] == "full_agent":
-            with self.store.connection() as db:
-                novel_access = self.novel.advisor_access(db, sid)
+        with self.store.connection() as db:
+            novel_access = self.novel.advisor_access(db, sid)
         result = compile_context(
             freeze_story(self.store, session),
             config,
@@ -110,7 +108,7 @@ class AdvisorService:
             state["exchanges"],
             state["context"],
             [],
-            web.definitions(definitions(session["agent_mode"], novel=bool(novel_access))),
+            web.definitions(definitions(novel=bool(novel_access))),
         )
         if local_estimate:
             from tavern.core.local_estimate import attach_local_estimate
@@ -187,9 +185,7 @@ class AdvisorService:
                     "trace": [],
                     "preference": None,
                     "pending": None,
-                    "novel_access": self.novel.advisor_access(db, sid)
-                    if session["agent_mode"] == "full_agent" and not request.compact
-                    else None,
+                    "novel_access": self.novel.advisor_access(db, sid) if not request.compact else None,
                 }
             db.execute(
                 "INSERT INTO advisor_runs(id,session,operation,request,status,created,progress) VALUES (?,?,?,?,'queued',?,?)",
@@ -273,7 +269,7 @@ class AdvisorRun:
         self.web_session = WebSession(
             config.web.mode, cfg, "advisor", self.event, failed=progress.get("web_fallback", False)
         )
-        self.base_definitions = definitions(self.story["agent_mode"], novel=bool(self.novel_access))
+        self.base_definitions = definitions(novel=bool(self.novel_access))
         self.definitions = self.web_session.definitions(self.base_definitions)
         self.tools = AdvisorTools(self)
         self.web = WebTools(
@@ -684,7 +680,7 @@ class AdvisorRun:
                 message_digest(assistant),
             )
             self.event("usage", getattr(provider, "last_usage", {}) or {})
-            # Like Full Agent, only the native end signal completes the reply; a
+            # As in story generation, only the native end signal completes the reply; a
             # response yielding for tools continues even when it carries prose.
             ended = completion.action == "end"
             if ended and not calls and not text.strip() and not self.reply().strip():

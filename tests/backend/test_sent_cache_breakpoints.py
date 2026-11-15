@@ -13,11 +13,15 @@ from tavern.core.cache_policy import CacheSettings
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.scripting.model_transport import ModelTransport
 from tavern.scripting.native_response import attachment
-from tavern.scripting.request_context import OperationContexts, response_origin
+from tavern.scripting.request_context import ProviderRequestContext, response_origin
 from tavern.storage.backup import backup, restore
 from tavern.storage.store import Store
 from tests.backend.test_unified_cache import config, reply
 from tests.support.model_transport import request_payload
+
+
+def operation_context(store, sid, operation, *, scope="narrative"):
+    return ProviderRequestContext(sid, operation, sent_breakpoints=store.cache_breakpoint_history(sid, scope))
 
 
 def messages(at, count=6):
@@ -234,7 +238,7 @@ async def test_real_http_body_transmission_persists_before_any_response(tmp_path
     cfg = config("responses")
     cfg.base_url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
     store, sid = Store(tmp_path), uuid4().hex
-    context = OperationContexts(store, sid, "turn").new()
+    context = operation_context(store, sid, "turn")
     provider = ModelTransport(
         cfg, cfg.api_key, request_context=context, http_client=httpx.AsyncClient(trust_env=False)
     )
@@ -247,7 +251,7 @@ async def test_real_http_body_transmission_persists_before_any_response(tmp_path
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        provider.request_context = OperationContexts(Store(tmp_path), sid, "retry").new()
+        provider.request_context = operation_context(Store(tmp_path), sid, "retry")
         assert marked((await request_payload(provider, messages(2))), "responses") == ["block 0", "block 2"]
     finally:
         task.cancel()
@@ -266,25 +270,25 @@ async def test_durable_history_survives_restart_backup_and_fork_without_cross_se
     card = store.import_card(b'{"name":"fixture","first_mes":"opening"}')
     session = store.new_session(SessionCreate(card_id=card["id"]))
     sid, seen = session["id"], []
-    context = OperationContexts(store, sid, "turn1").new()
+    context = operation_context(store, sid, "turn1")
     async with transport(api, seen, context=context) as p:
         await p.chat_complete(messages(0))
     backup(store, tmp_path / "backup.zip")
     store = restore(tmp_path / "backup.zip", tmp_path / "restored")
-    context = OperationContexts(store, sid, "turn2").new()
+    context = operation_context(store, sid, "turn2")
     async with transport(api, seen, context=context) as p:
         await p.chat_complete(messages(2))
     assert marked(seen[-1], api) == ["block 0", "block 2"]
     other = store.new_session(SessionCreate(card_id=card["id"]))
     for context in (
-        OperationContexts(store, other["id"], "turn").new(),
-        OperationContexts(store, sid, "turn").new("tracker"),
+        operation_context(store, other["id"], "turn"),
+        operation_context(store, sid, "turn", scope="card_author"),
     ):
         async with transport(api, seen, context=context) as p:
             await p.chat_complete(messages(4))
         assert marked(seen[-1], api) == ["block 4"]
     fork = store.fork_session(sid, session["head"], session["revision"])
-    context = OperationContexts(store, fork["id"], "turn3").new()
+    context = operation_context(store, fork["id"], "turn3")
     async with transport(api, seen, context=context) as p:
         await p.chat_complete(messages(4))
     assert marked(seen[-1], api) == ["block 0", "block 2", "block 4"]
@@ -302,38 +306,31 @@ async def test_durable_history_survives_restart_backup_and_fork_without_cross_se
 
 
 @pytest.mark.parametrize("api", ["responses", "chat_completions"])
-@pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
-async def test_story_requests_keep_old_breakpoints_across_committed_turns(tmp_path, monkeypatch, api, mode):
-    from tavern.application.modes import ModeRuntime
-    from tests.backend.test_full_agent import ScriptHost, story_reply
-    from tests.backend.test_half_agent_alignment import sse
+async def test_story_requests_keep_old_breakpoints_across_committed_turns(tmp_path, monkeypatch, api):
+    from tavern.application.service import StoryService
+    from tests.backend.test_story import ScriptHost, story_reply
+    from tests.support.model_transport import sse
 
     store = Store(tmp_path)
     document = store.settings_document()
-    document.full_agent.tools.auto_retrieval = False
-    document.half_agent.chunk_mode = "off"
-    document.half_agent.memory_interval_turns = 100
+    document.story.tools.auto_retrieval = False
     document.shared.providers[0].api_key = "fixture-secret"
     document.shared.providers[0].base_url = "https://fixture.test"
     document.shared.network.api_proxy = False
-    for model in (document.full_agent.model, document.half_agent.foreground):
+    for model in (document.story.model,):
         model.api_mode, model.model = api, "gpt-6-sol"
     store.save_settings(document)
     card = store.import_card(b'{"name":"fixture","first_mes":"opening","description":"fixed rules"}')
-    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
+    session = store.new_session(SessionCreate(card_id=card["id"]))
     session = store.set_cache_breakpoint(session["id"], session["revision"], True, None, 1, 1)
-    service = ModeRuntime(store)
-    service.full.runtime = ScriptHost()
+    service = StoryService(store)
+    service.story.runtime = ScriptHost()
     seen = []
 
     def route(request):
         body = json.loads(request.content)
         seen.append(body)
-        payload = (
-            story_reply(api, "OK")
-            if mode == "full_agent" and (api != "responses" or len(seen) % 2 == 1)
-            else reply(api)
-        )
+        payload = story_reply(api, "OK") if api != "responses" or len(seen) % 2 == 1 else reply(api)
         if not body.get("stream"):
             return httpx.Response(200, json=payload)
         if api == "responses":
@@ -364,19 +361,19 @@ async def test_story_requests_keep_old_breakpoints_across_committed_turns(tmp_pa
             http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)),
         )
 
-    monkeypatch.setattr("tavern.full_agent.agent.make_provider", factory)
-    monkeypatch.setattr("tavern.scripting.agent.make_provider", factory)
+    monkeypatch.setattr("tavern.story.agent.make_provider", factory)
+    monkeypatch.setattr("tavern.core.provider.make_provider", factory)
     try:
         for _ in range(3):
-            turn = service.submit(
+            turn = service.story.submit(
                 session["id"],
                 TurnRequest(text="continue", operation_id=uuid4().hex, expected_revision=session["revision"]),
             )
-            await service.tasks[turn["id"]]
+            await service.story.tasks[turn["id"]]
             result = store.turn(turn["id"])
             assert result["status"] == "committed", result["error"]
             session = store.session(session["id"])
-        story_requests = seen[::2] if mode == "full_agent" and api == "responses" else seen
+        story_requests = seen[::2] if api == "responses" else seen
         assert [len(marked(body, api)) for body in story_requests] == [1, 2, 3]
         assert marked(seen[0], api)[0] == marked(seen[-1], api)[0]
     finally:

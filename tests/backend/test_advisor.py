@@ -17,11 +17,11 @@ from tavern.storage.store import dump, uid
 from tests.backend.test_card_author import ToolLLM, import_fixture
 
 
-def setup(tmp_path, mode="full_agent"):
+def setup(tmp_path):
     app = create_app(tmp_path)
     store = app.state.store
     card = import_fixture(store)
-    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
+    session = store.new_session(SessionCreate(card_id=card["id"]))
     return app, store, session, app.state.advisor
 
 
@@ -40,9 +40,8 @@ async def ask(advisor, sid, provider, text="现在应该怎么办？", resume=No
     return advisor.data.run(run["id"])
 
 
-@pytest.mark.parametrize("mode", ["full_agent", "half_agent"])
-async def test_readonly_chat_and_complete_history(tmp_path, mode):
-    _, store, session, advisor = setup(tmp_path, mode)
+async def test_readonly_chat_and_complete_history(tmp_path):
+    _, store, session, advisor = setup(tmp_path)
     before = copy.deepcopy(store.session(session["id"]))
     provider = ToolLLM([("read_history", {"ref": "H1"})])
     result = await ask(advisor, session["id"], provider)
@@ -58,7 +57,7 @@ async def test_readonly_chat_and_complete_history(tmp_path, mode):
     names = {d.name for d in provider.schemas[0]}
     assert not names & {"write_handoff", "write_note", "write_plot", "patch_state", "revise_content"}
     assert not names & {"novel_outline", "search_novel", "read_novel"}
-    assert ("search_memory" in names) == (mode == "half_agent")
+    assert "search_notes" in names
 
 
 async def test_advisor_novel_revocation_rejects_an_inflight_excerpt(tmp_path, monkeypatch):
@@ -176,16 +175,13 @@ async def test_history_spans_return_complete_messages_and_enforce_the_shared_lim
         for index in range(9)
     ]
     story = {
-        "agent_mode": "half_agent",
         "document": {},
         "persona": "用户",
         "snapshot": {},
         "messages": messages,
     }
     before = copy.deepcopy(story)
-    tools = AdvisorTools(
-        SimpleNamespace(story=story, definitions=definitions("half_agent"), view=ModelView(story))
-    )
+    tools = AdvisorTools(SimpleNamespace(story=story, definitions=definitions(), view=ModelView(story)))
     result = await tools.execute("read_history", '{"ref":"H1-H8"}')
     assert result == {
         "messages": [
@@ -201,17 +197,16 @@ async def test_history_spans_return_complete_messages_and_enforce_the_shared_lim
     assert story == before
 
 
-async def test_full_agent_reads_validate_versions_without_mutating_the_snapshot():
+async def test_story_reads_validate_versions_without_mutating_the_snapshot():
     from tavern.advisor.config import AdvisorConfig
     from tavern.advisor.context import background
     from tavern.advisor.tools import AdvisorTools, ContextRead
-    from tavern.full_agent.state import new_state
+    from tavern.story.state import new_state
 
     story = {
         "document": {"name": "Guide"},
         "persona": "User",
-        "snapshot": {"full_agent": new_state()},
-        "agent_mode": "full_agent",
+        "snapshot": {"story": new_state()},
         "messages": [],
         "turn_preference": "",
         "context_strategy": "new_context",
@@ -219,7 +214,7 @@ async def test_full_agent_reads_validate_versions_without_mutating_the_snapshot(
     tools = AdvisorTools(SimpleNamespace(story=story))
     args = ContextRead(field="handoff")
     assert await tools.dispatch("read_story_context", args) == {"available": True, "content": ""}
-    state = story["snapshot"]["full_agent"]
+    state = story["snapshot"]["story"]
     state["handoff"]["current"] = [{"text": "旧交接完整保留", "kind": "fact", "refs": []}]
     saved = copy.deepcopy(story["snapshot"])
     assert "旧交接完整保留" in str(background(story, AdvisorConfig()))

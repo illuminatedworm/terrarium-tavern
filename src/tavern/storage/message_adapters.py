@@ -3,16 +3,7 @@
 import json
 
 from tavern.core.errors import NotFound
-from tavern.core.message_adapter import MessageAdapterConfig, catalog, infer_type
-
-
-def recipe_types(recipe):
-    for block in recipe.get("blocks", []):
-        if block.get("source") != "history" and not block.get("message_type"):
-            block["message_type"] = infer_type(
-                {"context_source": block["source"], "role": block.get("role", "system")}
-            )
-    return recipe
+from tavern.core.message_adapter import MessageAdapterConfig, catalog
 
 
 class MessageAdapters:
@@ -25,15 +16,16 @@ class MessageAdapters:
                 DELETE FROM message_adapter_configs WHERE owner_kind='story' AND owner_id=OLD.id; END;
                 CREATE TRIGGER IF NOT EXISTS adapter_editor_delete AFTER DELETE ON card_author_conversations BEGIN
                 DELETE FROM message_adapter_configs WHERE owner_kind='editor' AND owner_id=OLD.id; END;""")
-            owners = [
-                ("story", r["id"], r["agent_mode"]) for r in db.execute("SELECT id,agent_mode FROM sessions")
-            ]
-            owners += [
-                ("editor", r["id"], "card_author")
-                for r in db.execute("SELECT id FROM card_author_conversations")
-            ]
-            for kind, owner, mode in owners:
-                self.create_message_adapter(db, kind, owner, mode)
+            for kind, table in (("story", "sessions"), ("editor", "card_author_conversations")):
+                for row in db.execute(
+                    f"""
+                    SELECT id FROM {table} WHERE NOT EXISTS (
+                        SELECT 1 FROM message_adapter_configs WHERE owner_kind=? AND owner_id={table}.id
+                    )
+                """,
+                    (kind,),
+                ).fetchall():
+                    self.create_message_adapter(db, kind, row["id"])
             for row in db.execute(
                 "SELECT owner_kind,owner_id,config FROM message_adapter_configs"
             ).fetchall():
@@ -49,16 +41,18 @@ class MessageAdapters:
                         (json.dumps(cleaned, ensure_ascii=False), row["owner_kind"], row["owner_id"]),
                     )
 
-    def create_message_adapter(self, db, kind, owner, mode):
-        document = self.settings_document()
-        profiles = (
-            {"card_author": document.shared.card_author}
-            if kind == "editor"
-            else {"full_agent": document.full_agent.model}
-            if mode == "full_agent"
-            else {"foreground": document.half_agent.foreground, "background": document.half_agent.background}
+    def create_message_adapter(self, db, kind, owner):
+        from tavern.core.settings import SettingsDocument
+
+        document = SettingsDocument.model_validate_json(
+            db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
         )
-        config = {lane: profile.message_adapter.model_dump() for lane, profile in profiles.items()}
+        lane, profile = (
+            ("card_author", document.shared.card_author)
+            if kind == "editor"
+            else ("story", document.story.model)
+        )
+        config = {lane: profile.message_adapter.model_dump()}
         db.execute(
             "INSERT OR IGNORE INTO message_adapter_configs(owner_kind,owner_id,config) VALUES (?,?,?)",
             (kind, owner, json.dumps(config, ensure_ascii=False)),
@@ -77,22 +71,14 @@ class MessageAdapters:
             ).fetchone()
             if saved is None:
                 raise ValueError("对话消息适配设置尚未初始化")
-            extra = []
-            if kind == "story":
-                recipe = recipe_types(json.loads(row["recipe"]))
-                extra = [b["message_type"] for b in recipe.get("blocks", []) if b.get("message_type")]
             config = json.loads(saved["config"])
         document = self.settings_document()
         profiles = {
-            "foreground": document.half_agent.foreground,
-            "background": document.half_agent.background,
-            "full_agent": document.full_agent.model,
+            "story": document.story.model,
             "card_author": document.shared.card_author,
         }
         labels = {
-            "foreground": "正文生成",
-            "background": "Tracker",
-            "full_agent": "Full Agent",
+            "story": "游玩",
             "card_author": "制卡 agent",
         }
         return {
@@ -107,8 +93,7 @@ class MessageAdapters:
                         lane,
                         list(
                             dict.fromkeys(
-                                (extra if lane == "foreground" else [])
-                                + [
+                                [
                                     name
                                     for rules in config[lane].get("mappings", {}).values()
                                     for name in rules
@@ -130,8 +115,6 @@ class MessageAdapters:
         if row is None:
             raise NotFound("对话消息适配设置不存在")
         config = json.loads(row["config"])
-        if lane in ("foreground", "background") and "full_agent" in config:
-            lane = "full_agent"
         if lane not in config:
             raise ValueError("对话不包含此模型调用链")
         return {"config": config[lane], "revision": row["revision"]}

@@ -18,7 +18,7 @@ Android 版把 Python/FastAPI 后端、Vue 前端和脚本 WebView 装入同一�
 
 | 范围 | 内容 |
 | --- | --- |
-| 后端业务 | `src/tavern/` 中除下表分叉点以外的全部代码：回合编排、Writer/Tracker、记忆、世界书检索与注入、提示词、模型请求、制卡 agent、参谋 agent、MVU |
+| 后端业务 | `src/tavern/` 中除下表分叉点以外的全部代码：剧情回合编排、笔记、世界书检索与注入、提示词、模型请求、制卡 agent、参谋 agent、MVU |
 | 持久格式 | 数据库 schema、设置文档版本、个人数据包；Android 备份可导入桌面，反之亦然。格式变化须两端都能升级 |
 | 界面 | `web/`、`compat/`、`vendor/mvu/` 只有一份，APK 打包同一次 `npm run build` 的产物 |
 | 脚本隔离约定 | [`realm.py`](../../src/tavern/scripting/realm.py) 的后端接口，以及 [`network_guard.py`](../../src/tavern/scripting/network_guard.py) 的文档起始脚本（桌面受控窗口与 Android WebView 共用） |
@@ -181,7 +181,7 @@ android-dev/build-env/Scripts/python.exe tools/android/dev.py check
 | 自检组 | 内容 |
 | --- | --- |
 | `native` | 原生分词依赖 |
-| `sessions` | Half Agent 与 Full Agent 的角色卡导入、开场变量初始化和对话读取 |
+| `sessions` | 角色卡导入、开场变量初始化和对话读取 |
 | `scripts` | 带脚本的消息帧、制卡展示断言与依赖打包 |
 | `documents` | 制卡 agent 读取 DOCX/XLSX |
 | `restart` | 后端停止后立即在原端口重启 |

@@ -1,0 +1,346 @@
+"""Story runtime: authorization, script IO, cancellation, atomic commit."""
+
+import asyncio
+import copy
+
+from tavern.character.cards import regex_scripts
+from tavern.conversation.regeneration import turn_start
+from tavern.conversation.update_review import finish_turn
+from tavern.core.cache_policy import fingerprint
+from tavern.core.models import TurnRequest
+from tavern.core.provider import require_model_connection
+from tavern.core.story_segments import split_segments
+from tavern.scripting.runtime import ScriptRuntime
+from tavern.scripting.story_display import transform_display
+from tavern.storage.store import dump, uid
+from tavern.story.agent import StoryAgent
+from tavern.story.delivery import StoryFormat
+from tavern.story.lore import RetrievalLane
+from tavern.story.prefix_debug import PrefixDebug
+from tavern.story.protocol import TurnError
+from tavern.story.tools import new_story_format
+
+
+class StoryRuntime:
+    def __init__(self, store, retrieval, dependencies):
+        self.store, self.dependencies = store, dependencies
+        self.retrieval = RetrievalLane(retrieval)
+        self.runtime = ScriptRuntime()
+        self.tasks, self.agents = {}, {}
+        self.provider_factory = None
+        self.prefix_debug = PrefixDebug()
+        from tavern.novel.service import NovelService
+
+        self.novel = NovelService(store)
+
+    def submit(self, sid, request):
+        session = self.store.session(sid)
+        if request.update_variables and "patch_state" in session["disabled_tools"]:
+            raise ValueError("本轮要求更新 MVU 变量，请先在工具页启用 patch_state")
+        settings = self.store.session_settings(session).for_role("story")
+        resumed = self.store.story_progress(request.resume_turn_id) if request.resume_turn_id else None
+        # A saved natural end replays only local finalization; every other
+        # run, including a resume, needs a usable model connection up front.
+        if self.provider_factory is None and not (resumed or {}).get("model_completed"):
+            require_model_connection(settings)
+        tid, created = self.store.create_turn(sid, request)
+        if created:
+            self.tasks[tid] = asyncio.create_task(self.run(tid, new_story_format(session, settings)))
+
+            def completed(task):
+                for key in [k for k, v in self.tasks.items() if v.done()][:-30]:
+                    self.tasks.pop(key, None)
+
+            self.tasks[tid].add_done_callback(completed)
+        return self.store.turn(tid)
+
+    async def close(self):
+        for task in self.tasks.values():
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*self.tasks.values(), return_exceptions=True)
+        await self.novel.close()
+        await self.runtime.close()
+        self.prefix_debug.clear()
+
+    async def cancel(self, tid):
+        task = self.tasks.get(tid)
+        if task and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        elif self.store.turn(tid)["status"] == "awaiting_review":
+            self.store.reject_review(tid)
+
+    async def initialize_session(self, sid):
+        from tavern.scripting.opening import prepare_opening
+
+        session = self.store.session(sid)
+        card = self.store.session_card(sid)
+        greeting = await prepare_opening(
+            self.runtime, self.dependencies, session, card, session["messages"][-1]
+        )
+        with self.store.connection() as db:
+            db.execute(
+                "UPDATE messages SET snapshot=?,model=?,display=? WHERE id=?",
+                (dump(greeting["snapshot"]), greeting["model"], greeting["display"], greeting["id"]),
+            )
+        return self.store.session(sid)
+
+    async def run(self, tid, story_format: StoryFormat):
+        with self.retrieval.engine.dictionary.bind():
+            await self._run(tid, story_format)
+
+    async def _run(self, tid, story_format: StoryFormat):
+        script = None
+        await self.novel.cancel_invalidated(self.store.turn(tid)["session"])
+        deadline = asyncio.timeout(None)
+        try:
+            async with deadline:
+                turn = self.store.turn(tid)
+                request = TurnRequest.model_validate(turn["request"])
+                session = self.store.session(turn["session"])
+                from tavern.core.message_adapter import bind_adapter
+
+                settings = bind_adapter(
+                    self.store.session_settings(session).for_role("story").model_copy(deep=True),
+                    self.store,
+                    "story",
+                    session["id"],
+                )
+                deadline.reschedule(
+                    asyncio.get_running_loop().time() + settings.story_config.max_duration_seconds
+                )
+                if request.reasoning_effort is not None:
+                    settings.reasoning_effort = request.reasoning_effort
+                start = turn_start(session, request)
+                history, reused, before = start.history, start.reused_user, start.snapshot
+                request.text, request.ooc = start.text, start.ooc
+                progress = self.store.story_progress(tid)
+                snapshot = copy.deepcopy(progress["snapshot"] if progress else before)
+                card = self.store.session_card(session["id"])
+                document = copy.deepcopy(
+                    progress["document"]
+                    if progress
+                    else (snapshot.get("content") or {}).get("document", card["document"])
+                )
+                self.store.set_turn(tid, status="running")
+                self.store.event(tid, "started", {"purpose": "story"})
+                if card["permission"]:
+                    await self.dependencies.resolve({**card, "document": document})
+
+                async def host(method, args):
+                    if method == "log":
+                        self.store.event(tid, "script_log", args)
+                        return None
+                    if method == "cancel":
+                        return False
+                    raise ValueError("角色脚本不能发起模型请求，请在对话输入框发起剧情回合")
+
+                script = await self.runtime.open(
+                    document,
+                    history,
+                    snapshot,
+                    bool(card["permission"]),
+                    host,
+                    self.dependencies.scripts({**card, "document": document}),
+                    lambda html: self.dependencies.markup({**card, "document": document}, html),
+                    persona=session["persona"],
+                )
+                mirror = (
+                    copy.deepcopy(progress["script_mirror"]) if progress else await script.call("snapshot")
+                )
+                snapshot.update(state=mirror["state"], scopes=mirror["scopes"])
+                rules, input_raw = regex_scripts(document), request.text
+                from tavern.core.ooc import with_ooc
+
+                # Card regex sees only story text; every model reader gets the tagged ooc after it.
+                request.text = (
+                    progress["user"]["model"]
+                    if progress
+                    else with_ooc(
+                        await script.call("transform", input_raw, rules, 1, "model", 0), request.ooc
+                    )
+                )
+                input_id, output_id = (
+                    (progress["user"]["id"] if progress else reused["id"] if reused else uid()),
+                    progress["output_id"] if progress else uid(),
+                )
+                user = (
+                    copy.deepcopy(progress["user"])
+                    if progress
+                    else reused
+                    or {
+                        "id": input_id,
+                        "parent": history[-1]["id"] if history else None,
+                        "role": "user",
+                        "raw": input_raw,
+                        "model": request.text,
+                        "display": await script.call("transform", input_raw, rules, 1, "display", 0),
+                        "ooc": request.ooc,
+                        "snapshot": copy.deepcopy(before),
+                    }
+                )
+                if not progress:
+                    for mid, role, text in ((input_id, "user", input_raw), (output_id, "assistant", "")):
+                        mirror["messages"].append(
+                            {
+                                "message_id": len(mirror["messages"]),
+                                "id": mid,
+                                "role": role,
+                                "message": text,
+                                "variables": copy.deepcopy(snapshot["state"]),
+                            }
+                        )
+                # New progress owns this identity independently of mutable
+                # script mirrors; legacy progress used the reserved mirror ID.
+                mirror["messages"][-1]["id"] = output_id
+                await script.call("update", mirror)
+                agent = StoryAgent(
+                    self.store,
+                    tid,
+                    document,
+                    session,
+                    history,
+                    snapshot,
+                    request,
+                    script,
+                    settings,
+                    user,
+                    self.retrieval,
+                    progress,
+                    script_mirror=mirror,
+                    novel=self.novel,
+                    story_format=story_format,
+                    output_id=output_id,
+                )
+                self.agents[tid] = agent
+                if not settings.debug_story_prefix:
+                    self.prefix_debug.clear()
+
+                def observe_request(request):
+                    agent.event("story_prefix_debug", self.prefix_debug.record(request))
+
+                text = await agent.run(
+                    provider_factory=self.provider_factory,
+                    request_observer=observe_request if settings.debug_story_prefix else None,
+                )
+                try:
+                    mirror = await script.call("snapshot")
+                    mirror["messages"][-1]["message"] = text
+                    await script.call("update", mirror)
+                    raw_breaks = agent.story["breaks"]
+                    candidate, candidate_breaks = await transform_display(
+                        script, text, rules, breaks=raw_breaks
+                    )
+                    for part in split_segments(candidate, candidate_breaks):
+                        if card["permission"] and "<script" in part.lower():
+                            await script.add_message_frame(
+                                self.dependencies.markup({**card, "document": document}, part),
+                                {
+                                    **mirror,
+                                    "serverMain": False,
+                                    "currentMessage": len(mirror["messages"]) - 1,
+                                },
+                                host,
+                            )
+                    processed = await script.call("process", text, [], "")
+                    snapshot.update(state=processed["state"], scopes=processed["scopes"])
+                    if processed.get("loreModified"):
+                        # The mirror can predate model edits and successful variable
+                        # tools. Only this final callback's delta may replace them.
+                        agent.apply_script_lore(mirror["lore"], processed)
+                    if processed["text"] != text:
+                        # The callback's complete text is authoritative; delivery
+                        # offsets no longer describe it, but cannot block commit.
+                        raw_breaks = []
+                    text = processed["text"]
+                    if not text.strip():
+                        raise ValueError("正文回调返回了空白内容，本回合未提交")
+                    model = await script.call("transform", text, rules, 2, "model", 0)
+                    display, display_breaks = await transform_display(
+                        script,
+                        text,
+                        rules,
+                        breaks=raw_breaks,
+                        markup=(lambda part: self.dependencies.markup({**card, "document": document}, part))
+                        if card["permission"]
+                        else None,
+                    )
+                    if not display_breaks:
+                        raw_breaks = []
+                except Exception as error:
+                    # Progress was saved before callbacks. A user continuation
+                    # retries only this local phase, without accumulating partial
+                    # script effects or paying the model to rewrite the story.
+                    detail = str(error) or type(error).__name__
+                    raise TurnError(
+                        "STORY_FINALIZATION_FAILED",
+                        f"正文回调或最终校验失败：{detail}；正文已保留，继续时仅重试本地收尾；需要新正文请重新生成。",
+                    ) from error
+                output = {
+                    "id": output_id,
+                    "parent": input_id,
+                    "role": "assistant",
+                    "raw": text,
+                    "model": model,
+                    "display": display,
+                    "snapshot": snapshot,
+                    "retrieval_query": agent.retrieval_query,
+                    "auxiliary": agent.story["auxiliary"],
+                    "story_segments": {"raw": raw_breaks, "display": display_breaks},
+                }
+                # The story and native replies already live in the trace. This
+                # marker records observations without replaying another body.
+                agent.new_trace.append(
+                    {
+                        "window_id": agent.state["window"]["id"],
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "_story_final": True,
+                            "_history_observations": {
+                                user["id"]: fingerprint(user["model"]),
+                                output_id: fingerprint(model),
+                            },
+                        },
+                    }
+                )
+                pending = {
+                    "messages": [output] if reused else [user, output],
+                    "before": before,
+                    "reason": "剧情回合提交",
+                    "story_trace": agent.new_trace,
+                }
+                agent.preview.replace(text, breaks=raw_breaks)
+                finish_turn(self.store, tid, session, pending, snapshot)
+        except asyncio.CancelledError as error:
+            message = "\n".join(["用户取消，草稿未提交", *getattr(error, "__notes__", [])])
+            self.store.set_turn(tid, status="cancelled", error=message)
+            self.store.event(tid, "cancelled", {})
+        except Exception as error:
+            if isinstance(error, TimeoutError) and deadline.expired():
+                error = TurnError(
+                    "TIME_BUDGET_EXHAUSTED",
+                    f"本次运行达到 {settings.story_config.max_duration_seconds} 秒总时限；草稿未提交，可显式继续。",
+                )
+            message = "\n".join([str(error) or type(error).__name__, *getattr(error, "__notes__", [])])
+            self.store.set_turn(tid, status="error", error=message)
+            self.store.event(
+                tid,
+                "error",
+                {
+                    "message": message,
+                    "error_type": type(error.__cause__ or error).__name__,
+                    "error_code": getattr(error, "code", "RUNTIME_FAILURE"),
+                },
+            )
+        finally:
+            self.agents.pop(tid, None)
+            if script:
+                try:
+                    await asyncio.wait_for(script.close(), timeout=10)
+                except TimeoutError:
+                    # A card script stuck in a busy loop can block browser-context
+                    # shutdown. The turn outcome is already recorded above;
+                    # cleanup only reports the leak instead of rewriting it.
+                    self.store.event(tid, "runtime_warning", {"message": "卡片脚本上下文关闭超时"})

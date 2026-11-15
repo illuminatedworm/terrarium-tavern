@@ -14,11 +14,9 @@ export type SessionOptionsDraft = Pick<Session, 'persona' | 'persona_data' | 'po
 /** Inspector "会话设置" page. Edits stay in a local draft until saved. */
 const props = defineProps<{
   session: Session;
-  fullAgent: boolean;
   notice: string;
   scriptsEnabled: boolean;
   permissionDisabled: boolean;
-  recipeDisabled: boolean;
   preferencePrompt: string;
   inheritedPolicy?: string;
   presets: PreferencePreset[];
@@ -32,8 +30,6 @@ const emit = defineEmits<{
   'script-permission': [enabled: boolean];
   'presets-saved': [settings: SettingsDocument];
   'manage-presets': [];
-  'edit-recipe': [];
-  'reset-recipe': [];
 }>();
 
 const draft = ref<SessionOptionsDraft>(snapshot());
@@ -115,35 +111,6 @@ const advanced = ref(false);
           :disabled="permissionDisabled"
           @change="emit('script-permission', ($event.target as HTMLInputElement).checked)"
       /></label>
-    </section>
-
-    <section class="options-section" aria-labelledby="options-context">
-      <h3 id="options-context"><span>05</span>上下文</h3>
-      <dl class="options-values">
-        <dt>世界书注入</dt>
-        <dd>
-          {{ session.lore_injection_mode === 'conversation' ? '随对话滚动' : 'ST 式顶部可变'
-          }}<FieldHelp tooltip="随剧情进度继承。" />
-        </dd>
-        <dt>对话模式</dt>
-        <dd>
-          {{ fullAgent ? 'Full Agent' : 'Half Agent'
-          }}<FieldHelp
-            :tooltip="
-              fullAgent
-                ? 'Full Agent 使用独立的工作窗口与交接笔记。模式在创建会话时确定。'
-                : '模式在创建会话时确定。'
-            "
-          />
-        </dd>
-      </dl>
-      <template v-if="!fullAgent">
-        <p class="options-label">上下文结构编排<FieldHelp tooltip="仅影响当前对话，随剧情进度继承。" /></p>
-        <div class="options-actions">
-          <button :disabled="recipeDisabled" @click="emit('edit-recipe')">编辑上下文配方</button
-          ><button :disabled="recipeDisabled" @click="emit('reset-recipe')">恢复当前全局编排</button>
-        </div>
-      </template>
     </section>
 
     <section class="options-section" aria-labelledby="options-advanced">

@@ -1,4 +1,4 @@
-"""Shared, revision-checked context controls for the two story modes."""
+"""Revision-checked controls for story context maintenance."""
 
 from typing import Literal
 

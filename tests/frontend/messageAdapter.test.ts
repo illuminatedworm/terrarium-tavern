@@ -30,14 +30,14 @@ describe('message adapter settings', () => {
   });
 
   it('saves adapter dictionaries atomically through the global settings API', () => {
-    const before = { foreground: { message_adapter: { version: 1, mappings: {} } } };
+    const before = { model: { message_adapter: { version: 1, mappings: {} } } };
     const after = {
-      foreground: {
+      model: {
         message_adapter: updateAdapterRule(undefined, 'chat_completions', state, { role: 'user' }),
       },
     };
     expect(difference(before, after)).toEqual({
-      'foreground.message_adapter': after.foreground.message_adapter,
+      'model.message_adapter': after.model.message_adapter,
     });
   });
 

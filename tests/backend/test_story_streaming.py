@@ -1,0 +1,846 @@
+"""Real transport deltas remain provisional across story transaction boundaries."""
+
+import asyncio
+import json
+
+import httpx
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from tavern.application.api import create_app
+from tavern.core.models import TurnRequest
+from tavern.scripting.model_transport import ModelTransport
+from tavern.storage.store import Conflict, Store
+from tavern.story.activity import message_items, turn_items
+from tests.backend.test_story import (
+    Model,
+    Script,
+    ScriptHost,
+    current_text,
+    handoff,
+    native_reply,
+    runtime,
+    story_reply,
+)
+from tests.backend.test_story_alignment import game
+
+
+def delta(text):
+    return {"choices": [{"index": 0, "delta": {"content": text}}]}
+
+
+def terminal(reason="stop"):
+    return {"choices": [{"index": 0, "delta": {}, "finish_reason": reason}]}
+
+
+def body_start(text):
+    return {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "story-1",
+                            "function": {
+                                "name": "submit_story",
+                                "arguments": '{"content":"' + json.dumps(text, ensure_ascii=False)[1:-1],
+                            },
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+
+def body_delta(text):
+    return {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {"index": 0, "function": {"arguments": json.dumps(text, ensure_ascii=False)[1:-1]}}
+                    ]
+                }
+            }
+        ]
+    }
+
+
+def body_end():
+    return [
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '"}'}}]}}]},
+        terminal(),
+    ]
+
+
+def story_events(text):
+    return [body_start(text), *body_end()]
+
+
+def tool_events(name="write_handoff", arguments=None):
+    args = json.dumps(
+        handoff("已确认的工具进度", through=None) if arguments is None else arguments, ensure_ascii=False
+    )
+    return [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 1, "id": "call-1", "function": {"name": name, "arguments": args[:5]}}
+                        ]
+                    }
+                }
+            ]
+        },
+        {"choices": [{"delta": {"tool_calls": [{"index": 1, "function": {"arguments": args[5:]}}]}}]},
+        terminal("tool_calls"),
+    ]
+
+
+class Gate:
+    def __init__(self):
+        self.reached, self.release = asyncio.Event(), asyncio.Event()
+
+
+class WireStream(httpx.AsyncByteStream):
+    def __init__(self, *pieces):
+        self.pieces, self.closed = pieces, False
+
+    async def __aiter__(self):
+        for piece in self.pieces:
+            if isinstance(piece, Gate):
+                piece.reached.set()
+                await piece.release.wait()
+            elif isinstance(piece, Exception):
+                raise piece
+            else:
+                yield (
+                    piece
+                    if isinstance(piece, bytes)
+                    else ("data: " + json.dumps(piece, ensure_ascii=False) + "\n\n").encode()
+                )
+
+    async def aclose(self):
+        self.closed = True
+
+
+def connect(store, service, *streams, api="chat_completions", mode="stream", status=200):
+    settings = store.settings()
+    settings.api_mode, settings.model_request_mode = api, mode
+    bodies = []
+
+    def route(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        assert bool(body.get("stream")) is (mode == "stream")
+        return httpx.Response(
+            status, headers={"content-type": "text/event-stream"}, stream=streams[len(bodies) - 1]
+        )
+
+    provider = ModelTransport(
+        settings, "fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
+    )
+    service.story.provider_factory = lambda: provider
+    return provider, bodies
+
+
+def submit(service, session, **kwargs):
+    return service.story.submit(
+        session["id"],
+        TurnRequest(
+            text="继续故事",
+            expected_revision=session["revision"],
+            operation_id=kwargs.pop("operation_id", "stream-test"),
+            **kwargs,
+        ),
+    )["id"]
+
+
+def replay(store, tid):
+    text = ""
+    for event in store.events(tid):
+        if event["kind"] == "text":
+            text += event["payload"]["text"]
+        elif event["kind"] == "text_reset":
+            text = event["payload"]["text"]
+    return text
+
+
+async def test_kemini_keeps_business_tool_progress_and_commits_only_clean_story(tmp_path):
+    store, service, session = game(tmp_path, "chat_completions", kemini=True)
+    settings = store.settings_document()
+    settings.shared.kemini.normal_disclaimer_enabled = True
+    settings.shared.kemini.filler_text = "填充末尾，不得省略"
+    store.save_settings(settings)
+    first = WireStream(delta("过程备注"), *tool_events())
+    first_story = WireStream(
+        body_start("<think"),
+        body_delta("ing>创作安排</thinking>第一段正文🙂<disclaimer>声明</disclaimer>"),
+        *body_end()[:-1],
+        terminal("tool_calls"),
+    )
+    more_story = WireStream(
+        *story_events("<Interleaving><thinking>续写安排</thinking>第二段正文</Interleaving>")[:-1],
+        *tool_events("submit_story", {"content": "第三段正文"}),
+    )
+    provider, sent = connect(
+        store,
+        service,
+        first,
+        first_story,
+        more_story,
+        WireStream(*tool_events("submit_story", {"content": "第四段不接收"})),
+        WireStream(terminal()),
+    )
+    provider.settings.kemini.enabled = True  # Production providers take the Kemini conversation's settings.
+    try:
+        tid = submit(service, session)
+        await service.story.tasks[tid]
+        assert store.turn(tid)["status"] == "committed", store.turn(tid)["error"]
+        current = store.session(session["id"])
+        message = current["messages"][-1]
+        assert (
+            message["raw"]
+            == message["model"]
+            == message["display"]
+            == replay(store, tid)
+            == "第一段正文🙂\n\n第二段正文\n\n第三段正文"
+        )
+        assert message["story_segments"] == {"raw": [7, 14], "display": [7, 14]}
+        assert message["auxiliary"] == [
+            {"kind": "thinking", "text": "创作安排"},
+            {"kind": "disclaimer", "text": "声明"},
+            {"kind": "thinking", "text": "续写安排"},
+        ]
+        assert current_text(current["snapshot"]["story"]) == "已确认的工具进度"
+        assert any(m["role"] == "tool" for m in sent[1]["messages"])
+        assert any("已接收 1/3 段" in m.get("content", "") for m in sent[2]["messages"])
+        continuation = json.dumps(sent[2]["messages"], ensure_ascii=False)
+        assert continuation.count("第一段正文🙂") == 1 and "创作安排" not in continuation
+        assert any("已接收 3/3 段" in m.get("content", "") for m in sent[3]["messages"])
+        assert any(m["role"] == "tool" and "STORY_LIMIT_REACHED" in m["content"] for m in sent[4]["messages"])
+        assert all(
+            not any(
+                text in e["payload"]["text"]
+                for text in ("过程备注", "创作安排", "声明", "续写安排", "第四段不接收")
+            )
+            for e in store.events(tid)
+            if e["kind"] in ("text", "text_reset")
+        )
+        kemini = settings.shared.kemini
+        prefix = [
+            {"role": "user", "content": text}
+            for text in (kemini.filler_text, kemini.clear_prompt, kemini.identity_prompt, kemini.info_prompt)
+        ]
+        assert sent[0]["messages"][:4] == sent[1]["messages"][:4] == prefix
+        declarations = {t["function"]["name"]: t["function"] for t in sent[0]["tools"]}
+        assert "kemini_emit_story" not in declarations
+        assert "At most 3 successful submissions per turn" in declarations["submit_story"]["description"]
+        assert all("每轮最多成功调用 3 次" in request["messages"][-1]["content"] for request in sent)
+        quota_line = "## 本轮正文交付与结束\n\n本轮已成功调用 3 次，剩余 0 次。\n\n"
+        assert [request["messages"][-1]["content"].count(quota_line) for request in sent] == [0, 0, 0, 1, 1]
+        assert all(request["tools"] == sent[0]["tools"] for request in sent[1:])
+        assert all(m["role"] != "system" for m in sent[0]["messages"])
+        assert any(
+            e["kind"] == "story_assistant"
+            and e["payload"]["content"] == "过程备注"
+            and not e["payload"]["is_story"]
+            for e in store.events(tid)
+        )
+        preview = store.turn(tid)["preview"]
+        assert "submit_story" in str(preview["tools"]) and "kemini_emit_story" not in str(preview["tools"])
+        assert all(
+            row["cache_static"]
+            for row in preview["trace"]
+            if row["source"] in ("kemini_filler", "kemini_clear", "kemini_identity", "kemini_info")
+        )
+        sources = [row["source"] for row in preview["trace"]]
+        assert sources[:5] == ["kemini_filler", "kemini_clear", "kemini_identity", "kemini_info", "rules"]
+        assert (
+            sources.index("input") < sources.index("kemini_acknowledgement") < sources.index("kemini_control")
+        )
+        assert not next(row for row in preview["trace"] if row["source"] == "kemini_acknowledgement")[
+            "cache_static"
+        ]
+        assert any(
+            e["kind"] == "kemini_auxiliary" and e["payload"]["items"] == message["auxiliary"]
+            for e in store.events(tid)
+        )
+        assert Store(tmp_path).session(session["id"])["messages"][-1]["auxiliary"] == message["auxiliary"]
+
+        next_provider, next_sent = connect(store, service, WireStream(*story_events("下一轮正文")))
+        next_provider.settings.kemini.enabled = True
+        next_tid = submit(service, current, operation_id="next-turn")
+        await service.story.tasks[next_tid]
+        assert store.turn(next_tid)["status"] == "committed", store.turn(next_tid)["error"]
+        assert "本轮已成功调用" not in json.dumps(next_sent[0]["messages"], ensure_ascii=False)
+        for request in (sent[3], next_sent[0]):
+            history = json.dumps(request["messages"], ensure_ascii=False)
+            assert all(history.count(part) == 1 for part in ("第一段正文🙂", "第二段正文", "第三段正文"))
+            assert "创作安排" not in history and "续写安排" not in history
+    finally:
+        await service.close()
+
+
+async def test_unicode_story_publishes_accepted_segments_and_replays_plaintext(tmp_path):
+    app = create_app(tmp_path)
+    store, service = app.state.store, app.state.service
+    card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}')
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        settings = (await client.get("/api/settings")).json()
+        assert settings["shared"]["unicode_story_enabled"] is False
+        enabled = await client.patch(
+            "/api/settings/shared",
+            json={
+                "expected_revision": settings["revisions"]["shared"],
+                "changes": {"unicode_story_enabled": True, "kemini.enabled": True},
+            },
+        )
+        assert enabled.status_code == 200, enabled.text
+        response = await client.post("/api/sessions", json={"card_id": card["id"], "kemini": True})
+        assert response.status_code == 200, response.text
+        session = response.json()
+        tools_url = f"/api/sessions/{session['id']}/story/tools"
+        assert not session["unicode_story"]
+        response = await client.put(
+            tools_url, json={"expected_revision": 0, "disabled_tools": ["present_ui"], "unicode_story": True}
+        )
+        assert response.status_code == 200, response.text
+        session = response.json()
+        first, last = "**夜雨。**\n月光🌙和⟦标记⟧。", "窗关上了。"
+        wrapped = f"<Interleaving><thinking>创作安排</thinking>{first}</Interleaving>"
+        opening = "<Interleaving><thinking>创作安排</thinking>**夜雨。**⟦000A 6708 "
+        tail = "5149 1F319⟧和⟦27E6⟧标记⟦27E7⟧。</Interleaving>"
+        encoded_first = opening + tail
+        broken = "丢弃本段⟦591C⟧，后半段⟦96E8 D800 3002⟧"
+        initial_gate, second_gate = Gate(), Gate()
+        _, sent = connect(
+            store,
+            service,
+            WireStream(
+                body_start(opening), initial_gate, body_delta(tail), *body_end()[:-1], terminal("tool_calls")
+            ),
+            WireStream(second_gate, *tool_events("submit_story", {"content": broken})),
+            WireStream(*story_events(last)),
+        )
+        try:
+            tid = submit(service, session)
+            await asyncio.wait_for(initial_gate.reached.wait(), 5)
+            assert replay(store, tid) == "" and store.turn(tid)["draft"] == ""
+            initial_gate.release.set()
+            await asyncio.wait_for(second_gate.reached.wait(), 5)
+            assert replay(store, tid) == first
+            second_gate.release.set()
+            await service.story.tasks[tid]
+            result, current = store.turn(tid), store.session(session["id"])
+            assert result["status"] == "committed", result["error"]
+            reply = current["messages"][-1]
+            assert (
+                reply["raw"]
+                == reply["model"]
+                == reply["display"]
+                == replay(store, tid)
+                == first + "\n\n" + last
+            )
+            assert reply["auxiliary"] == [{"kind": "thinking", "text": "创作安排"}]
+            assert "⟦" in json.dumps(sent[0]["tools"], ensure_ascii=False)
+            for request in sent[1:]:
+                messages = request["messages"]
+                history = json.dumps(messages, ensure_ascii=False)
+                contents = [
+                    json.loads(call["function"]["arguments"])["content"]
+                    for message in messages
+                    for call in message.get("tool_calls", [])
+                    if call["function"]["name"] == "submit_story"
+                ]
+                assert contents == [first]
+                assert encoded_first not in history and broken not in history
+            assert any("第 2 个码点片段内第 2 个码点" in m.get("content", "") for m in sent[-1]["messages"])
+            raw_submissions = [
+                json.loads(e["payload"]["arguments"])["content"]
+                for e in store.events(tid)
+                if e["kind"] == "story_tool_started" and e["payload"]["name"] == "submit_story"
+            ]
+            assert raw_submissions == [encoded_first, broken, last]
+            for items in (
+                turn_items(store, session["id"], tid),
+                message_items(store, current, [reply["id"]])[reply["id"]],
+            ):
+                deliveries = [item for item in items if item.get("name") == "submit_story"]
+                assert [item["status"] for item in deliveries] == ["returned", "error", "returned"]
+                assert [json.loads(item["details"]["arguments"])["content"] for item in deliveries] == [
+                    wrapped,
+                    broken,
+                    last,
+                ]
+
+            doc = store.settings_document()
+            doc.shared.unicode_story_enabled = False
+            store.save_settings(doc)
+            assert store.session(session["id"])["unicode_story"]
+            _, sent = connect(store, service, WireStream(*story_events("下一轮明文")))
+            following = submit(service, current, operation_id="after-encoding")
+            await service.story.tasks[following]
+            result = store.turn(following)
+            assert result["status"] == "committed", result["error"]
+            assert "⟦" not in json.dumps(sent[0]["tools"], ensure_ascii=False)
+            history = json.dumps(sent[0]["messages"], ensure_ascii=False)
+            assert history.count(last) == 1 and encoded_first not in history and broken not in history
+        finally:
+            await service.close()
+
+
+async def test_prefix_debug_observes_tool_continuation_and_survives_provider_recreation(tmp_path):
+    store, service, session = game(tmp_path, "chat_completions")
+    settings = store.settings()
+    settings.debug_story_prefix = True
+    store.save_settings(settings)
+    first = WireStream(*tool_events())
+    second = WireStream(*story_events("本轮正文"))
+    connect(store, service, first, second)
+    try:
+        tid = submit(service, session)
+        await service.story.tasks[tid]
+        assert store.turn(tid)["status"] == "committed", store.turn(tid)["error"]
+        reports = [event["payload"] for event in store.events(tid) if event["kind"] == "story_prefix_debug"]
+        assert len(reports) == 2 and reports[0]["parameters"] == []
+        parameters = {item["parameter"]: item for item in reports[1]["parameters"]}
+        assert parameters["tools"]["status"] == "identical"
+        assert parameters["messages"]["common_prefix_bytes"] > 100
+        assert len(service.story.prefix_debug.requests) == 2
+        session = store.session(session["id"])
+        connect(store, service, WireStream(*story_events("下一轮正文")))
+        next_tid = submit(service, session, operation_id="next-prefix-request")
+        await service.story.tasks[next_tid]
+        assert store.turn(next_tid)["status"] == "committed", store.turn(next_tid)["error"]
+        report = next(e["payload"] for e in store.events(next_tid) if e["kind"] == "story_prefix_debug")
+        assert report["parameters"] and "#2 → #3" in report["message"]
+        assert len(service.story.prefix_debug.requests) == 2
+        settings = store.settings()
+        settings.debug_story_prefix = False
+        store.save_settings(settings)
+        session = store.session(session["id"])
+        provider, _ = connect(store, service, WireStream(*story_events("关闭后正文")))
+        disabled = submit(service, session, operation_id="disabled-prefix-request")
+        await service.story.tasks[disabled]
+        assert store.turn(disabled)["status"] == "committed", store.turn(disabled)["error"]
+        assert provider.request_observer is None and not service.story.prefix_debug.requests
+        assert not any(e["kind"] == "story_prefix_debug" for e in store.events(disabled))
+    finally:
+        await service.close()
+    assert not service.story.prefix_debug.requests
+
+
+async def test_preview_is_visible_before_completion_and_commit_is_atomic(tmp_path):
+    store, service, session = game(tmp_path, "chat_completions")
+    gate = Gate()
+    usage = {"usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}}
+    stream = WireStream(
+        body_start("尚未完成的"), terminal(), gate, body_delta("正文。"), *body_end()[:-1], usage
+    )
+    provider, bodies = connect(store, service, stream)
+    try:
+        tid = submit(service, session)
+        await asyncio.wait_for(gate.reached.wait(), 5)
+        assert store.turn(tid)["status"] == "running"
+        assert store.turn(tid)["draft"] == replay(store, tid) == "尚未完成的"
+        assert store.session(session["id"])["head"] == session["head"]
+        assert not any(
+            item["message"]["role"] == "assistant" for item in store.story_progress(tid)["new_trace"]
+        )
+        gate.release.set()
+        await service.story.tasks[tid]
+        result, current = store.turn(tid), store.session(session["id"])
+        assert result["status"] == "committed", result["error"]
+        assert result["draft"] == replay(store, tid) == "尚未完成的正文。"
+        assert current["messages"][-1]["raw"] == result["draft"]
+        assert len(current["messages"]) == len(session["messages"]) + 2
+        assert len(bodies) == len(provider.usage_history) == 1
+        assert provider.usage_history[0]["total_tokens"] == 16
+        assert stream.closed and provider.http.is_closed
+        with pytest.raises(Conflict):
+            store.write_turn_draft(tid, "过期回调")
+        assert replay(store, tid) == result["draft"]
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        [],
+        [httpx.ReadError("fixture disconnect")],
+        [{"error": {"message": "fixture upstream error"}}],
+        [b"data: {broken\n\n"],
+        [terminal("length")],
+    ],
+    ids=["eof", "read_error", "error_event", "invalid_json", "length"],
+)
+async def test_interface_failure_never_commits_partial_text_or_tools(tmp_path, tail):
+    store, service, session = game(tmp_path, "chat_completions")
+    stream = WireStream(body_start("未完成片段"), *tail)
+    provider, bodies = connect(store, service, stream)
+    try:
+        tid = submit(service, session)
+        await service.story.tasks[tid]
+        result, current = store.turn(tid), store.session(session["id"])
+        assert result["status"] == "error", result
+        assert result["pending"] is None
+        assert result["draft"] == replay(store, tid) == "未完成片段"
+        assert current["head"] == session["head"] and current["snapshot"] == session["snapshot"]
+        assert len(bodies) == 1  # No silent retry of a paid, partially received request.
+        assert not any(e["kind"] == "story_tool_started" for e in store.events(tid))
+        assert stream.closed and provider.http.is_closed
+    finally:
+        await service.close()
+
+
+async def test_cancelled_preview_and_resume_after_restart_do_not_replay_partial_output(tmp_path):
+    store, service, session = game(tmp_path, "chat_completions")
+    gate = Gate()
+    stream = WireStream(body_start("取消前的残片"), gate)
+    provider, _ = connect(store, service, stream)
+    tid = submit(service, session)
+    try:
+        await asyncio.wait_for(gate.reached.wait(), 5)
+        await service.story.cancel(tid)
+        assert store.turn(tid)["status"] == "cancelled"
+        assert store.turn(tid)["draft"] == "取消前的残片"
+        assert stream.closed and provider.http.is_closed
+        assert not any(e["kind"] == "story_tool_started" for e in store.events(tid))
+    finally:
+        await service.close()
+    reopened = Store(tmp_path)
+    resumed_service = runtime(reopened)
+    complete = WireStream(*story_events("重新生成的完整正文"))
+    _, sent = connect(reopened, resumed_service, complete)
+    try:
+        resumed = submit(resumed_service, session, operation_id="resumed", resume_turn_id=tid)
+        await resumed_service.story.tasks[resumed]
+        assert reopened.turn(resumed)["status"] == "committed"
+        assert "取消前的残片" not in json.dumps(sent, ensure_ascii=False)
+        assert not any(m.get("tool_calls") for m in sent[0]["messages"])
+        assert reopened.session(session["id"])["messages"][-1]["raw"] == "重新生成的完整正文"
+        assert replay(reopened, resumed) == "重新生成的完整正文"
+    finally:
+        await resumed_service.close()
+
+
+async def test_story_and_tools_keep_running_until_native_end(tmp_path):
+    store, service, session = game(tmp_path, "chat_completions")
+    tool_gate, next_gate = Gate(), Gate()
+    first = WireStream(*story_events("唯一正文")[:-1], *tool_events()[:1], tool_gate, *tool_events()[1:])
+    second = WireStream(next_gate, *tool_events("read_history", {"ref": "H3"}))
+    _, sent = connect(store, service, first, second, WireStream(terminal()))
+    try:
+        tid = submit(service, session)
+        await asyncio.wait_for(tool_gate.reached.wait(), 5)
+        assert store.turn(tid)["draft"] == "唯一正文"
+        assert not any(e["kind"] == "story_tool_started" for e in store.events(tid))
+        tool_gate.release.set()
+        await asyncio.wait_for(next_gate.reached.wait(), 5)
+        assert store.turn(tid)["draft"] == replay(store, tid) == "唯一正文"
+        assert any(
+            e["kind"] == "story_tool" and e["payload"].get("name") == "submit_story"
+            for e in store.events(tid)
+        )
+        assert store.session(session["id"])["snapshot"] == session["snapshot"]
+        assert current_text(store.story_progress(tid)["snapshot"]["story"]) == "已确认的工具进度"
+        next_gate.release.set()
+        await service.story.tasks[tid]
+        assert store.turn(tid)["status"] == "committed", store.turn(tid)["error"]
+        assert store.turn(tid)["draft"] == replay(store, tid) == "唯一正文"
+        assert store.session(session["id"])["messages"][-1]["raw"] == "唯一正文"
+        assert any(m["role"] == "tool" for m in sent[1]["messages"])
+        assert len(sent) == 3
+        assert [e["payload"]["name"] for e in store.events(tid) if e["kind"] == "story_tool"] == [
+            "submit_story",
+            "write_handoff",
+            "read_history",
+        ]
+    finally:
+        await service.close()
+
+
+async def test_missing_work_stops_and_explicit_resume_keeps_story(tmp_path):
+    store, service, session = game(tmp_path, "chat_completions")
+    _, sent = connect(
+        store,
+        service,
+        WireStream(*story_events("尚未更新变量的正文")),
+    )
+    try:
+        tid = submit(service, session, update_variables=True)
+        await service.story.tasks[tid]
+        assert store.turn(tid)["draft"] == replay(store, tid) == "尚未更新变量的正文"
+        assert len(sent) == 1
+        assert store.turn(tid)["status"] == "error"
+        assert "patch_state" in store.turn(tid)["error"]
+        assert store.session(session["id"])["head"] == session["head"]
+        model = Model(("patch_state", {"operations": [], "comment": "本轮变量无变化"}), "")
+        service.story.provider_factory = lambda: model
+        resumed = submit(
+            service, session, operation_id="resume-work", resume_turn_id=tid, update_variables=True
+        )
+        await service.story.tasks[resumed]
+        assert store.turn(resumed)["status"] == "committed", store.turn(resumed)["error"]
+        assert len(model.requests) == 2
+        assert store.session(session["id"])["messages"][-1]["raw"] == "尚未更新变量的正文"
+    finally:
+        await service.close()
+
+
+async def test_responses_terminal_story_arguments_replace_preview_without_duplication(tmp_path):
+    store, service, session = game(tmp_path, "responses")
+    stream = WireStream(
+        {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "type": "function_call",
+                "id": "fc_story",
+                "call_id": "story",
+                "name": "submit_story",
+                "arguments": "",
+            },
+        },
+        {
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_story",
+            "delta": '{"content":"临时显示',
+        },
+        {"type": "response.completed", "response": story_reply("responses", "完整权威正文")},
+    )
+    connect(
+        store,
+        service,
+        stream,
+        WireStream({"type": "response.completed", "response": native_reply("responses", text="收尾完成。")}),
+        api="responses",
+    )
+    try:
+        tid = submit(service, session)
+        await service.story.tasks[tid]
+        assert store.turn(tid)["status"] == "committed", store.turn(tid)["error"]
+        assert store.turn(tid)["draft"] == replay(store, tid) == "完整权威正文"
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("accept", [False, True])
+async def test_final_script_processing_and_review_still_gate_persistence(tmp_path, accept):
+    store, service, session = game(tmp_path, "chat_completions")
+    session = store.update_session(session["id"], session["revision"], policy="review")
+
+    class ProcessingScript(Script):
+        async def call(self, method, *args):
+            result = await super().call(method, *args)
+            if method == "process":
+                result["state"] = {"stat_data": {"energy": 4}}
+                result["text"] = "脚本处理后的正文"
+            return result
+
+    class ProcessingHost(ScriptHost):
+        async def open(self, document, history, snapshot, *args, **kwargs):
+            return ProcessingScript(history, snapshot)
+
+    service.story.runtime = ProcessingHost()
+    # An explicit native stop can accompany tools. Drain them before callbacks,
+    # without paying for an extra response to confirm completion.
+    first = WireStream(
+        *story_events("模型原始正文第一段")[:-1],
+        *tool_events("submit_story", {"content": "模型原始正文第二段"})[:-1],
+        terminal(),
+    )
+    _, requests = connect(store, service, first)
+    try:
+        tid = submit(service, session)
+        await service.story.tasks[tid]
+        assert store.turn(tid)["status"] == "awaiting_review", store.turn(tid)["error"]
+        assert len(requests) == 1
+        assert store.turn(tid)["draft"] == replay(store, tid) == "脚本处理后的正文"
+        assert store.turn(tid)["draft_breaks"] == []
+        assert store.session(session["id"])["snapshot"] == session["snapshot"]
+        service.store.review_turn(tid, accept)
+        result, current = store.turn(tid), store.session(session["id"])
+        if accept:
+            assert result["status"] == "committed"
+            assert current["messages"][-1]["raw"] == "脚本处理后的正文"
+            assert current["messages"][-1]["story_segments"] == {"raw": [], "display": []}
+            assert current["snapshot"]["state"]["stat_data"]["energy"] == 4
+        else:
+            assert result["status"] == "cancelled" and not result["resumable"]
+            assert result["draft"] == replay(store, tid) == ""
+            assert current["head"] == session["head"] and current["snapshot"] == session["snapshot"]
+    finally:
+        await service.close()
+
+
+async def test_failed_preview_restore_closes_model_without_masking_error(tmp_path, monkeypatch):
+    store, service, session = game(tmp_path, "chat_completions")
+    accepted = "已接收的正文"
+    first = WireStream(*story_events(accepted)[:-1], terminal("tool_calls"))
+    second = WireStream(body_start("后续残片"), RuntimeError("fixture model disconnected"))
+    provider, _ = connect(store, service, first, second)
+    write_draft = store.write_turn_draft
+
+    def fail_restore(tid, text, *, replace=False, breaks=None):
+        if replace and text == accepted:
+            raise OSError("fixture preview write failed")
+        return write_draft(tid, text, replace=replace, breaks=breaks)
+
+    monkeypatch.setattr(store, "write_turn_draft", fail_restore)
+    try:
+        tid = submit(service, session)
+        await service.story.tasks[tid]
+        result = store.turn(tid)
+        assert result["status"] == "error"
+        assert "fixture model disconnected" in result["error"]
+        assert "fixture preview write failed" in result["error"]
+        assert first.closed and second.closed and provider.http.is_closed
+        assert store.story_progress(tid)["story"]["content"] == accepted
+        assert store.session(session["id"])["head"] == session["head"]
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("status,unreadable", [(401, False), (429, False), (503, True)])
+async def test_http_errors_close_responses_without_retry_or_preview(tmp_path, status, unreadable):
+    store, service, session = game(tmp_path, "chat_completions")
+    stream = WireStream(httpx.ReadError("error body interrupted") if unreadable else b'{"error":"fixture"}')
+    provider, bodies = connect(store, service, stream, status=status)
+    try:
+        tid = submit(service, session)
+        await service.story.tasks[tid]
+        assert store.turn(tid)["status"] == "error"
+        assert store.turn(tid)["draft"] == replay(store, tid) == ""
+        assert len(bodies) == 1
+        assert stream.closed and provider.http.is_closed
+        assert store.session(session["id"])["head"] == session["head"]
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("repeat_failure", [False, True])
+async def test_script_failure_after_complete_stream_does_not_save_story(tmp_path, repeat_failure):
+    store, service, session = game(tmp_path, "chat_completions")
+
+    class BrokenScript(Script):
+        async def call(self, method, *args):
+            if method == "process":
+                raise RuntimeError("fixture script failed")
+            return await super().call(method, *args)
+
+    class BrokenHost(ScriptHost):
+        async def open(self, document, history, snapshot, *args, **kwargs):
+            return BrokenScript(history, snapshot)
+
+    service.story.runtime = BrokenHost()
+    note = {"key": "本轮场景", "content": "正文中的场景", "kind": "fact", "sources": ["H3"]}
+    _, requests = connect(
+        store,
+        service,
+        WireStream(*tool_events("read_history", {"ref": "H999"})),
+        WireStream(*story_events("模型完整正文")[:-1], *tool_events("write_note", note)[:-1], terminal()),
+    )
+    try:
+        tid = submit(service, session)
+        await service.story.tasks[tid]
+        result = store.turn(tid)
+        assert result["status"] == "error" and result["pending"] is None
+        assert result["draft"] == replay(store, tid) == "模型完整正文"
+        assert store.session(session["id"])["snapshot"] == session["snapshot"]
+        progress = store.story_progress(tid)
+        output_id = progress["output_id"]
+        assert progress["model_completed"]
+        if repeat_failure:
+            tid = submit(service, session, operation_id="callback-retry", resume_turn_id=tid)
+            await service.story.tasks[tid]
+            assert store.turn(tid)["status"] == "error"
+            progress = store.story_progress(tid)
+            assert progress["story"]["content"] == "模型完整正文" and progress["model_completed"]
+            assert progress["output_id"] == output_id
+        service.story.runtime = ScriptHost()
+        service.story.provider_factory = None
+        settings = store.settings_document()
+        settings.story.model.model = ""
+        settings.shared.providers[0].api_key = ""
+        store.save_settings(settings)
+        resumed = submit(service, session, operation_id="callback-resume", resume_turn_id=tid)
+        await service.story.tasks[resumed]
+        assert store.turn(resumed)["status"] == "committed", store.turn(resumed)["error"]
+        current = store.session(session["id"])
+        assert current["messages"][-1]["raw"] == "模型完整正文"
+        assert current["messages"][-1]["id"] == output_id
+        assert current["snapshot"]["story"]["notes"][note["key"]]["sources"] == [{"message_id": output_id}]
+        assert len(requests) == 2
+    finally:
+        await service.close()
+
+
+async def test_terminal_tool_call_with_incomplete_arguments_is_never_executed(tmp_path):
+    store, service, session = game(tmp_path, "chat_completions")
+    connect(store, service, WireStream(delta("工具前的临时文字"), *tool_events()[:1], terminal("tool_calls")))
+    try:
+        tid = submit(service, session)
+        await service.story.tasks[tid]
+        result = store.turn(tid)
+        assert result["status"] == "error" and "JSON" in result["error"]
+        assert result["draft"] == replay(store, tid) == ""
+        assert store.story_progress(tid)["story"] is None
+        assert not any(e["kind"] == "story_tool_started" for e in store.events(tid))
+        assert store.session(session["id"])["snapshot"] == session["snapshot"]
+    finally:
+        await service.close()
+
+
+async def test_empty_successful_stream_is_not_a_story_reply(tmp_path):
+    store, service, session = game(tmp_path, "chat_completions")
+    settings = store.settings()
+    settings.story_config.max_steps = 1
+    store.save_settings(settings)
+    _, requests = connect(store, service, WireStream(terminal()))
+    try:
+        tid = submit(service, session)
+        await service.story.tasks[tid]
+        result = store.turn(tid)
+        assert result["status"] == "error" and "尚未提交" in result["error"]
+        assert len(requests) == 1
+        assert result["draft"] == ""
+        assert store.session(session["id"])["head"] == session["head"]
+    finally:
+        await service.close()
+
+
+async def test_total_deadline_stops_a_stream_that_keeps_running_after_stop_reason(tmp_path, monkeypatch):
+    store, service, session = game(tmp_path, "chat_completions")
+    gate = Gate()
+    stream = WireStream(*story_events("尚未完整接收的正文"), gate)
+    provider, requests = connect(store, service, stream)
+    timeouts, original = [], asyncio.timeout
+
+    def capture_timeout(seconds):
+        timeout = original(seconds)
+        if seconds is None:
+            timeouts.append(timeout)
+        return timeout
+
+    monkeypatch.setattr(asyncio, "timeout", capture_timeout)
+    try:
+        tid = submit(service, session)
+        await asyncio.wait_for(gate.reached.wait(), 5)
+        # No real sleep: advance the existing turn's deadline to this loop tick.
+        timeouts[0].reschedule(asyncio.get_running_loop().time())
+        await service.story.tasks[tid]
+        result = store.turn(tid)
+        assert result["status"] == "error" and result["resumable"]
+        assert len(requests) == 1 and stream.closed and provider.http.is_closed
+        assert any(e["payload"].get("error_code") == "TIME_BUDGET_EXHAUSTED" for e in store.events(tid))
+        assert store.story_progress(tid)["story"] is None
+        assert store.session(session["id"])["head"] == session["head"]
+        assert not any(e["kind"] == "story_tool_started" for e in store.events(tid))
+    finally:
+        await service.close()

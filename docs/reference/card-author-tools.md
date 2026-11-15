@@ -5,7 +5,7 @@
 ## 卡片与历史引用
 
 - **C 编号**（如 `C1`）只属于当前制卡对话，编辑后仍指向同一卡的最新草稿，移除或丢弃后不复用。
-- 从世界书库引用的独立世界书也用 C 编号。它是卡片的子集，文档只有 `name` 和 `character_book`，`overview` 以 `type: worldbook` 标出；读取、搜索、`patch_draft`、`set_text_field` 和 `validate_draft` 与角色卡相同。工具只接受 `/name` 与 `/character_book/**` 的修改；`set_opening`、`set_portrait`、`configure_card`、`test_draft`，以及把它作为 `create_draft` 的来源，都会被拒绝。书库 ID 与修订号不进入模型输入。
+- 从世界书库引用的独立世界书也用 C 编号。它是卡片的子集，文档只有 `name` 和 `character_book`，`overview` 以 `type: worldbook` 标出；读取、搜索、`patch_draft`、`set_text_field` 和 `validate_draft` 与角色卡相同。工具只接受 `/name` 与 `/character_book/**` 的修改；`set_opening`、`set_portrait`、`test_draft`，以及把它作为 `create_draft` 的来源，都会被拒绝。书库 ID 与修订号不进入模型输入。
 - **H 编号**（如 `H1`）定位本对话的用户输入和最终回复；确认方案由程序按引用读取原文。
 - 文档内部的 **@D 编号**使用可逆映射，真实身份、指纹和哈希由程序管理。
 
@@ -26,14 +26,13 @@
 | `search_entries` | `card_ref`、`query`；空查询列出全部。提供标题、定位路径及明确标识的摘要，修改前读取全文 |
 | `create_draft` | `name`、可选 `fields`、`source_ref`、`proposal_ref`、`confirmation_ref`；明确直接制作或机械复制使用 `direct_instruction=true`。`fields` 可一次写入 description、personality、scenario、first_mes、alternate_greetings、mes_example、system_prompt、post_history_instructions、creator_notes、tags 的完整正文，省略项留空或沿用来源卡；世界书条目随后用 `patch_draft` 追加。返回新引用与校验结果；复制来源卡或未传 `fields` 时附完整初始文档，避免回传模型刚写入的正文 |
 | `set_portrait` | `card_ref`、`file_ref`（本对话图片附件的 F 编号，null 移除）；仅在用户表示该图用作头像时调用。JPEG/WebP 转为 PNG，草稿成为标准 PNG 卡容器，保存时写入书架；CHARX 卡不支持 |
-| `configure_card` | `card_ref`、`target_mode=half_agent/full_agent`、用户选择的 `confirmation_ref`；可选兼容性目标，普通制卡和 MVU 无需调用，不自动迁移内容 |
 | `patch_draft` | `card_ref`、`operations`、`comment`；严格 JSON Patch，一批 1–100 项原子应用 |
 | `set_text_field` | `card_ref`、`path`、完整 `text`、`comment`；替换单个已有字符串字段，空文本清空；由程序生成补丁，沿用读取、投影和文档校验 |
 | `revert_draft` | `card_ref`、`comment`；程序恢复本轮开始前的整张卡，新创建的卡则从本轮移除，其他卡保持不变 |
 | `set_opening` | `card_ref`、`action=update/add/remove/move`、必填 `index`；N 个开场时新增接受 0–N，其余接受 0–N−1，均含两端。新增/修改须传完整 `narrative`；移动须传 0-based 的 `to_index`（0–N−1，移动后的位置），其余操作省略 |
 | `validate_draft` | `card_ref`；分别返回结构错误、完整性提示和静态兼容性信息 |
 | `test_draft` | `card_ref`、`index=0`（0-based，0–N−1，N 为开场数量）、可选完整文本 `samples`、`display_assertions`、`state_patch`；断言 sample_index 范围 0–len(samples)，0 为所选开场，1 对应 samples[0]。检查初始化、正则、脚本和 DOM 值，临时补丁验证更新后显示，返回结果、日志和未测范围 |
-| `read_skill` | 白名单 `resource`，完整返回内置指引：card-guide.md（从零制卡步骤）、card-format.md（字段去向与世界书条目格式）、runtime-guide.md（变量、初始化、正则与脚本）、half-agent.md／full-agent.md（两种游玩模式如何使用卡片）、SKILL.md（适配步骤）及其后续 references/workflow.md、references/status-display.md、references/regex-display.md、references/prompt-template.md（ST-Prompt-Template 语法改写） |
+| `read_skill` | 白名单 `resource`，完整返回内置指引：card-guide.md（从零制卡步骤）、card-format.md（字段去向与世界书条目格式）、runtime-guide.md（变量、初始化、正则与脚本）、story.md（游玩如何使用卡片）、SKILL.md（适配步骤）及其后续 references/workflow.md、references/status-display.md、references/regex-display.md、references/prompt-template.md（ST-Prompt-Template 语法改写） |
 | `write_handoff` | 完整替换 `content`；非空且符合配置 token 上限，不取代确认方案原文 |
 | `new_context` | 保存 `content` 后换窗，必须单独调用；继续当前任务且不重置批次调用额度 |
 | `search_history` | `query`、`limit=5`（1–20）；`*` 列出最近记录，返回 H 引用与定位摘要 |
@@ -83,7 +82,7 @@ Agent 优先使用专门工具：
 
 `passed`、`failed`、`blocked` 和 `untested` 分别表示对应检查通过、失败、受阻和未测试，适用范围以该项检查为准；动态交互与叙事质量需单独评估。
 
-初始化诊断提示损坏的 initvar 标签及需要单独验证的开场增量指令；[InitVar] 数据不因含结构标记而误报为 Writer 更新规则。`[InitVar]` 与 `tracker_mvu` 可以同时使用：条目无论启停均参与初始化，授权变量任务也完整读取其正文，不将这一组合诊断为错误。
+初始化诊断提示损坏的 initvar 标签及需要单独验证的开场增量指令；[InitVar] 数据不因含结构标记而误报为 变量更新规则。`[InitVar]` 与 `mvu_rules` 可以同时使用：条目无论启停均参与初始化，授权变量任务也完整读取其正文，不将这一组合诊断为错误。
 
 静态诊断对角色字段、启用世界书、开场及示例中的疑似逐轮状态栏输出、根路径变量宏、静态状态示范和缺少声明式初值/变量规则给出带位置的提示。提示不阻止草稿编辑或保存，不自动删除 HTML，也不替代语义判断；未发现警告及内部 adapted 标志均只表示通过已实现的静态检查，不证明完整适配。停用条目不触发状态栏提示，传统禁用的 [InitVar] 条目仍按运行契约识别。
 
@@ -99,7 +98,7 @@ Agent 优先使用专门工具：
 | `POST .../{id}/references` | 引用书架卡，可携带当前表单和原卡版本 |
 | `POST .../{id}/worldbook-references` | 引用世界书库中的一本书：`worldbook_id`、可选 `expected_worldbook_revision`；草稿项带 `worldbook` 字段，其余引用、修改、撤销、重新载入、移除接口按 ref 通用 |
 | `DELETE .../{id}/references/{ref}` | 移除该卡的引用、草稿和撤销历史 |
-| `PUT .../{id}/drafts/{ref}` | 手工修改文档；target_mode 省略保留兼容性目标，null 清除目标 |
+| `PUT .../{id}/drafts/{ref}` | 手工修改文档 |
 | `POST .../{id}/drafts/{ref}/save` | `mode=create/overwrite/copy`，携带 operation_id；世界书草稿只接受 `overwrite`（写回原书，版本不符返回冲突）和 `copy`（另存为“（副本）”） |
 | `POST .../{id}/drafts/{ref}/undo`、`reload`、`test` | 撤销、重新载入、运行本地检查 |
 | `PUT .../{id}/drafts/{ref}/portrait` | `file_ref` 为图片附件 F 编号时设置头像，null 移除；可撤销 |

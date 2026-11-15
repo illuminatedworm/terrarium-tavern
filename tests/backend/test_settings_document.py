@@ -3,7 +3,6 @@
 import json
 import sqlite3
 from copy import deepcopy
-from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -11,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, Settings
 from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
+from tavern.storage.legacy_story import OLD_STORY_KEY
 from tavern.storage.store import Store
 
 
@@ -54,8 +54,8 @@ async def test_composer_shortcut_persistence_validation_and_page_undo(tmp_path):
         )
         assert undo.status_code == 200, undo.text
         assert undo.json()["shared"]["send_shortcut"] == "ctrl_enter"
-        assert undo.json()["half_agent"] == original["half_agent"]
-        assert undo.json()["full_agent"] == original["full_agent"]
+        assert undo.json()["story"] == original["story"]
+        assert undo.json()["story"] == original["story"]
 
 
 async def test_novel_delivery_defaults_share_main_mapping_and_page_undo(tmp_path):
@@ -63,41 +63,41 @@ async def test_novel_delivery_defaults_share_main_mapping_and_page_undo(tmp_path
     app = create_app(tmp_path)
     store = app.state.store
     card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}')
-    existing = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
-    before = store.message_adapter("story", existing["id"], "full_agent")["config"]
+    existing = store.new_session(SessionCreate(card_id=card["id"]))
+    before = store.message_adapter("story", existing["id"], "story")["config"]
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         opened = (await client.post("/api/settings/edit-sessions", json={})).json()
         original = opened["settings"]
-        page = next(page for page in original["pages"] if page["id"] == "full_agent.novel")
+        page = next(page for page in original["pages"] if page["id"] == "story.novel")
         assert page["paths"] == ["novel_research", "model.message_adapter"]
         mapping = {
             "version": 1,
             "mappings": {"gemini": {"novel_research": {"role": "assistant", "wrap": False}}},
         }
         changed = await client.patch(
-            "/api/settings/full_agent",
+            "/api/settings/story",
             json={
-                "expected_revision": original["revisions"]["full_agent"],
+                "expected_revision": original["revisions"]["story"],
                 "edit_session": opened["id"],
                 "changes": {"model.message_adapter": mapping},
             },
         )
         assert changed.status_code == 200, changed.text
-        assert store.settings_document().full_agent.model.message_adapter.model_dump() == mapping
-        created = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
-        assert store.message_adapter("story", created["id"], "full_agent")["config"] == mapping
+        assert store.settings_document().story.model.message_adapter.model_dump() == mapping
+        created = store.new_session(SessionCreate(card_id=card["id"]))
+        assert store.message_adapter("story", created["id"], "story")["config"] == mapping
         undo = await client.post(
             f"/api/settings/edit-sessions/{opened['id']}/undo",
-            json={"page": page["id"], "expected_revision": changed.json()["revisions"]["full_agent"]},
+            json={"page": page["id"], "expected_revision": changed.json()["revisions"]["story"]},
         )
         assert undo.status_code == 200, undo.text
-        assert undo.json()["full_agent"] == original["full_agent"]
-        assert store.message_adapter("story", created["id"], "full_agent")["config"] == mapping
-        assert store.message_adapter("story", existing["id"], "full_agent")["config"] == before
+        assert undo.json()["story"] == original["story"]
+        assert store.message_adapter("story", created["id"], "story")["config"] == mapping
+        assert store.message_adapter("story", existing["id"], "story")["config"] == before
 
 
-@pytest.mark.parametrize("scope,path", [("full_agent", "model"), ("half_agent", "foreground")])
-async def test_sidebar_retention_persists_with_revision_and_mode_isolation(tmp_path, scope, path):
+async def test_sidebar_retention_persists_with_revision_and_scope_isolation(tmp_path):
+    scope, path = "story", "model"
     app = create_app(tmp_path)
     store = app.state.store
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
@@ -111,15 +111,14 @@ async def test_sidebar_retention_persists_with_revision_and_mode_isolation(tmp_p
         assert changed.status_code == 200
         after = changed.json()
         assert after[scope][path]["cache"]["retention"] == "1h"
-        other = "half_agent" if scope == "full_agent" else "full_agent"
-        assert after[other] == before[other]
+        assert after["shared"] == before["shared"]
         assert (await client.patch(f"/api/settings/{scope}", json=payload)).status_code == 409
         payload["expected_revision"] = after["revisions"][scope]
         payload["changes"][f"{path}.cache.retention"] = "forever"
         assert (await client.patch(f"/api/settings/{scope}", json=payload)).status_code == 400
     restored = Store(store.root).settings_document()
     assert getattr(getattr(restored, scope), path).cache.retention == "1h"
-    assert Store(store.root).settings(scope).cache.retention == "1h"
+    assert Store(store.root).settings().cache.retention == "1h"
 
 
 def test_removed_reply_locate_switch_is_dropped_from_strict_v17_settings():
@@ -128,7 +127,7 @@ def test_removed_reply_locate_switch_is_dropped_from_strict_v17_settings():
     raw["version"] = 17
     raw["shared"]["reply_locate_start"] = False
     migrated = migrate_settings(raw)
-    assert migrated.version == 20 and "reply_locate_start" not in migrated.shared.model_dump()
+    assert migrated.version == 22 and "reply_locate_start" not in migrated.shared.model_dump()
     assert migrated.revisions["shared"] == raw["revisions"]["shared"] + 1
 
 
@@ -162,113 +161,98 @@ def test_upgrade_keeps_custom_prompt_wording_and_story_data_verbatim(tmp_path):
     session = store.new_session(SessionCreate(card_id=card["id"], persona="玩家甲"))
     raw = store.settings_document().model_dump()
     raw["version"] = 9
-    raw["full_agent"]["tools"].pop("max_duration_seconds")
-    raw["full_agent"]["retrieval"].pop("index_timeout")
-    raw["half_agent"]["retrieval"].pop("index_timeout")
-    raw["revisions"] = {"full_agent": 3, "half_agent": 8, "shared": 7}
-    for scope in ("full_agent", "half_agent"):
-        raw[scope]["system_prompt"] = "自定义开头：玩家扮演人类角色；Player 的选择由 {{user}} 决定。"
-        raw[scope]["preference_prompt"] = "玩家偏好："
-        raw[scope]["regenerate_prompt"] = "本次 player 要求："
-        raw[scope]["local_runtime"]["instruction_prompt"] = "Retrieve the player's setting."
-    raw["half_agent"]["maintenance_system_prompt"] = "完成玩家明确提出的修改。"
-    raw["half_agent"]["tracker_system_prompt"] = raw["half_agent"]["tracker_system_prompt"]["options"][0][
-        "text"
-    ]
+    raw["story"]["tools"].pop("max_duration_seconds")
+    raw["story"]["retrieval"].pop("index_timeout")
+    raw["revisions"] = {"story": 3, "shared": 7}
+    raw["story"]["system_prompt"] = "自定义开头：玩家扮演人类角色；Player 的选择由 {{user}} 决定。"
+    raw["story"]["preference_prompt"] = "玩家偏好："
+    raw["story"]["regenerate_prompt"] = "本次 player 要求："
+    raw["story"]["local_runtime"]["instruction_prompt"] = "Retrieve the player's setting."
     original = deepcopy(raw)
     migrated = migrate_settings(raw)
-    assert migrated.version == 20 and migrated.full_agent.tools.max_duration_seconds == 900
-    assert migrated.full_agent.retrieval.index_timeout == migrated.half_agent.retrieval.index_timeout == 60
+    assert migrated.version == 22 and migrated.story.tools.max_duration_seconds == 900
+    assert migrated.story.retrieval.index_timeout == 60
     assert raw == original
-    assert migrated.revisions == {"full_agent": 4, "half_agent": 9, "shared": 8}
+    assert migrated.revisions == {"story": 4, "shared": 8}
     assert migrate_settings(migrated.model_dump()) == migrated
     custom_timeout = migrated.model_copy(deep=True)
-    custom_timeout.half_agent.retrieval.index_timeout = 180
+    custom_timeout.story.retrieval.index_timeout = 180
     assert migrate_settings(custom_timeout.model_dump()) == custom_timeout
     with store.connection() as db:
+        db.execute(f"ALTER TABLE sessions ADD COLUMN agent_mode TEXT NOT NULL DEFAULT '{OLD_STORY_KEY}'")
         db.execute("UPDATE meta SET value='11' WHERE key='schema_version'")
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
     reopened = Store(tmp_path)
     assert reopened.settings_document() == migrated
     assert Store(tmp_path).settings_document() == migrated
     assert len(list(tmp_path.glob("before-upgrade-schema11-settings9-*.sqlite3"))) == 1
-    for mode in ("full_agent", "half_agent"):
-        settings = reopened.settings(mode)
-        assert settings.system_prompt == "自定义开头：玩家扮演人类角色；Player 的选择由 {{user}} 决定。"
-        assert settings.preference_prompt == "玩家偏好："
-        assert settings.regenerate_prompt == "本次 player 要求："
-        assert settings.local_models.instruction_prompt == "Retrieve the player's setting."
+    settings = reopened.settings()
+    assert settings.story_system_prompt == "自定义开头：玩家扮演人类角色；Player 的选择由 {{user}} 决定。"
+    assert settings.preference_prompt == "玩家偏好："
+    assert settings.regenerate_prompt == "本次 player 要求："
+    assert settings.local_models.instruction_prompt == "Retrieve the player's setting."
     assert reopened.session(session["id"])["persona"] == "玩家甲"
     assert reopened.session(session["id"])["messages"][0]["raw"] == "玩家走进旧港。"
 
 
 def test_migration_copies_effective_values_and_keeps_secrets(tmp_path):
     store = Store(tmp_path)
-    legacy = Settings()
-    legacy.providers[0].api_key = "migration-secret"
-    legacy.foreground.model = "writer-before"
-    legacy.background.model = "background-before"
-    legacy.full_agent = None
-    legacy.retrieval.chunk_tokens = 768
-    legacy.local_models.instruction_prompt = "custom-local"
-    legacy.system_prompt = "custom-half"
-    legacy.full_agent_system_prompt = "custom-full"
+    legacy = Settings().model_dump()
+    legacy["providers"][0]["api_key"] = "migration-secret"
+    legacy["story"] = None
+    legacy["foreground"] = {"model": "story-before"}
+    legacy["background"] = {"model": "editor-before"}
+    legacy.pop("card_author")
+    legacy["retrieval"]["chunk_tokens"] = 768
+    legacy["local_models"]["instruction_prompt"] = "custom-local"
+    legacy["story_system_prompt"] = "custom-full"
     with store.connection() as db:
         db.execute("UPDATE meta SET value='1' WHERE key='schema_version'")
-        db.execute("UPDATE meta SET value=? WHERE key='settings'", (legacy.model_dump_json(),))
+        db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(legacy),))
     store = Store(tmp_path)
     doc = store.settings_document()
-    assert doc.full_agent.model.model == doc.half_agent.foreground.model == "writer-before"
-    assert doc.shared.card_author.model == "background-before"
-    assert (
-        doc.full_agent.local_runtime.instruction_prompt
-        == doc.half_agent.local_runtime.instruction_prompt
-        == "custom-local"
-    )
+    assert doc.story.model.model == "story-before"
+    assert doc.shared.card_author.model == "editor-before"
+    assert doc.story.local_runtime.instruction_prompt == "custom-local"
+    assert doc.story.retrieval.chunk_tokens == 768
     assert doc.shared.providers[0].api_key == "migration-secret"
-    assert doc.full_agent.system_prompt.current == "custom-full"
-    assert doc.half_agent.system_prompt.current == "custom-half"
+    assert doc.story.system_prompt.current == "custom-full"
     backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
         assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "1"
-    doc.full_agent.retrieval.chunk_tokens = 1024
+    doc.story.retrieval.chunk_tokens = 1024
     store.save_settings(doc)
     reopened = Store(tmp_path).settings_document()
-    assert reopened.full_agent.retrieval.chunk_tokens == 1024
-    assert reopened.half_agent.retrieval.chunk_tokens == 768
+    assert reopened.story.retrieval.chunk_tokens == 1024
     assert len(list(tmp_path.glob("before-upgrade-*.sqlite3"))) == 1
 
 
-def test_explicit_full_model_and_operation_snapshot_are_independent():
-    old = Settings()
-    old.full_agent = old.foreground.model_copy(update={"model": "full-before"})
+def test_explicit_story_model_and_operation_snapshot_are_independent():
+    old = Settings(story={"model": "full-before"})
     doc = migrate_settings(old.model_dump())
-    assert doc.full_agent.model.model == "full-before"
-    doc.full_agent.model.context_tokens = 6000
-    doc.full_agent.model.reply_tokens = 1024
-    doc.full_agent.lore_max_entries = 2
-    doc.full_agent.local_runtime.reranker_prompt = "full-ranking"
-    choices = doc.full_agent.system_prompt
+    assert doc.story.model.model == "full-before"
+    doc.story.model.context_tokens = 6000
+    doc.story.model.reply_tokens = 1024
+    doc.story.lore_max_entries = 2
+    doc.story.local_runtime.reranker_prompt = "full-ranking"
+    choices = doc.story.system_prompt
     choices.active = 2
     choices.replace_current("本次使用的规则")
     choices.options[2].text = "保留的备用规则"
-    full = doc.runtime().for_role("full_agent")
-    half = doc.runtime()
-    doc.full_agent.model.model = "changed-later"
+    full = doc.runtime().for_role("story")
+    doc.story.model.model = "changed-later"
     assert full.model == "full-before"
-    assert full.full_agent_system_prompt == "本次使用的规则"
-    full.full_agent_system_prompt = "内部更新后的规则"
-    restored = from_runtime(full).full_agent.system_prompt
+    assert full.story_system_prompt == "本次使用的规则"
+    full.story_system_prompt = "内部更新后的规则"
+    restored = from_runtime(full).story.system_prompt
     assert restored.active == 2 and restored.current == "内部更新后的规则"
     assert restored.options[2].text == "保留的备用规则"
     assert full.context_tokens == 6000
-    assert full.for_role("background").model == "full-before"
-    assert full.lore_max_entries == 2 and half.lore_max_entries == 5
+    assert full.lore_max_entries == 2
     assert full.local_models.reranker_prompt == "full-ranking"
-    assert half.local_models.reranker_prompt != "full-ranking"
     full.retrieval.channels.append("embedding")
-    assert "embedding" not in doc.full_agent.retrieval.channels
+    assert "embedding" not in doc.story.retrieval.channels
 
 
 async def test_scoped_updates_undo_and_secret_preservation(tmp_path):
@@ -293,30 +277,29 @@ async def test_scoped_updates_undo_and_secret_preservation(tmp_path):
             )
 
         response = await patch(
-            "full_agent",
+            "story",
             {
                 "model.model": "new-full",
                 "lore_max_entries": 9,
-                "system_prompt.options.0.text": "new-full-prompt",
+                "system_prompt.options.0.text": "new-story-prompt",
             },
         )
         assert response.status_code == 200, response.text
         saved = response.json()
-        assert saved["half_agent"] == original["half_agent"]
-        assert app.state.store.settings("full_agent").system_prompt == "new-full-prompt"
-        assert app.state.store.settings("full_agent").full_agent_system_prompt == "new-full-prompt"
-        invalid = await patch("full_agent", {"model.context_tokens": 2048})
+        assert saved["shared"] == original["shared"]
+        assert app.state.store.settings().story_system_prompt == "new-story-prompt"
+        invalid = await patch("story", {"model.context_tokens": 2048})
         assert invalid.status_code == 400
         assert (await client.get("/api/settings")).json() == saved
-        stale = await patch("full_agent", {"model.model": "stale"}, revision=0)
+        stale = await patch("story", {"model.model": "stale"}, revision=0)
         assert stale.status_code == 409
         undo = await client.post(
             f"/api/settings/edit-sessions/{token}/undo",
-            json={"page": "full_agent.model", "expected_revision": saved["revisions"]["full_agent"]},
+            json={"page": "story.model", "expected_revision": saved["revisions"]["story"]},
         )
         assert undo.status_code == 200, undo.text
-        assert undo.json()["full_agent"]["model"] == original["full_agent"]["model"]
-        assert undo.json()["full_agent"]["system_prompt"]["options"][0]["text"] == "new-full-prompt"
+        assert undo.json()["story"]["model"] == original["story"]["model"]
+        assert undo.json()["story"]["system_prompt"]["options"][0]["text"] == "new-story-prompt"
         providers = deepcopy(original["shared"]["providers"])
         providers[0].update(name="changed-name", api_key="")
         assert (await patch("shared", {"providers": providers})).status_code == 200
@@ -333,7 +316,7 @@ async def test_scoped_updates_undo_and_secret_preservation(tmp_path):
         assert app.state.store.settings_document().shared.providers[0].api_key == "old-secret"
         assert "old-secret" not in undo.text
         await client.delete(f"/api/settings/edit-sessions/{token}")
-        assert (await patch("full_agent", {"model.model": "expired"})).status_code == 409
+        assert (await patch("story", {"model.model": "expired"})).status_code == 409
         assert (await client.put("/api/settings", json={})).status_code == 405
 
 
@@ -343,7 +326,7 @@ async def test_other_window_changes_cannot_be_undone_and_capabilities_cannot_be_
         a = (await client.post("/api/settings/edit-sessions", json={})).json()
         b = (await client.post("/api/settings/edit-sessions", json={})).json()
         result = await client.patch(
-            "/api/settings/full_agent",
+            "/api/settings/story",
             json={
                 "expected_revision": 0,
                 "edit_session": b["id"],
@@ -353,29 +336,15 @@ async def test_other_window_changes_cannot_be_undone_and_capabilities_cannot_be_
         assert result.status_code == 200
         undo = await client.post(
             f"/api/settings/edit-sessions/{a['id']}/undo",
-            json={"page": "full_agent.model", "expected_revision": 1},
+            json={"page": "story.model", "expected_revision": 1},
         )
         assert undo.status_code == 409
         fake = await client.patch(
-            "/api/settings/full_agent",
+            "/api/settings/story",
             json={"expected_revision": 1, "changes": {"model.capability": "accepted"}},
         )
         assert fake.status_code == 400
-        assert app.state.store.settings("full_agent").model == "other-window"
-
-
-def test_modes_inherit_their_own_policy_and_card_author_stays_independent(tmp_path):
-    store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
-    full = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
-    half = store.new_session(SessionCreate(card_id=card["id"], agent_mode="half_agent"))
-    doc = store.settings_document()
-    doc.full_agent.policy = "review"
-    doc.half_agent.background.model = "changed-background"
-    store.save_settings(doc)
-    assert store.session(full["id"])["policy_effective"] == "review"
-    assert store.session(half["id"])["policy_effective"] == "automatic"
-    assert store.settings().for_role("card_author").model != "changed-background"
+        assert app.state.store.settings().model == "other-window"
 
 
 def test_unsupported_version_is_rejected_without_touching_database(tmp_path):
@@ -386,10 +355,3 @@ def test_unsupported_version_is_rejected_without_touching_database(tmp_path):
     with pytest.raises(ValueError):
         Store(tmp_path)
     assert store.path.read_bytes() == before
-
-
-def test_full_agent_small_valid_budget_does_not_validate_half_memory_budget():
-    doc = SettingsDocument()
-    doc.full_agent.model.context_tokens = 2200
-    doc.full_agent.model.reply_tokens = 128
-    assert doc.runtime("full_agent").context_tokens == 2200

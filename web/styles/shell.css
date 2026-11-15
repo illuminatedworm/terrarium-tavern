@@ -690,12 +690,6 @@ main {
   flex-direction: column;
   min-height: 0;
 }
-.right-sidebar.scene-active .memory-records-scroll {
-  flex: 1;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-}
 .inspector-note {
   margin: 10px 0 18px;
   color: var(--text-secondary);
@@ -703,7 +697,7 @@ main {
   line-height: 1.7;
 }
 /* 场景 page: a notebook of separate blocks. Each block owns a title bar with its
-   own actions; the Full Agent notes keep the same blocks inside dialogs. */
+   own actions; the story notes keep the same blocks inside dialogs. */
 .scene-memory {
   gap: 12px;
 }
@@ -809,20 +803,6 @@ main {
   margin: 0;
   font-size: var(--fs-sm);
 }
-.scene-update-spinner {
-  width: 11px;
-  height: 11px;
-  border: 2px solid var(--border-control);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-.scene-update-status {
-  margin: 0;
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  line-height: 1.7;
-}
 .scene-notes .prose {
   font: var(--fs-md) / 1.8 var(--font-ui);
 }
@@ -915,27 +895,6 @@ main {
   margin: 0;
   color: var(--text-primary);
   font-size: var(--fs-md);
-}
-.options-values {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  margin: 0;
-  font-size: var(--fs-sm);
-}
-.options-values dt,
-.options-values dd {
-  padding: 7px 0;
-  border-bottom: 1px dashed var(--border-subtle);
-}
-.options-values dt {
-  color: var(--text-muted);
-}
-.options-values dd {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  margin: 0;
-  color: var(--text-primary);
 }
 .options-label {
   display: flex;

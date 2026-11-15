@@ -9,7 +9,6 @@ import type { StoryPresentation } from './storyPresentation';
 
 export type JsonObject = Record<string, any>;
 
-export type AgentMode = 'half_agent' | 'full_agent';
 export type TurnStatus =
   | 'queued'
   | 'running'
@@ -74,7 +73,6 @@ export interface SessionSummary {
   name: string;
   persona: string;
   created: number;
-  agent_mode: AgentMode;
   channel_origin: Channel | null;
   kemini: number;
   card_data: string | null;
@@ -114,8 +112,6 @@ export interface TurnRequest {
   update_variables?: boolean;
   allow_content_edit?: boolean;
   reasoning_effort?: string | null;
-  generate?: JsonObject | null;
-  scene_refresh?: 'memory' | null;
   resume_turn_id?: string | null;
 }
 
@@ -124,7 +120,7 @@ export interface TurnRecord {
   id: string;
   session: string;
   status: TurnStatus;
-  /** The submitted `TurnRequest`; scripts may add generate options. */
+  /** The submitted `TurnRequest`. */
   request: TurnRequest;
   draft: string;
   draft_breaks?: number[];
@@ -147,14 +143,12 @@ export interface Session {
   title: string;
   persona: string;
   persona_data: JsonObject;
-  agent_mode: AgentMode;
   channel_origin: Channel | null;
   kemini: boolean;
   unicode_story: boolean;
   opening_editable: boolean;
   policy: string | null;
   policy_effective: string;
-  recipe: JsonObject;
   /** `{}` until the conversation picks a model of its own. */
   model_selection: ConversationModelSelection | { provider_id?: undefined };
   context_strategy: string;
@@ -164,7 +158,6 @@ export interface Session {
   disabled_tools: string[];
   tool_result_options: Record<string, Record<string, boolean>>;
   turn_preference: string;
-  lore_injection_mode: string;
   cache_breakpoint_auto: boolean;
   cache_breakpoint_message: string | null;
   cache_breakpoint_effective_id: string | null;
@@ -173,9 +166,7 @@ export interface Session {
   card_data: CardRecord | null;
   messages: StoryMessageRecord[];
   snapshot: JsonObject;
-  memory_view: JsonObject;
   /** Episodes retention moved out of the active projection; recalled by relevance. */
-  archived_memory: JsonObject[];
   turns: Pick<TurnRecord, 'id' | 'status' | 'draft' | 'error'>[];
 }
 
@@ -200,22 +191,13 @@ export interface CardConversationSummary {
 /** `GET /sessions/{id}/branches`: every message of the story, across branches. */
 export type BranchMessage = Pick<StoryMessageRecord, 'id' | 'parent' | 'role' | 'raw' | 'created'>;
 
-/** `GET /sessions/{id}/memory/rebuild-estimate`. */
-export interface MemoryRebuildEstimate {
-  estimated_batches: number;
-  review_max_calls: number;
-  message: string;
-}
-
-/** A user input shown before its turn commits: the sent text, then the stored message. */
+/** A composer input displayed until its turn commits. */
 export type PendingInput = Pick<StoryMessageRecord, 'raw'> &
   Partial<Pick<StoryMessageRecord, 'id' | 'display' | 'ooc'>>;
 
-/** `POST /sessions/{id}/preview`: complete next-request sources and the latest provider observation. */
+/** Complete next-request sources and the latest provider observation. */
 export type StoryContextPreview = JsonObject & {
   trace: JsonObject[];
-  /** Half Agent only; Full Agent previews have no activated-lore list. */
-  lore?: JsonObject[];
   context_usage?: import('./contextUsage').ContextUsage;
   /** Only when the explicit context panel requests it; a reference, never a mechanism input. */
   local_estimate?: import('./localEstimate').LocalEstimate;

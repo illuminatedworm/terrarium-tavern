@@ -1,4 +1,4 @@
-"""Isolated card-script executor used by Roleplay Runtime, not the orchestrator.
+"""Isolated card-script executor and MVU state mirror.
 
 Browser-backed compatibility execution through a realm backend; network is denied
 at context level.
@@ -404,7 +404,7 @@ class RuntimeSession:
             else "({name,args}) => TavernRuntime[name](...args)"
         )
         payload = args[0] if install else {"name": name, "args": args}
-        # Full Agent patches may invoke MVU callbacks in message-local realms.
+        # Story tool patches may invoke MVU callbacks in message-local realms.
         # Restore every mirror on failure, not just the server's stat_data.
         patch_call = name == "process" and len(args) >= 3 and args[2] == "" and bool(args[1])
         checkpoints = (

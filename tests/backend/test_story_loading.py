@@ -19,7 +19,7 @@ async def test_slow_preview_does_not_block_other_requests(tmp_path, monkeypatch)
         assert release.wait(5), "Preview blocked the event loop"
         return {"tokens": 123, "messages": [], "trace": []}
 
-    monkeypatch.setattr("tavern.application.api.compile_context", slow_compile)
+    monkeypatch.setattr("tavern.story.context.compile_window", slow_compile)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as api:
             preview = asyncio.create_task(api.post(f"/api/sessions/{session['id']}/preview", json={}))

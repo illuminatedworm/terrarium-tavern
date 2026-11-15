@@ -13,9 +13,9 @@ import pytest
 
 from tavern.core.cache_policy import CacheSettings, effective_retention, preset
 from tavern.core.gemini_capabilities import gemini_controls
-from tavern.full_agent.prefix_debug import PrefixDebug, wire_parameters
 from tavern.scripting.genai_transport import GenAITransport
 from tavern.storage.request_debug import RequestDebugLog
+from tavern.story.prefix_debug import PrefixDebug, wire_parameters
 from tests.backend.test_unified_cache import compiled, config, model_messages, provider, reply
 
 
@@ -73,7 +73,7 @@ async def test_capabilities_remove_only_inapplicable_fields_from_final_sdk_wire(
 async def test_gemini4_long_context_keeps_full_stable_prefix_without_cache_objects():
     cfg = config("gemini")
     cfg.model = "gemini-4-argon"
-    context, *_ = compiled("full_agent", cfg)
+    context, *_ = compiled("story", cfg)
     assert context["cache"]["planned_index"] is None
     assert context["cache"]["status"] == "cloud"
     messages = model_messages(context)
@@ -352,7 +352,7 @@ async def test_sdk_model_alias_cannot_change_displayed_endpoint_or_query():
 
 async def test_expired_cache_retries_complete_context_even_if_relay_delete_returns_no_content():
     cfg = config("gemini")
-    context, *_ = compiled("full_agent", cfg)
+    context, *_ = compiled("story", cfg)
     requests = []
 
     def route(request):

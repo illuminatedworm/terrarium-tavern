@@ -16,27 +16,29 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tavern.character.card_workflow import validate_document
 from tavern.character.cards import diagnose, normalize
+from tavern.character.lore_purpose import upgrade_lore_purposes
 from tavern.character.worldbooks import REGISTRY, validate_book
 from tavern.core.kemini import AuxiliaryPart
 from tavern.core.message_adapter import MessageAdapterConfig
-from tavern.core.models import ContextRecipe, PersonaEdit, WorldbookEdit
+from tavern.core.models import PersonaEdit, WorldbookEdit
 from tavern.core.ooc import story_of, with_ooc
 from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.core.story_segments import validate_segments
-from tavern.memories.memory import fingerprint, window_valid
 from tavern.search.retrieval_config import ModelProfile
+from tavern.storage.legacy_lore import upgrade_card_record, upgrade_snapshot
+from tavern.storage.legacy_story import OLD_SESSION_FIELDS, supported_package_story, upgrade_package_story
 from tavern.storage.store import Conflict, dump, uid, write_blob
 from tavern.storage.worldbooks import read_defaults, write_defaults
 
 MAX_UPLOAD = 256 * 1024 * 1024
 MAX_UNPACKED = 512 * 1024 * 1024
 FORMAT = "terrarium-tavern-personal-data"
+PACKAGE_VERSION = 16
 JSON_FIELDS = {
     "worldbooks": {"book"},
     "cards": {"resources", "document", "report"},
     "sessions": {
         "model_selection",
-        "recipe",
         "persona_data",
         "card_data",
         "disabled_tools",
@@ -44,8 +46,7 @@ JSON_FIELDS = {
         "cache_breakpoint_follow",
     },
     "messages": {"snapshot", "auxiliary", "story_segments"},
-    "full_agent_trace": {"payload"},
-    "half_agent_trace": {"payload"},
+    "story_trace": {"payload"},
     "message_adapter_configs": {"config"},
 }
 
@@ -139,7 +140,7 @@ def export_package(store, selection):
         raise ValueError("请至少选择一种数据")
     package = {
         "format": FORMAT,
-        "version": 13,
+        "version": PACKAGE_VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "includes_api_keys": selection.settings and selection.include_api_keys,
         "settings": None,
@@ -218,7 +219,7 @@ def export_package(store, selection):
                     bundle["novel"] = export_novel(
                         store, db, identity, selection.include_novel_files, novel_files
                     )
-                    for related in ("messages", "full_agent_trace", "half_agent_trace"):
+                    for related in ("messages", "story_trace"):
                         bundle[related] = [
                             decoded(related, item)
                             for item in db.execute(
@@ -272,7 +273,7 @@ def validate_row(schema, table, row, required):
                 raise ValueError("数据包字段类型无效")
 
 
-def validate_full_sources(messages):
+def validate_story_sources(messages):
     """Check imported immutable citations against every branch in linear tree time."""
     children = {}
     for message in messages.values():
@@ -301,7 +302,7 @@ def validate_full_sources(messages):
                     raise ValueError("交接要点的引用范围无效")
 
     for mid, message in messages.items():
-        state = message["snapshot"]["full_agent"]
+        state = message["snapshot"]["story"]
         for note in state["notes"].values():
             for source in note["sources"]:
                 position(source["message_id"], mid)
@@ -315,8 +316,15 @@ def validate_full_sources(messages):
         points(state["handoff"]["current"], mid)
 
 
+def session_record(bundle, version):
+    session = bundle["session"]
+    if version >= 14:
+        return session
+    return {key: value for key, value in session.items() if key not in OLD_SESSION_FIELDS}
+
+
 def validate_package(store, package, blobs):
-    if package.get("format") != FORMAT or package.get("version") not in range(1, 14):
+    if package.get("format") != FORMAT or package.get("version") not in range(1, PACKAGE_VERSION + 1):
         raise ValueError("不支持的数据包格式或版本，请选择本软件导出的个人数据 ZIP")
     if type(package.get("includes_api_keys")) is not bool:
         raise ValueError("数据包密钥选项无效")
@@ -327,8 +335,6 @@ def validate_package(store, package, blobs):
     for key in ("personas", "worldbooks", "cards", "sessions"):
         if not isinstance(package.get(key), list):
             raise ValueError("数据包清单无效")
-    if package["sessions"] and package["version"] < 3:
-        raise ValueError("旧对话不支持整轮重试格式；请只导入角色卡、设置等非对话资料")
     identities = set()
     novel_sources = {}
     with store.connection() as db:
@@ -354,6 +360,8 @@ def validate_package(store, package, blobs):
         )
         if library:
             identity(raw["id"])
+        if package["version"] < 16:
+            upgrade_card_record(raw)
         validate_document(raw["document"])
         if not normalize(raw["document"]).get("name") or raw["permission"] not in (0, 1):
             raise ValueError("角色卡名称或权限无效")
@@ -399,12 +407,18 @@ def validate_package(store, package, blobs):
         for book in package["worldbooks"]:
             validate_row(schema, "worldbooks", book, {"id", "name", "book", "revision", "created"})
             WorldbookEdit.model_validate({"name": book["name"], "book": book["book"]})
+            if package["version"] < 16:
+                upgrade_lore_purposes(book["book"])
             validate_book(book["name"], book["book"])
             identity(book["id"])
         for value in package["cards"]:
             card(value, True)
         for bundle in package["sessions"]:
             session = bundle["session"]
+            if not supported_package_story(session, package["version"]):
+                continue
+            if package["version"] < 15:
+                upgrade_package_story(bundle)
             # Older packages cannot establish whether a cleared consultation sent the opening.
             if package["version"] < 6:
                 session["opening_locked"] = 1
@@ -418,42 +432,27 @@ def validate_package(store, package, blobs):
             validate_advisor(bundle.get("advisor"), session.get("channel_origin"))
             from tavern.novel.transfer import validate_bundle as validate_novel
 
-            if bundle.get("novel") is not None and session.get("agent_mode") != "full_agent":
-                raise ValueError("原著调查只能属于 Full Agent 对话")
             if bundle.get("novel") is not None and package["version"] < 7:
                 raise ValueError("原著调查需要个人数据包格式 7")
             validate_novel(bundle.get("novel"), blobs, session.get("channel_origin"), novel_sources)
             validate_row(
                 schema,
                 "sessions",
-                session,
+                session_record(bundle, package["version"]),
                 {
                     "id",
                     "card",
                     "head",
                     "persona",
-                    "recipe",
                     "created",
                     "card_data",
                     "persona_data",
-                    "lore_injection_mode",
-                    "agent_mode",
                 },
             )
             identity(session["id"])
-            ContextRecipe.model_validate(session["recipe"])
             card(session["card_data"])
-            if session["agent_mode"] not in ("half_agent", "full_agent") or session[
-                "lore_injection_mode"
-            ] not in ("conversation", "st_top"):
-                raise ValueError("对话运行模式无效")
             planning = session.get("plot_enabled", 0)
-            if (
-                type(planning) not in (bool, int)
-                or planning not in (0, 1)
-                or planning
-                and session["agent_mode"] != "full_agent"
-            ):
+            if type(planning) not in (bool, int) or planning not in (0, 1):
                 raise ValueError("剧情规划开关无效")
             if session.get("model_selection"):
                 from tavern.core.model_selection import ModelSelection
@@ -470,9 +469,7 @@ def validate_package(store, package, blobs):
             ):
                 raise ValueError("Kemini 实验对话标记无效")
             unicode_story = session.get("unicode_story", 0)
-            if unicode_story not in (0, 1) or (
-                unicode_story and (package["version"] < 13 or session["agent_mode"] != "full_agent")
-            ):
+            if unicode_story not in (0, 1) or (unicode_story and package["version"] < 13):
                 raise ValueError("Unicode 码点传输设置无效")
             if session.get("context_strategy", "new_context") not in ("new_context", "openai_compact"):
                 raise ValueError("上下文模式无效")
@@ -517,10 +514,8 @@ def validate_package(store, package, blobs):
                     if ooc != ooc.strip() or model != with_ooc(story_of(model, ooc), ooc):
                         raise ValueError("数据包的场外发言与模型消息不一致")
                 validate_segments(message["story_segments"], message["raw"], message["display"])
-                if message["story_segments"]["raw"] and (
-                    session["agent_mode"] != "full_agent" or kemini or message["role"] != "assistant"
-                ):
-                    raise ValueError("只有普通 Full Agent 回复可以包含多段正文")
+                if message["story_segments"]["raw"] and (kemini or message["role"] != "assistant"):
+                    raise ValueError("只有普通对话回复可以包含多段正文")
                 if not isinstance(message["auxiliary"], list):
                     raise ValueError("实验辅助记录必须是列表")
                 message["auxiliary"] = [
@@ -534,31 +529,17 @@ def validate_package(store, package, blobs):
                 ):
                     raise ValueError("对话消息无效")
                 snapshot = message["snapshot"]
-                if session["agent_mode"] == "full_agent":
-                    from tavern.full_agent.state import read_full_state
+                from tavern.story.state import read_story_state
 
-                    if not snapshot.get("full_agent"):
-                        raise ValueError("对话缺少 Full Agent 状态")
-                    read_full_state(snapshot)
-                else:
-                    from tavern.memories.memory_records import read_memory
-
-                    if not snapshot.get("memory_document"):
-                        raise ValueError("对话缺少 Half Agent 记忆")
-                    read_memory(snapshot)
+                if not snapshot.get("story"):
+                    raise ValueError("对话缺少 剧情状态")
+                read_story_state(snapshot)
                 for key in ("state", "scopes"):
                     if not isinstance(snapshot.get(key, {}), dict):
                         raise ValueError("对话变量状态无效")
-                for key in ("context_window", "memory_archive"):
-                    window = snapshot.get(key)
-                    if window and (
-                        not isinstance(window, dict)
-                        or type(window.get("covered_count")) is not int
-                        or window["covered_count"] < 0
-                        or not isinstance(window.get("fingerprint"), str)
-                    ):
-                        raise ValueError("对话历史窗口无效")
                 if snapshot.get("content"):
+                    if package["version"] < 16:
+                        upgrade_snapshot(snapshot)
                     validate_document(snapshot["content"]["document"])
                 for item in snapshot.get(REGISTRY, []):
                     if (
@@ -583,27 +564,28 @@ def validate_package(store, package, blobs):
                     seen.add(cursor)
                     cursor = by_id[cursor]["parent"]
                 done.update(seen)
-            if session["agent_mode"] == "full_agent":
-                validate_full_sources(by_id)
-            for table in ("full_agent_trace", "half_agent_trace"):
-                trace_keys = set()
-                for trace in bundle.get(table, []):
-                    validate_row(
-                        schema, table, trace, {"session", "message_id", "seq", "window_id", "payload"}
-                    )
-                    key = (trace["message_id"], trace["seq"] if table == "full_agent_trace" else 0)
-                    if (
-                        trace["session"] != session["id"]
-                        or trace["message_id"] not in by_id
-                        or key in trace_keys
-                        or not isinstance(trace["payload"], dict)
-                    ):
-                        raise ValueError("对话上下文轨迹无效")
-                    trace_keys.add(key)
-            from tavern.full_agent.visuals import successful_specs, validate_spec
+            validate_story_sources(by_id)
+            trace_keys = set()
+            for trace in bundle.get("story_trace", []):
+                validate_row(
+                    schema,
+                    "story_trace",
+                    trace,
+                    {"session", "message_id", "seq", "window_id", "payload"},
+                )
+                key = (trace["message_id"], trace["seq"])
+                if (
+                    trace["session"] != session["id"]
+                    or trace["message_id"] not in by_id
+                    or key in trace_keys
+                    or not isinstance(trace["payload"], dict)
+                ):
+                    raise ValueError("对话上下文轨迹无效")
+                trace_keys.add(key)
+            from tavern.story.visuals import successful_specs, validate_spec
 
             visual_records = {}
-            for trace in bundle.get("full_agent_trace", []):
+            for trace in bundle.get("story_trace", []):
                 visual_records.setdefault(trace["message_id"], []).append(trace)
             for records in visual_records.values():
                 specs = successful_specs(
@@ -622,7 +604,7 @@ def validate_package(store, package, blobs):
             ):
                 if key in session and not isinstance(session[key], expected_type):
                     raise ValueError("对话选项格式无效")
-            if package["version"] < 10 and session["agent_mode"] == "full_agent":
+            if package["version"] < 10:
                 disabled = session.setdefault("disabled_tools", [])
                 if "present_ui" not in disabled:
                     disabled.append("present_ui")
@@ -634,17 +616,15 @@ def validate_package(store, package, blobs):
                     adapter,
                     {"owner_kind", "owner_id", "revision", "config"},
                 )
-                lanes = (
-                    {"full_agent"} if session["agent_mode"] == "full_agent" else {"foreground", "background"}
-                )
                 if (
                     adapter["owner_kind"] != "story"
                     or adapter["owner_id"] != session["id"]
-                    or set(adapter["config"]) != lanes
+                    or set(adapter["config"]) != {"story"}
                 ):
                     raise ValueError("对话消息适配配置无效")
-                for config in adapter["config"].values():
-                    MessageAdapterConfig.model_validate(config)
+                adapter["config"] = {
+                    "story": MessageAdapterConfig.model_validate(adapter["config"]["story"]).model_dump()
+                }
     except ValidationError:
         raise ValueError("数据包包含无效设置或记录") from None
     except (KeyError, TypeError, AttributeError):
@@ -704,10 +684,15 @@ def preview(package):
             {
                 "id": item["session"]["id"],
                 "name": item["session"].get("title") or "对话",
-                "agent_mode": item["session"]["agent_mode"],
                 "messages": len(item["messages"]),
             }
             for item in package["sessions"]
+            if supported_package_story(item["session"], package["version"])
+        ],
+        "skipped_sessions": [
+            item["session"].get("title") or "对话"
+            for item in package["sessions"]
+            if not supported_package_story(item["session"], package["version"])
         ],
     }
 
@@ -735,17 +720,14 @@ def import_transaction(store):
 def import_package(store, package, blobs, restore_settings=False, expected_revisions=None):
     validate_package(store, package, blobs)
     ids = {row["id"]: uid() for key in ("personas", "worldbooks", "cards") for row in package[key]}
+    story_bundles = [
+        b for b in package["sessions"] if supported_package_story(b["session"], package["version"])
+    ]
     novel_source_ids = {}
-    novel_only_blobs = {
-        s["blob"] for b in package["sessions"] for s in (b.get("novel") or {}).get("sources", []) if s["blob"]
-    }
     card_blobs = set().union(
-        *(
-            hashes(card)
-            for card in [*package["cards"], *[b["session"]["card_data"] for b in package["sessions"]]]
-        )
+        *(hashes(card) for card in [*package["cards"], *[b["session"]["card_data"] for b in story_bundles]])
     )
-    for bundle in package["sessions"]:
+    for bundle in story_bundles:
         ids[bundle["session"]["id"]] = uid()
         ids.update({row["id"]: uid() for row in bundle["messages"]})
     result = {
@@ -791,9 +773,7 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                         getattr(incoming.shared.web, name).api_key = getattr(current.shared.web, name).api_key
                 incoming.revisions = {scope: revision + 1 for scope, revision in current.revisions.items()}
                 for profile in (
-                    incoming.full_agent.model,
-                    incoming.half_agent.foreground,
-                    incoming.half_agent.background,
+                    incoming.story.model,
                     incoming.shared.card_author,
                 ):
                     profile.capability, profile.capability_key = "unknown", ""
@@ -802,9 +782,8 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                     settings_restored=True,
                     browser_preferences=browser_preferences(package["settings"].get("browser", {})),
                 )
-            for digest, data in blobs.items():
-                if digest in novel_only_blobs and digest not in card_blobs:
-                    continue  # Novel originals live only in their dedicated file directory.
+            for digest in card_blobs:
+                data = blobs[digest]
                 path = store.root / "blobs" / digest
                 if path.exists():
                     if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
@@ -843,8 +822,8 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 written.append(path)
                 path.write_text(dump(dependencies), encoding="utf-8")
                 result["cards"].append(row["id"])
-            for bundle in package["sessions"]:
-                source = bundle["session"]
+            for bundle in story_bundles:
+                source = session_record(bundle, package["version"])
                 row = remap(source, ids)
                 row["model_selection"] = copy.deepcopy(source.get("model_selection", {}))
                 # A session owns its pinned card even when the library card was deleted.
@@ -853,52 +832,17 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 row["card_data"]["session_id"] = row["id"]
                 row.update(revision=0, created=time.time())
                 insert(db, "sessions", row)
-                messages = {message["id"]: message for message in bundle["messages"]}
-                window_fingerprints = {}
                 for message in bundle["messages"]:
                     cloned = remap(message, ids)
-                    from tavern.conversation.half_compaction import STATE, remap_state
-
-                    if STATE in message["snapshot"]:
-                        cloned["snapshot"][STATE] = copy.deepcopy(message["snapshot"][STATE])
-                        remap_state(cloned["snapshot"], ids)
-                    # User-authored strings are content, not identity references.
+                    # User-authored strings retain their value even when they match a record ID.
                     for key in ("raw", "model", "display", "retrieval_query", "auxiliary", "ooc"):
                         if key in message:
                             cloned[key] = message[key]
-                    for key in ("context_window", "memory_archive"):
-                        window = message["snapshot"].get(key)
-                        if window and isinstance(window, dict):
-                            cache_key = (window.get("covered_count"), window.get("fingerprint"))
-                            if cache_key in window_fingerprints:
-                                if window_fingerprints[cache_key]:
-                                    cloned["snapshot"][key]["fingerprint"] = window_fingerprints[cache_key]
-                                continue
-                            prefix, cursor = [], message["id"]
-                            while cursor is not None:
-                                prefix.append(messages[cursor])
-                                cursor = messages[cursor]["parent"]
-                            prefix.reverse()
-                            if window_valid(window, prefix):
-                                new_fingerprint = fingerprint(
-                                    [{**m, "id": ids[m["id"]]} for m in prefix[: window["covered_count"]]]
-                                )
-                                cloned["snapshot"][key]["fingerprint"] = new_fingerprint
-                                window_fingerprints[cache_key] = new_fingerprint
-                            else:
-                                window_fingerprints[cache_key] = None
                     insert(db, "messages", cloned)
-                for table in ("full_agent_trace", "half_agent_trace"):
-                    for trace in bundle.get(table, []):
-                        cloned = remap(trace, ids)
-                        if table == "full_agent_trace":
-                            cloned["payload"].pop("_novel_mail", None)
-                        if table == "half_agent_trace":
-                            from tavern.conversation.half_context import remap_record
-
-                            cloned["payload"] = remap_record(trace["payload"], ids)
-                            cloned["window_id"] = cloned["payload"]["window"]
-                        insert(db, table, cloned)
+                for trace in bundle.get("story_trace", []):
+                    cloned = remap(trace, ids)
+                    cloned["payload"].pop("_novel_mail", None)
+                    insert(db, "story_trace", cloned)
                 adapter = bundle.get("adapter")
                 from tavern.advisor.transfer import import_bundle as import_advisor
 
@@ -909,7 +853,7 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 if adapter:
                     insert(db, "message_adapter_configs", {**remap(adapter, ids), "revision": 0})
                 else:
-                    store.create_message_adapter(db, "story", row["id"], row["agent_mode"])
+                    store.create_message_adapter(db, "story", row["id"])
                 result["sessions"].append(row["id"])
     except sqlite3.IntegrityError:
         raise ValueError("数据包记录不完整或存在冲突，未导入任何数据") from None

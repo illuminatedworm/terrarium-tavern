@@ -4,7 +4,6 @@ import { saveDownload } from './download';
 export type TransferItem = {
   id: string;
   name: string;
-  agent_mode?: string;
   messages?: number;
   /** Catalog cards only: the new-conversation defaults exported beside the card. */
   defaults?: CardDefaults;
@@ -14,6 +13,7 @@ export type TransferPreview = TransferCatalog & {
   settings: boolean;
   includes_api_keys: boolean;
   created_at: string;
+  skipped_sessions: string[];
   sha256: string;
   settings_revisions: Record<string, number>;
 };

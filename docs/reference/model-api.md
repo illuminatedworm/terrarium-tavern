@@ -17,7 +17,7 @@
 
 模型列表从本地持久缓存读取，只有点击“更新模型列表”或模型选单内的“获取模型列表”才请求提供商。同一提供商的所有 agent 共用一份列表缓存，不因协议或 API 路径不同而拆分；提供商身份、主域名或密钥不同则分开。刷新使用发起处的协议和路径，成功后替换共享列表，失败时保留原列表。共享的只是候选目录，各 agent 的模型选择、连接参数和生成设置各自独立。旧版按连接保存的缓存，会以其中最近一次成功更新的列表初始化共享缓存，不修改连接设置。
 
-`gemini` 在界面显示为“Google GenAI · Gemini”，通过官方 Python `google-genai` SDK 调用 GenerateContent、流式生成、模型列表及显式缓存对象 API；配置键仍为 `gemini`，现有配置无需改名。使用 Gemini Developer API 的 API Key 方式，可保留自定义服务地址和路径，不自动切换到 Vertex AI／Enterprise 服务。SDK 自动工具执行、自动续写和自动重试均关闭，工具权限与续答仍由 Roleplay Runtime 调度；只有明确拒绝缓存对象时允许一次完整上下文重发。请求日志记录 SDK 最终序列化的 HTTP 正文，而非调用前的估算结构。
+`gemini` 在界面显示为“Google GenAI · Gemini”，通过官方 Python `google-genai` SDK 调用 GenerateContent、流式生成、模型列表及显式缓存对象 API；配置键仍为 `gemini`，现有配置无需改名。使用 Gemini Developer API 的 API Key 方式，可保留自定义服务地址和路径，不自动切换到 Vertex AI／Enterprise 服务。SDK 自动工具执行、自动续写和自动重试均关闭，工具权限与续答仍由 对应 agent 的 Runtime 调度；只有明确拒绝缓存对象时允许一次完整上下文重发。请求日志记录 SDK 最终序列化的 HTTP 正文，而非调用前的估算结构。
 
 流式解析兼容中转在完整 JSON 数据与下一个命名事件之间遗漏分隔空行的响应，保留正常多行 JSON。Gemini 流中的错误事件统一作为请求失败处理，原始响应可通过可选的失败请求 Debug 记录查看；即使 HTTP 为 200 或已收到部分正文，后续错误仍使整轮失败，不提交未完成内容。
 
@@ -38,12 +38,12 @@ Chat Completions 的非流式响应同样必须提供有效的 `finish_reason`�
 - system 消息原位转为 developer，保留完整原文和顺序；输入包含全部需要的历史，不发送 `previous_response_id`。
 - 函数工具放入 `tavern` namespace，工具调用及结果保留命名空间；仅接收本轮允许的工具。指定单个工具时只暴露它，并使用 `tool_choice=required`。
 - SIWC 按允许字段构建请求体，不发送普通采样、最大输出 token、显式缓存及其他通道自定义参数。缓存由服务端管理，仅使用稳定的 `prompt_cache_key`；不发送 `session-id`、`thread-id` 或 `x-codex-turn-state`。
-- 官方 Full Agent 的云端 compact（触发条件与重建规则见 [Full Agent 架构](../design/full-agent.md#官方云端-compact)）：独立整理请求发送 `context_management` 与 `compact_threshold`，正文与工具续答不携带自动压缩配置；支持完整加密项续接，不使用独立的 `/responses/compact`。切回本地且需要换窗时，使用专用的 `prepare_handoff` 结构化调用，验证后再更新本地状态，不执行剧情工具。
+- 官方渠道的剧情云端 compact（触发条件与重建规则见 [剧情架构](../design/story.md#官方云端-compact)）：独立整理请求发送 `context_management` 与 `compact_threshold`，正文与工具续答不携带自动压缩配置；支持完整加密项续接，不使用独立的 `/responses/compact`。切回本地且需要换窗时，使用专用的 `prepare_handoff` 结构化调用，验证后再更新本地状态，不执行剧情工具。
 - 原生回复归属由账号注册、授权会话代次和模型确定。正常刷新保持归属，重新授权／退出和切换账号会隔离旧的原生状态；操作内固定授权代次，不能中途切换到新登录。
 - 模型目录使用相同账号的 OAuth 凭据请求 `/v1/models`，读取 `models` 中 `visibility=list` 的 `slug/display_name`，保留服务端顺序。缓存按账号和授权代次隔离。
 - 目录附带 `supported_reasoning_levels`、`default_reasoning_level` 和接口不支持的 `unavailable_reasoning_levels`。SIWC 的档位按模型能力过滤，`xhigh` 与 `max` 各自原样发送；当前直连接口不接受的 `ultra` 标为不可用。已载入目录时，“模型默认”发送目录声明的默认档位；未知能力时省略字段，由接口决定。
 
-实现位于 `chatgpt/`，通过 `core/provider.py` 返回兼容 Terrarium 的 `ModelTransport` 子类。Writer、Tracker、Full Agent、参谋 agent、制卡 agent、脚本嵌套调用和探测共用同一入口。SIWC 的协议与缓存行为遵循 [SIWC 订阅共享限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
+实现位于 `chatgpt/`，通过 `core/provider.py` 返回兼容 Terrarium 的 `ModelTransport` 子类。剧情模型、参谋 agent、制卡 agent、原著调查者和探测共用同一入口。SIWC 的协议与缓存行为遵循 [SIWC 订阅共享限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
 
 ## OpenAI 官方 API 模式
 
@@ -65,9 +65,9 @@ Chat Completions 的非流式响应同样必须提供有效的 `finish_reason`�
 
 会话身份独立于缓存开关。Anthropic 使用 `X-Claude-Code-Session-Id` 与 `metadata.user_id` 中的设备／会话信息；普通渠道 Responses 使用 `session-id`、`thread-id` 和默认 `prompt_cache_key`；官方渠道只发送 `prompt_cache_key`。官方 API 的 GPT-5.6 及更新模型在制卡 agent 使用云端默认缓存时，缓存键按应用数据目录与制卡用途分组，以复用固定提示和工具定义；默认会话键继续用于其他官方请求。设备 ID 是数据库中随机生成的应用标识，account UUID 留空。
 
-Half Agent 前台使用剧情会话 UUID，Tracker 前置、后置、重建和脚本调用按会话与用途派生身份。Full Agent 的失败续接保持同一会话身份，分支使用新身份；制卡 agent 每个编辑对话有独立稳定身份。
+续接剧情回合时保持同一会话身份，分支使用新身份；制卡 agent 每个编辑对话有独立稳定身份。
 
-Responses 的 `x-codex-turn-state` 只在同一逻辑操作内回传；新操作、重生成、模型、提供商或认证变化后清除。日志只记录其存在与摘要，不记录认证头。实现见 [request_context.py](../../src/tavern/scripting/request_context.py)，各模式的上下文记录层负责原生回复的持久化与失效判断。
+Responses 的 `x-codex-turn-state` 只在同一逻辑操作内回传；新操作、重生成、模型、提供商或认证变化后清除。日志只记录其存在与摘要，不记录认证头。各运行时负责保存原生回复并判断其是否还能回放。请求头处理见 [request_context.py](../../src/tavern/scripting/request_context.py)。
 
 ## 思考强度
 
@@ -92,7 +92,7 @@ Responses 的 `x-codex-turn-state` 只在同一逻辑操作内回传；新操作
 
 协议依据见 [OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[Claude effort](https://platform.claude.com/docs/en/build-with-claude/effort)、[Gemini GenerateContent thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking) 与 [Gemini OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai.md)。预算数值为本项目预设。
 
-模型映射还控制采样参数和强制工具选择。不能强制指定工具时，传输层使用 `auto` 并仅暴露目标工具；Full Agent 的换窗要求仍由运行时校验。维护模型匹配规则时，应同时核对参数编译与运行时权限，不只修改界面选项。
+模型映射还控制采样参数和强制工具选择。不能强制指定工具时，传输层使用 `auto` 并仅暴露目标工具；剧情换窗要求仍由运行时校验。维护模型匹配规则时，应同时核对参数编译与运行时权限，不只修改界面选项。
 
 Gemini 3.6 Flash、3.5 Flash-Lite 及后续型号已废弃 `temperature`、`top_p`、`top_k`：原生和 Chat 兼容配置隐藏这些控件，请求层也不发送已保存值或单次调用覆盖值，并在界面说明由服务端控制采样。较早型号保留可用控件；未知中转别名不凭猜测关闭参数。SDK 对部分嵌套消息字段使用等价的 protobuf snake_case 名称，实际发送形式以请求日志为准。依据：[Google 参数迁移说明](https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.6)。
 
@@ -123,7 +123,7 @@ Google GenAI 原生模式不显示自定义断点字段、JSON 值与附加缓�
 
 传输层保留 Anthropic `content` 和 Responses `output` 的块顺序、工具 ID、思考签名及加密推理，用于兼容来源的续答。编辑、脚本改写或切换模型来源后是否回放，由对应上下文记录层判定；通用剧情历史始终保留。
 
-Full Agent、Tracker、记忆历史补查和制卡 agent 在生成工具结果时记录执行失败状态，Anthropic 续答将其映射为 `tool_result.is_error=true`；保留的工具记录经过上下文投影与回放时不丢失此状态。参数错误、权限拒绝、补查额度耗尽，以及制卡中因用户补充要求而取消的未执行调用均属于失败；正常搜索零命中、重复查询提示，以及读取到含 `error` 或 `ok:false` 字段的业务数据不据此判为失败。Chat Completions、Responses 和 Gemini 保留错误正文，不发送 Anthropic 专属字段。Writer 与普通脚本生成不执行工具循环。
+剧情模型与制卡 agent 在生成工具结果时记录执行失败状态，Anthropic 续答将其映射为 `tool_result.is_error=true`；保留的工具记录经过上下文投影与回放时不丢失此状态。参数错误、权限拒绝、补查额度耗尽，以及制卡中因用户补充要求而取消的未执行调用均属于失败；正常搜索零命中、重复查询提示，以及读取到含 `error` 或 `ok:false` 字段的业务数据不据此判为失败。Chat Completions、Responses 和 Gemini 保留错误正文，不发送 Anthropic 专属字段。
 
 应用保存原始 `usage`，并提供统一显示字段。缓存读取或写入字段缺失表示未知，不能显示为零命中。
 

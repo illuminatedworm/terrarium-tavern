@@ -208,9 +208,7 @@ function focusChoiceOnClick(event: MouseEvent) {
     </SavedText>
     <p v-if="scope !== 'shared'" class="muted">{{ definition.description }}</p>
     <p
-      v-if="
-        scope === 'full_agent' && path === 'system_prompt' && /handoff|new_context|tavern_memory/.test(text)
-      "
+      v-if="scope === 'story' && path === 'system_prompt' && /handoff|new_context|tavern_memory/.test(text)"
       class="muted"
     >
       此自定义主规则包含本地换窗要求；使用云端 compact 前请移除其中的换窗命令，或恢复通用默认文本。

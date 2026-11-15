@@ -379,7 +379,7 @@ class EditorRun:
             assistant = self.response(provider, text, calls)
             if text.strip():
                 reply = text
-            # Like Full Agent, only the native end signal completes the round; a
+            # As in story generation, only the native end signal completes the round; a
             # response yielding for tools continues even when it carries prose.
             ended = completion.action == "end"
             if not calls:

@@ -45,7 +45,7 @@ const effective = computed(
           }}
         </dd>
       </dl>
-      <p v-if="global">未单独选择保存方式的同模式对话，从下一轮起沿用此默认值。</p>
+      <p v-if="global">沿用全局默认的对话从下一轮起使用此设置。</p>
       <p class="policy-scope">对话内设定和世界书保存为对话快照，不会覆盖书架中的原角色卡。</p>
     </div>
   </div>

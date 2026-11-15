@@ -1,13 +1,13 @@
 # 文档导航
 
-按安装、使用、角色卡制作和开发任务查阅。Full Agent 与 Half Agent 是并列的两种游玩模式，模型编排和记忆机制分别说明。
+按安装、使用、角色卡制作和开发任务查阅。游玩、制卡和咨询分别使用自己的模型与上下文。
 
 当前版本：**v0.8.16（实验阶段）**。[GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.16) 提供 Windows x64 便携包和 Android ARM64 APK。历史里程碑、版本变化与升级注意事项见[版本记录](changelog.md)。
 
 ## 开始使用
 
 1. 按[安装、备份与维护](guides/maintenance.md)准备环境，再按[设置指南](guides/settings.md)配置提供商和模型。
-2. 选择游玩模式：Full Agent 的操作见[使用指南](guides/full-agent.md)，Half Agent 的参数见[历史窗口与记忆](guides/history-maintenance-settings.md)。
+2. 从 [游玩指南](guides/story.md) 了解游玩、工具权限和工作窗口。
 3. 导入或[编辑角色卡](guides/card-author.md)，结合[兼容矩阵](guides/compatibility.md)检查脚本和扩展。
 
 | 任务 | 文档 |
@@ -27,11 +27,8 @@
 
 | 机制 | 设计文档 |
 |---|---|
-| Full Agent 原著文件、异步调查与报告送达 | [原著参考](design/novel-research.md) |
-| Full Agent 窗口、笔记与恢复 | [Full Agent 架构](design/full-agent.md) |
-| Half Agent 调用顺序、失败和审核 | [Half Agent 回合工作流](design/agent-workflow.md) |
-| Half Agent 消息编排、窗口和覆盖水位 | [Half Agent 上下文生命周期](design/context-lifecycle.md) |
-| Half Agent 分类记忆与来源协议 | [记忆一致性](design/memory-consistency.md) |
+| 原著文件、异步调查与报告送达 | [原著参考](design/novel-research.md) |
+| 剧情窗口、笔记与恢复 | [剧情架构](design/story.md) |
 | 独立参谋 agent 上下文、工具与偏好提交 | [参谋 agent 设计](design/advisor.md) |
 | 编辑草稿、连续上下文与保存 | [制卡 agent 设计](design/card-author.md) |
 | 制卡工具、引用与续接接口 | [制卡 agent 工具协议](reference/card-author-tools.md) |
@@ -47,8 +44,8 @@
 |---|---|
 | 设置范围、API、修订和数据库迁移 | [设置持久化与 API](reference/settings-api.md) |
 | 模型协议、请求身份、思考和缓存字段 | [模型接入参考](reference/model-api.md) |
-| Full Agent 全部工具的简短列表与作用 | [工具速查](reference/full-agent-tools-summary.md) |
-| Full Agent 工具参数、引用和路径规则 | [工具协议](reference/full-agent-tools.md) |
+| 剧情模型全部工具的简短列表与作用 | [工具速查](reference/story-tools-summary.md) |
+| 剧情工具参数、引用和路径规则 | [工具协议](reference/story-tools.md) |
 | 开发运行、测试选择、实测与打包 | [验证与发行](development/validation.md) |
 | 桌面工具链、系统浏览器与便携包 | [桌面开发](development/desktop.md) |
 | Android 构建、真机开发及与桌面的共用／隔离边界 | [Android 开发](development/android.md) |

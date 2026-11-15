@@ -266,7 +266,7 @@ onBeforeUnmount(() => {
         <span>· 委派{{ state.enabled ? '已授权' : '未授权' }}</span>
         <span :class="{ 'novel-live': state.active }">· 调查者 {{ state.active }}/3</span>
         <FieldHelp
-          tooltip="每个分支只绑定一个纯文本文件。调查者独立查阅原文，主 agent 只接收报告；原著不会覆盖本局剧情。"
+          tooltip="每个分支只绑定一个纯文本文件。调查者独立查阅原文，剧情模型只接收报告；原著不会覆盖本局剧情。"
         />
       </p>
     </header>
@@ -325,7 +325,7 @@ onBeforeUnmount(() => {
           </template>
           <template v-else>
             <h3>尚未绑定原著</h3>
-            <p class="novel-meta">导入纯文本文件后，可分别授权 Full Agent 委派调查和参谋 agent 查阅。</p>
+            <p class="novel-meta">导入纯文本文件后，可分别授权主对话委派调查和参谋 agent 查阅。</p>
           </template>
           <div v-if="state.source && !choosingFile" class="novel-book-foot">
             <button
@@ -389,7 +389,7 @@ onBeforeUnmount(() => {
 
       <div class="novel-auth">
         <label class="novel-auth-row"
-          ><span>允许 Full Agent 委派查阅</span
+          ><span>允许主对话委派调查</span
           ><input
             type="checkbox"
             class="switch"
@@ -411,7 +411,7 @@ onBeforeUnmount(() => {
                 ? 'OpenAI 官方渠道使用云端压缩。'
                 : '普通 API 使用摘要压缩。') +
               (state.effective.follows_main
-                ? '实际创建时跟随委派主 agent 的运行配置，包括本轮临时思考档位；已启动主生成的配置不受中途全局修改影响。'
+                ? '实际创建时跟随当前剧情回合的模型配置，包括本轮临时思考档位；已启动剧情生成的配置不受中途全局修改影响。'
                 : '')
             "
           />
@@ -448,14 +448,14 @@ onBeforeUnmount(() => {
         <h3>
           调查者 <span>{{ state.active }}/3</span>
           <FieldHelp
-            tooltip="每轮最多启动五次。主生成与调查独立运行，可跨轮；主 agent 应在完成必要追问后积极销毁调查者。停止保留进度，销毁释放名额。"
+            tooltip="每轮最多启动五次。剧情生成与调查独立运行，可跨轮；剧情模型应在完成必要追问后积极销毁调查者。停止保留进度，销毁释放名额。"
           />
         </h3>
         <button :disabled="!!busy || (!state.active && !locked)" @click="stopAll">
           <Icon name="stop" :size="16" />全部停止
         </button>
       </div>
-      <p v-if="!state.jobs.length" class="state-empty">尚无调查。开启参考后，由主 agent 按需委派。</p>
+      <p v-if="!state.jobs.length" class="state-empty">尚无调查。开启参考后，由剧情模型按需委派。</p>
       <article v-for="job in jobs" :key="job.id" class="novel-job" :class="statusTone[job.status]">
         <div class="novel-job-head">
           <strong>{{ job.ref }}</strong>
@@ -513,7 +513,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <p v-if="job.pending_messages" class="novel-pending">
-          {{ job.pending_messages }} 条调查消息待主 agent 下次请求接收；空闲时不会自动唤醒。
+          {{ job.pending_messages }} 条调查消息将在下次剧情请求时送达；空闲时不会自动唤醒。
         </p>
         <p v-if="job.error" role="status" class="error">{{ job.error }}</p>
         <button
@@ -534,7 +534,7 @@ onBeforeUnmount(() => {
             {{ job.usage.output_tokens?.toLocaleString() ?? '未知' }}
           </p>
           <p v-if="job.delivered_messages" class="muted">
-            已送达主 agent {{ job.delivered_messages }} 条调查消息。
+            已送达剧情模型{{ job.delivered_messages }} 条调查消息。
           </p>
           <p v-if="job.background" class="muted">委派时背景：{{ job.background }}</p>
           <div v-for="(report, index) in reports" :key="index">
@@ -542,7 +542,7 @@ onBeforeUnmount(() => {
               report.kind === 'report'
                 ? '调查报告'
                 : report.kind === 'question'
-                  ? '向主 agent 提问'
+                  ? '向剧情模型提问'
                   : '调查未完成'
             }}</strong>
             <pre>{{ report.content }}</pre>

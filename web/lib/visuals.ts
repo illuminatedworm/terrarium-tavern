@@ -164,7 +164,7 @@ async function flush(session: string) {
   for (let offset = 0; offset < ids.length; offset += 100) {
     const part = ids.slice(offset, offset + 100);
     try {
-      const result = await rawApi(`/sessions/${session}/full-agent/visuals`, { message_ids: part });
+      const result = await rawApi(`/sessions/${session}/story/visuals`, { message_ids: part });
       for (const id of part) for (const waiting of batch.get(id)!) waiting.resolve(result.messages[id]);
     } catch (error) {
       for (const id of part) for (const waiting of batch.get(id)!) waiting.reject(error);

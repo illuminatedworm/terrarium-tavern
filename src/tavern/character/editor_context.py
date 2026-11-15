@@ -20,9 +20,7 @@ from tavern.scripting.request_context import response_origin
 def signature(working):
     return fingerprint(
         {
-            "cards": [
-                {k: c.get(k) for k in ("ref", "document", "target_mode", "brief")} for c in working["cards"]
-            ],
+            "cards": [{k: c.get(k) for k in ("ref", "document", "brief")} for c in working["cards"]],
             "state": working["state"],
         }
     )

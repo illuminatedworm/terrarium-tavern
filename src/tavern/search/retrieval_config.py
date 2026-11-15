@@ -9,9 +9,7 @@ from tavern.core.cache_policy import CacheSettings
 from tavern.core.message_adapter import MessageAdapterConfig
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
-    DEFAULT_QUERY_PROMPT,
     DEFAULT_RERANKER_PROMPT,
-    DEFAULT_RETRIEVAL_PROTOCOL,
 )
 
 ApiMode = Literal["chat_completions", "responses", "anthropic", "gemini"]
@@ -145,8 +143,6 @@ class RetrievalSettings(BaseModel):
     embedding_timeout: float = Field(5.0, gt=0, le=120)
     index_timeout: int = Field(60, ge=1, le=3600, strict=True)
     rerank_timeout: float = Field(10.0, gt=0, le=120)
-    query_prompt: str = Field(default=DEFAULT_QUERY_PROMPT, max_length=200000)
-    protocol_prompt: str = Field(default=DEFAULT_RETRIEVAL_PROTOCOL, max_length=200000)
 
     @model_validator(mode="after")
     def valid(self):

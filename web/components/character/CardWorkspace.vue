@@ -318,7 +318,6 @@ function observe(id: string) {
         'set_portrait',
         'create_draft',
         'revert_draft',
-        'configure_card',
       ].includes(event.payload.tool)
     ) {
       void refresh().catch((e: Error) => {
@@ -592,21 +591,6 @@ async function saveForm(document: any) {
     if (!alive) return;
     sessionStorage.removeItem(draftKey);
     closeModal();
-    await refresh();
-  });
-}
-async function setTarget(value: string) {
-  if (!current.value) return;
-  await guard(async () => {
-    await api(
-      base + `/drafts/${current.value!.ref}`,
-      {
-        document: current.value!.document,
-        target_mode: value || null,
-        expected_revision: workspace.value!.revision,
-      },
-      'PUT',
-    );
     await refresh();
   });
 }
@@ -947,17 +931,6 @@ onBeforeUnmount(() => {
                     : '独立草稿'
                 }}
               </p>
-              <label v-if="!worldbook"
-                >兼容性目标（可选）<select
-                  :value="current.target_mode || ''"
-                  :disabled="locked || pendingView"
-                  @change="setTarget(($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="">未限定 · 通用制卡</option>
-                  <option value="half_agent">Half Agent</option>
-                  <option value="full_agent">Full Agent</option>
-                </select></label
-              >
               <label v-if="!worldbook"
                 >头像<select
                   value=""

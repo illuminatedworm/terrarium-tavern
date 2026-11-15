@@ -7,7 +7,7 @@ starts or for display, so they are never synced.
 
 Each difference is compared three ways against the card copied at story
 creation (``base``): a shelf-only change is offered by default, while a
-change made inside the story (by Tracker, scripts or manual edits) is shown
+change made inside the story (by the story model, scripts or manual edits) is shown
 but left unselected so syncing never silently reverts story progress.
 
 Entries mounted from the worldbook library are not shelf content: callers pass

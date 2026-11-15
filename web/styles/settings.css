@@ -399,8 +399,8 @@
 .settings-check-help > small {
   grid-column: 2;
 }
-.full-agent-fields .settings-check,
-.full-agent-fields .settings-check-help {
+.story-tool-fields .settings-check,
+.story-tool-fields .settings-check-help {
   align-self: start;
   padding-top: 0;
 }
@@ -526,29 +526,13 @@
 }
 
 /* ---------- Model profiles ---------- */
-.settings-profiles.dual-profiles {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin-top: 6px;
-}
 .profile-editor {
   min-width: 0;
 }
-.dual-profiles .profile-editor {
-  padding: 4px 18px 18px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: rgb(255 255 255 / 0.018);
-}
-.dual-profiles .profile-editor > h4:first-of-type {
-  margin-top: 14px;
-}
-.profile-editor .profile-connection,
-.dual-profiles .settings-field-grid {
+.profile-editor .profile-connection {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
-.settings-profiles:not(.dual-profiles) .profile-connection-row {
+.settings-profiles .profile-connection-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
@@ -557,7 +541,7 @@
   padding-bottom: 18px;
   border-bottom: 1px solid var(--border-subtle);
 }
-.settings-profiles:not(.dual-profiles) .profile-connection-row .profile-actions {
+.settings-profiles .profile-connection-row .profile-actions {
   margin: 0;
 }
 .profile-actions {
@@ -598,14 +582,6 @@
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
   gap: 22px;
-}
-.settings-recipe-layout {
-  display: grid;
-  grid-template-columns: 190px minmax(0, 1fr);
-  gap: 20px;
-}
-.settings-recipe-layout .settings-field-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 /* Compact term/description list for page rules, instead of stacked paragraphs. */
 .settings-detail .settings-notes {
@@ -1058,10 +1034,7 @@
   .settings-field-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .settings-profiles.dual-profiles {
-    grid-template-columns: 1fr;
-  }
-  .settings-profiles:not(.dual-profiles) .profile-connection-row {
+  .settings-profiles .profile-connection-row {
     grid-template-columns: 1fr;
   }
   .settings-channel-grid {
@@ -1155,11 +1128,9 @@
     scrollbar-gutter: auto;
   }
   .settings-field-grid,
-  .dual-profiles .settings-field-grid,
   .profile-editor .profile-connection,
   .provider-editor .settings-field-grid,
-  .settings-policy .settings-field-grid,
-  .settings-recipe-layout .settings-field-grid {
+  .settings-policy .settings-field-grid {
     grid-template-columns: 1fr;
   }
   .settings-detail .settings-check-help {
@@ -1186,8 +1157,7 @@
   .failed-request-body {
     padding-left: 16px;
   }
-  .settings-prompt-layout,
-  .settings-recipe-layout {
+  .settings-prompt-layout {
     grid-template-columns: 1fr;
     gap: 14px;
   }

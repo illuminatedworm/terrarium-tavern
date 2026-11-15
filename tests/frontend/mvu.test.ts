@@ -25,14 +25,14 @@ describe('MVU transaction semantics', () => {
     expect(reopened.stat_data).toEqual(first.stat_data);
     expect(reopened.schema.properties).not.toHaveProperty('extra');
   });
-  it('reads disabled InitVar entries regardless of audience and previews their effective use', async () => {
+  it('reads disabled InitVar entries regardless of purpose and previews their effective use', async () => {
     const entries = [
       {
         id: 'off',
         comment: '[INITVAR]初始化',
         enabled: false,
         content: 'hp: 100',
-        terrarium: { audience: 'tracker_mvu' },
+        extensions: { terrarium: { purpose: 'mvu_rules' } },
       },
       { id: 'legacy-off', comment: '[initvar]', disable: true, content: 'mp: 50' },
       { id: 'story', comment: '普通设定', enabled: false, content: 'extra: true' },
@@ -40,13 +40,13 @@ describe('MVU transaction semantics', () => {
         id: 'rule',
         comment: '[initvar]',
         enabled: false,
-        extensions: { terrarium: { audience: 'tracker_mvu' } },
+        extensions: { terrarium: { purpose: 'mvu_rules' } },
         content: 'tracked: [8, "按到账更新"]',
       },
       {
         id: 'ordinary-rule',
         content: '仅为规则，不是 YAML 对象',
-        extensions: { terrarium: { audience: 'tracker_mvu' } },
+        extensions: { terrarium: { purpose: 'mvu_rules' } },
       },
     ];
     const before = JSON.stringify(entries);

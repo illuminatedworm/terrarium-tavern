@@ -10,7 +10,7 @@ describe('worldbook filtering', () => {
         content: '战斗 人物',
         enabled: true,
         constant: true,
-        extensions: { terrarium: { audience: 'tracker_mvu' } },
+        extensions: { terrarium: { purpose: 'mvu_rules' } },
       },
       { id: 'c', comment: 'HP 规则', content: '战斗', enabled: false },
     ];
@@ -18,7 +18,7 @@ describe('worldbook filtering', () => {
       query: 'hp 人物',
       enabled: 'enabled',
       trigger: 'constant',
-      audience: 'tracker_mvu',
+      purpose: 'mvu_rules',
     });
     expect(result.map((x) => x.index)).toEqual([1]);
     result[0].entry.content = '修改目标';

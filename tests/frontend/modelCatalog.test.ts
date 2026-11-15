@@ -39,28 +39,27 @@ describe('persistent model catalog UI', () => {
       api_path: 'proxy/v2',
     });
     const saved = {
-      version: 14,
-      full_agent: { model: original },
-      half_agent: {},
+      version: 22,
+      story: { model: original },
       shared: {},
-      revisions: { full_agent: 0, half_agent: 0, shared: 0 },
+      revisions: { story: 0, shared: 0 },
     } as unknown as SettingsDocument;
-    const sent = difference(saved.full_agent, { model: draft });
+    const sent = difference(saved.story, { model: draft });
     expect(sent['model.provider_connections']).toEqual({
       'first.provider': { api_mode: 'gemini', api_path: 'gateway/v1beta', model: 'first-model' },
     });
     const response = clone(saved);
-    response.full_agent.model = clone(draft);
+    response.story.model = clone(draft);
     Object.assign(draft, selectProfileProvider(draft, 'first.provider'));
     draft.model = 'latest-first-model';
     const current = clone(saved);
-    current.full_agent.model = clone(draft);
-    const acknowledged = rebaseSettings(saved, current, response, 'full_agent', sent);
-    expect(acknowledged.full_agent.model).toEqual(draft);
+    current.story.model = clone(draft);
+    const acknowledged = rebaseSettings(saved, current, response, 'story', sent);
+    expect(acknowledged.story.model).toEqual(draft);
     expect(draft.provider_connections).not.toHaveProperty('first.provider');
     expect(original.model).toBe('first-model');
     expect(draft.reply_tokens).toBe(2048);
-    const reopened = clone(acknowledged.full_agent.model);
+    const reopened = clone(acknowledged.story.model);
     const conversation = conversationModelProfile(reopened, {
       provider_id: 'second.provider',
       model: 'conversation-model',

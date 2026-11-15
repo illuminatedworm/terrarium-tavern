@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** Request-order rows shared by the Writer/Agent and Advisor context previews. */
+/** Request-order rows shared by story and Advisor context previews. */
 export interface ContextRow {
   key: string | number;
   /** Story round or other short locator, shown in the category colour. */

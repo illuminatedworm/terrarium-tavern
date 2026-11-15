@@ -120,7 +120,7 @@ function add(officialApi = false) {
     {{
       channel === 'chatgpt'
         ? '官方渠道的两种 Agent 模式均支持本地上下文与云端 compact，新对话默认使用本地方式。'
-        : '普通渠道的 Full Agent 使用本地换窗。此处创建的连接保持普通渠道归属。'
+        : '普通渠道的剧情对话使用本地换窗。此处创建的连接保持普通渠道归属。'
     }}
   </p>
   <ChatGPTWelcome />

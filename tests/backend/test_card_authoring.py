@@ -274,7 +274,6 @@ async def test_library_worldbook_draft_is_a_card_subset_saved_back_with_conflict
             ),
             ("set_opening", {"card_ref": "C1", "action": "update", "index": 0, "narrative": "开场"}),
             ("set_portrait", {"card_ref": "C1", "file_ref": None}),
-            ("configure_card", {"card_ref": "C1", "target_mode": "half_agent", "confirmation_ref": "H1"}),
             ("validate_draft", {"card_ref": "C1"}),
         ]
     )
@@ -284,7 +283,7 @@ async def test_library_worldbook_draft_is_a_card_subset_saved_back_with_conflict
         sent = dump(provider.call_log)
         # The library ID, its revision field and the entry's long ID never reach the model.
         assert library["id"] not in sent and entry_id not in sent
-        for rejected in ("只能包含 name 和 character_book", "没有开场", "没有头像", "没有目标模式"):
+        for rejected in ("只能包含 name 和 character_book", "没有开场", "没有头像"):
             assert rejected in sent
         current = editor.edits.conversation(wid)
         item = current["cards"][0]
@@ -508,36 +507,6 @@ async def test_api_empty_preview_reference_snapshot_and_revision(tmp_path):
         await app.state.service.close()
 
 
-async def test_optional_compatibility_target_can_be_preserved_cleared_and_undone(tmp_path):
-    app = create_app(tmp_path)
-    editor = app.state.editor
-    card = import_fixture(app.state.store)
-    workspace = editor.edits.create_conversation()
-    workspace = editor.edits.attach(workspace["id"], card["id"], workspace["revision"])
-    base = f"/api/card-author/conversations/{workspace['id']}/drafts/C1"
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-            for fields, expected in (
-                ({"target_mode": "full_agent"}, "full_agent"),
-                ({}, "full_agent"),
-                ({"target_mode": None}, None),
-            ):
-                response = await client.put(
-                    base,
-                    json={"document": card["document"], "expected_revision": workspace["revision"], **fields},
-                )
-                assert response.status_code == 200, response.text
-                workspace = response.json()
-                assert workspace["cards"][0]["target_mode"] == expected
-                assert workspace["cards"][0]["document"] == card["document"]
-            undone = await client.post(base + "/undo", json={"expected_revision": workspace["revision"]})
-            assert undone.status_code == 200
-            assert undone.json()["cards"][0]["target_mode"] == "full_agent"
-    finally:
-        await editor.close()
-        await app.state.service.close()
-
-
 async def test_local_sandbox_reports_observed_initialization_and_errors(tmp_path):
     store = Store(tmp_path)
     item = {
@@ -593,8 +562,7 @@ async def test_inline_initialization_update_preserves_narrative(tmp_path):
         await editor.close()
 
 
-@pytest.mark.parametrize("target", [None, "half_agent", "full_agent"])
-async def test_mvu_adaptation_uses_shared_validation_without_requiring_target(tmp_path, target):
+async def test_mvu_adaptation_uses_shared_validation(tmp_path):
     store = Store(tmp_path)
     editor = CardAuthorService(store)
     source = import_fixture(store)
@@ -603,7 +571,7 @@ async def test_mvu_adaptation_uses_shared_validation_without_requiring_target(tm
     workspace = editor.edits.attach(wid, source["id"], workspace["revision"])
     document = copy.deepcopy(source["document"])
     document["character_book"]["entries"][0]["content"] = "stat_data.hp should track injuries"
-    workspace = editor.edits.update_card(wid, "C1", document, workspace["revision"], target_mode=target)
+    workspace = editor.edits.update_card(wid, "C1", document, workspace["revision"])
     try:
         assert workspace["cards"][0]["validation"]["warnings"]
         model = ToolLLM(
@@ -618,7 +586,7 @@ async def test_mvu_adaptation_uses_shared_validation_without_requiring_target(tm
                             {
                                 "op": "add",
                                 "path": "/character_book/entries/0/extensions",
-                                "value": {"terrarium": {"audience": "tracker_mvu"}},
+                                "value": {"terrarium": {"purpose": "mvu_rules"}},
                             }
                         ],
                         "comment": "Use shared variable routing",
@@ -631,10 +599,9 @@ async def test_mvu_adaptation_uses_shared_validation_without_requiring_target(tm
         assert result["status"] == "completed", result["error"]
         card = editor.edits.conversation(wid)["cards"][0]
         assert card["validation"]["warnings"] == []
-        assert card["target_mode"] == target
         assert (
-            card["document"]["character_book"]["entries"][0]["extensions"]["terrarium"]["audience"]
-            == "tracker_mvu"
+            card["document"]["character_book"]["entries"][0]["extensions"]["terrarium"]["purpose"]
+            == "mvu_rules"
         )
     finally:
         await editor.close()

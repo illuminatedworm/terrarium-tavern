@@ -20,8 +20,8 @@ class ResponseCompletion:
 def response_completion(api, payload, calls, *, secret=""):
     """Interpret an entire provider response, independently of transport EOF.
 
-    Keep ChatResponse.finish_reason compatible with the other agents. Full
-    Agent needs the original distinction between yielding for tools and ending
+    Keep ChatResponse.finish_reason compatible with the other callers. Story
+    generation needs the original distinction between yielding for tools and ending
     its turn; a Responses completion or Gemini STOP alone does not supply it.
     """
     if api == "chat_completions":

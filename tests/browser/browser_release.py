@@ -110,9 +110,7 @@ async def main(viewports=VIEWPORTS):
             configuration = await (await page.request.get(BASE + "/api/settings")).json()
 
             async def navigate(item):
-                group = {"full_agent": "full agent", "half_agent": "half agent", "shared": "通用"}[
-                    item["scope"]
-                ]
+                group = {"story": "游玩", "shared": "通用"}[item["scope"]]
                 if width <= 760:
                     await (
                         dialog.locator(".settings-mode-buttons")
@@ -137,9 +135,7 @@ async def main(viewports=VIEWPORTS):
             await navigate(next(item for item in configuration["pages"] if item["id"] == "shared.storage"))
             await page.locator(".storage-report").wait_for()
             await page.screenshot(path=str(OUTPUT / f"settings-{label}.png"))
-            await navigate(
-                next(item for item in configuration["pages"] if item["id"] == "half_agent.prompts")
-            )
+            await navigate(next(item for item in configuration["pages"] if item["id"] == "story.prompts"))
             await dialog.get_by_role("button", name="放大编辑：顶级规则/引导", exact=True).click()
             editor = page.get_by_role("dialog", name="编辑：顶级规则/引导", exact=True)
             editor_height = (await editor.bounding_box())["height"]
@@ -267,7 +263,7 @@ if __name__ == "__main__":
         cfg.providers[0].base_url = "http://127.0.0.1:8016"
         cfg.providers[0].api_key = "local-fixture"
         cfg.providers[0].use_proxy = False
-        cfg.foreground.model = cfg.background.model = "fixture"
+        cfg.story.model = "fixture"
         store.save_settings(cfg)
         for filename in Path("samples").glob("*.json"):
             card = store.import_card(filename.read_bytes())

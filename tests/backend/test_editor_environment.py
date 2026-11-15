@@ -20,8 +20,8 @@ from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_card_author_alignment import Editor
 from tests.backend.test_card_author_prompt import strings
 from tests.backend.test_card_authoring import run
-from tests.backend.test_full_agent_alignment import reply
-from tests.backend.test_half_agent_alignment import blocks, sse
+from tests.backend.test_story_alignment import reply
+from tests.support.model_transport import blocks, sse
 
 SNAPSHOT = {"system": "Windows 11", "local_time": "2026-10-15 19:30:45", "utc_offset": "UTC+8"}
 

@@ -8,8 +8,8 @@ from pydantic import ValidationError
 
 from tavern.application.api import create_app
 from tavern.core.models import Settings
+from tavern.core.provider import make_provider
 from tavern.core.settings import migrate_settings
-from tavern.scripting.agent import make_provider
 from tavern.search.retrieval_config import ModelProfile, Provider
 from tests.support.model_transport import request_payload
 
@@ -36,8 +36,8 @@ def test_nullable_sampling_and_per_connection_mode():
         presence_penalty=None,
     )
     assert profile.model_dump()["temperature"] is None
-    config = Settings(providers=[Provider(id="default")], foreground=profile)
-    assert config.for_role("foreground").api_mode == "responses"
+    config = Settings(providers=[Provider(id="default")], story=profile)
+    assert config.for_role("story").api_mode == "responses"
     with pytest.raises(ValidationError):
         ModelProfile(top_p=1.1)
     with pytest.raises(ValidationError):
@@ -49,10 +49,8 @@ def test_nullable_sampling_and_per_connection_mode():
 @pytest.mark.parametrize(
     "role,temperature,mode",
     [
-        ("foreground", 0.3, "runtime"),
-        ("background", None, "cloud"),
         ("card_author", 0.6, "cloud"),
-        ("full_agent", 0.1, "runtime"),
+        ("story", 0.1, "runtime"),
     ],
 )
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
@@ -72,10 +70,8 @@ async def test_all_roles_send_their_own_model_parameters(role, temperature, mode
             },
         )
         for name, temp, control in [
-            ("foreground", 0.3, "runtime"),
-            ("background", None, "cloud"),
             ("card_author", 0.6, "cloud"),
-            ("full_agent", 0.1, "runtime"),
+            ("story", 0.1, "runtime"),
         ]
     }
     settings = Settings(providers=[Provider(id="default", api_key="test", use_proxy=False)], **profiles)
@@ -223,7 +219,10 @@ async def test_responses_text_tools_and_sampling_wire():
             "preset": "custom",
             "field": "prompt_cache_breakpoint",
             "value": {"mode": "explicit"},
-            "request": {"prompt_cache_key": "tracker-prefix", "prompt_cache_options": {"mode": "explicit"}},
+            "request": {
+                "prompt_cache_key": "configured-prefix",
+                "prompt_cache_options": {"mode": "explicit"},
+            },
         },
     )
     provider = await make_provider(settings)
@@ -297,7 +296,7 @@ async def test_responses_text_tools_and_sampling_wire():
         assert "temperature" not in requests[0]
         assert requests[0]["top_p"] == 0.9
         assert not {"top_k", "frequency_penalty", "presence_penalty"} & requests[0].keys()
-        assert requests[0]["prompt_cache_key"] == "tracker-prefix"
+        assert requests[0]["prompt_cache_key"] == "configured-prefix"
         assert requests[0]["prompt_cache_options"] == {"mode": "explicit"}
         assert "prompt_cache_retention" not in requests[0]
         assert requests[0]["tools"][0]["name"] == "lookup"
@@ -504,29 +503,29 @@ async def test_api_saves_null_sampling_and_connection_mode(tmp_path):
         )
         assert result.status_code == 200, result.text
         changes = {
-            f"foreground.{field}": None
+            f"model.{field}": None
             for field in ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty")
         }
-        changes["foreground.api_mode"] = "responses"
+        changes["model.api_mode"] = "responses"
         changes.update(
             {
-                "background.cache.mode": "cloud",
-                "background.cache.request": {"prompt_cache_key": "tracker", "prompt_cache_retention": "24h"},
+                "model.cache.mode": "cloud",
+                "model.cache.request": {"prompt_cache_key": "retained-key", "prompt_cache_retention": "24h"},
             }
         )
         result = await client.patch(
-            "/api/settings/half_agent",
-            json={"expected_revision": result.json()["revisions"]["half_agent"], "changes": changes},
+            "/api/settings/story",
+            json={"expected_revision": result.json()["revisions"]["story"], "changes": changes},
         )
         assert result.status_code == 200, result.text
         saved = result.json()
-        assert saved["half_agent"]["foreground"]["api_mode"] == "responses"
+        assert saved["story"]["model"]["api_mode"] == "responses"
         assert all(
-            saved["half_agent"]["foreground"][field] is None
+            saved["story"]["model"][field] is None
             for field in ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty")
         )
-        assert saved["half_agent"]["background"]["cache"]["mode"] == "cloud"
-        assert saved["half_agent"]["background"]["cache"]["request"] == {
-            "prompt_cache_key": "tracker",
+        assert saved["story"]["model"]["cache"]["mode"] == "cloud"
+        assert saved["story"]["model"]["cache"]["request"] == {
+            "prompt_cache_key": "retained-key",
             "prompt_cache_retention": "24h",
         }

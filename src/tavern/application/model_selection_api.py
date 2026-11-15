@@ -41,10 +41,9 @@ def register_model_selection_routes(app, store, editor):
                 "SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)
             ).fetchone():
                 raise Conflict("请先完成或取消上下文整理")
-            role = "full_agent" if row["agent_mode"] == "full_agent" else "foreground"
-            settings = store.settings(row["agent_mode"], row["channel_origin"])
-            selection = edit.selection.remember(json.loads(row["model_selection"]), getattr(settings, role))
-            select_runtime(settings, role, selection.model_dump(), row["channel_origin"])
+            settings = store.settings(row["channel_origin"])
+            selection = edit.selection.remember(json.loads(row["model_selection"]), settings.story)
+            select_runtime(settings, "story", selection.model_dump(), row["channel_origin"])
             # Connection preferences do not change story revision: resumable work
             # still references the same story, with its complete original context.
             db.execute(

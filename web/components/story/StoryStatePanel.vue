@@ -1,23 +1,16 @@
 <script setup lang="ts">
 import Icon from '../common/Icon.vue';
-import FullAgentNotes from './FullAgentNotes.vue';
-import SceneNotes from './SceneNotes.vue';
+import StoryNotes from './StoryNotes.vue';
 import StateTree from './StateTree.vue';
 import type { Session } from '../../lib/types';
 
 /** "变量与记忆" dialog for the current branch. */
 defineProps<{
   session: Session;
-  fullAgent: boolean;
-  progress: string;
   disabled: boolean;
-  saving: boolean;
 }>();
 const emit = defineEmits<{
   saved: [session: Session];
-  change: [value: any];
-  cancel: [];
-  locate: [source: string, excerpt: string];
 }>();
 export type StateTab = 'variables' | 'memory' | 'content';
 const tabs: { id: StateTab; label: string }[] = [
@@ -48,24 +41,11 @@ const tab = defineModel<StateTab>('tab', { required: true });
   <div v-if="tab === 'variables'" class="state-cards">
     <StateTree :value="session.snapshot.state.stat_data || session.snapshot.state" />
   </div>
-  <template v-else-if="tab === 'memory'"
-    ><FullAgentNotes
-      v-if="fullAgent"
-      :session="session"
-      :disabled="disabled"
-      @saved="emit('saved', $event)" />
-    <SceneNotes
-      v-else
-      layout="cards"
-      :memory-view="session.memory_view"
-      :archived="session.archived_memory"
-      :progress="progress"
-      @change="emit('change', $event)"
-      @cancel="emit('cancel')"
-      :messages="session.messages"
-      :disabled="disabled"
-      :saving="saving"
-      @locate="(source, excerpt) => emit('locate', source, excerpt)"
-  /></template>
+  <StoryNotes
+    v-else-if="tab === 'memory'"
+    :session="session"
+    :disabled="disabled"
+    @saved="emit('saved', $event)"
+  />
   <div v-else class="state-cards"><StateTree :value="session.snapshot.content" /></div>
 </template>

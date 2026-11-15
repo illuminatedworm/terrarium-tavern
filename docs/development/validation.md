@@ -23,15 +23,14 @@
 | 改动 | 主要检查 |
 |---|---|
 | 设置与保存 | `test_settings_document.py`、`test_provider_model_settings.py`、`settingsDocument.test.ts`；浏览器 `browser_settings` |
-| Half Agent 与记忆 | `test_tracker.py`、`test_memory_windows.py`、`test_classified_memory.py`、`test_half_agent_alignment.py` |
-| Full Agent | `test_full_agent.py`、`test_full_agent_tools.py`、`test_full_agent_alignment.py`；浏览器 `browser_full_agent` |
-| 工具事件与流式显示 | `test_full_agent_activity.py`、`agentActivity.test.ts`、`turnStream.test.ts`；浏览器 `browser_full_agent_streaming --single-viewport`（布局验收时省略参数） |
+| 剧情模型 | `test_story.py`、`test_story_tools.py`、`test_story_alignment.py`；浏览器 `browser_story` |
+| 工具事件与流式显示 | `test_story_activity.py`、`agentActivity.test.ts`、`turnStream.test.ts`；浏览器 `browser_story_streaming --single-viewport`（布局验收时省略参数） |
 | 检索与上下文 | `test_hybrid_retrieval.py`、`test_conversation_lore.py`、`test_tokens.py` |
 | 制卡、脚本与变量 | `test_card_authoring.py`、`test_card_author.py`、`test_runtime.py`、`test_script_permissions.py`、`test_mvu_compatibility.py`；浏览器 `browser_card_author`、`browser_mvu_panel`、`browser_mvu_formats` |
 | 缓存和模型协议 | `test_unified_cache.py`、`test_cache_follow.py`、`test_sent_cache_breakpoints.py`、`test_model_api_modes.py`、`test_genai_transport.py`；Gemini 设置浏览器 `browser_genai` |
 | 历史阅读 | `storyHistory.test.ts`；浏览器 `browser_history_navigation`、`browser_history_rendering` |
 | 存储、备份和发行 | `test_backup.py`、`test_session_fork.py`、`test_repository_hygiene.py`、`test_release_quality.py` |
-| Full Agent 工具文档 | `test_full_agent_documentation.py`；`tools/export_full_agent_tools.py --check` |
+| 剧情工具文档 | `test_story_documentation.py`；`tools/export_story_tools.py --check` |
 
 Python 测试位于 `tests/backend/`，TypeScript 测试位于 `tests/frontend/`。例如：
 
@@ -45,7 +44,7 @@ Linux 使用 `.venv/bin/python` 和 `npm`，下文命令同理。
 
 回归重点是协议、事务、权限、版本冲突、取消、重生成、分支和资源生命周期。优先补充已有场景，参数化覆盖确实影响行为的维度；纯工具检查使用内存数据，存储和完整回合检查使用独立数据库。测试成本同时看覆盖范围和实际耗时。
 
-面板资源改动还应检查 `test_script_resources.py`、`storyResources.test.ts`、`storyRuntime.test.ts` 和 `browser_story_resources`。这些用例覆盖历史读取、回滚、分支、iframe 复用及离屏恢复。角色卡顶层字段改动应检查 `test_card_context_blocks.py` 和两种模式的 alignment 用例，核对最终请求中的顺序、标签、宏展开和完整原文。
+面板资源改动还应检查 `test_script_resources.py`、`storyResources.test.ts`、`storyRuntime.test.ts` 和 `browser_story_resources`。这些用例覆盖历史读取、回滚、分支、iframe 复用及离屏恢复。角色卡顶层字段改动应检查 `test_card_context_blocks.py` 和剧情模型的上下文用例，核对最终请求中的顺序、标签、宏展开和完整原文。
 
 ## 完整验证
 
@@ -58,7 +57,7 @@ npm.cmd run build
 .venv/Scripts/python.exe -m ruff check src tests tools
 .venv/Scripts/python.exe -m pytest -q tests/backend
 .venv/Scripts/python.exe -m tests.browser.browser_release
-.venv/Scripts/python.exe -m tests.browser.browser_full_agent
+.venv/Scripts/python.exe -m tests.browser.browser_story
 ```
 
 日常改动只运行上表中直接相关的文件。全套后端可用 `-n 4 --dist worksteal` 并行。`tests/conftest.py` 在测试进程内关闭 SQLite 同步写盘，以减少磁盘压力，不影响应用本身。`--durations=20` 可定位耗时。
@@ -93,7 +92,7 @@ SIWC 专项
 .venv/Scripts/python.exe tools/evaluate_retrieval.py --neural --model-dir data/models
 ```
 
-评估包含最终上下文编译，统计多语言正例、无关查询中的误注入、召回和延迟。神经模式使用已下载模型。[replay_context.py](../../tools/replay_context.py)可只读回放指定备份。
+评估包含最终上下文编译，统计多语言正例、无关查询中的误注入、召回和延迟。神经模式使用已下载模型。[audit_runtime_cache.py](../../tools/audit_runtime_cache.py) 可核对已记录请求的缓存边界。
 
 `tools/benchmark_local_retrieval.py` 可比较实际角色卡的本地模型。题集格式：
 

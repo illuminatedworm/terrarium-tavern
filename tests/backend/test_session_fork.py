@@ -4,10 +4,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
-from tavern.conversation.context import compile_context
 from tavern.core.models import SessionCreate, TurnRequest
-from tavern.memories.memory import fingerprint, window_valid
 from tavern.storage.store import Conflict, Store, dump, uid
+from tavern.story.context import compile_window
 
 
 @pytest.fixture
@@ -26,7 +25,7 @@ def story(tmp_path):
             mid = uid()
             snapshot = {
                 "state": {"place": text},
-                "memory_document": {"version": 3, "records": []},
+                "story": session["snapshot"]["story"],
                 "lore": {"visits": 2},
                 "scopes": {"message:0": {"note": "保留"}},
                 "content": {"document": card["document"]},
@@ -52,7 +51,6 @@ def test_fork_copies_only_selected_prefix_and_survives_original_deletion(story):
     assert {m["id"] for m in fork["messages"]}.isdisjoint(m["id"] for m in original["messages"])
     assert fork["snapshot"] == selected["snapshot"]
     assert fork["persona_data"] == original["persona_data"]
-    assert fork["recipe"] == original["recipe"]
     assert fork["card"] == original["card"]
     assert fork["title"] == f"{original['title']} · 副本"
     assert fork["turns"] == [] and fork["revision"] == 0
@@ -86,24 +84,10 @@ def test_existing_schema_adds_titles_without_losing_sessions(story):
     assert reopened.session(original["id"])["messages"] == original["messages"]
 
 
-def test_fork_preserves_window_with_recomputed_fingerprint(story):
-    store, original = story
-    window = {"covered_count": 1, "fingerprint": fingerprint(original["messages"][:1])}
-    snapshot = original["snapshot"] | {"context_window": window}
-    with store.connection() as db:
-        db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), original["head"]))
-    fork = store.fork_session(original["id"], original["head"], 2)
-    assert window_valid(fork["snapshot"]["context_window"], fork["messages"])
-    assert fork["snapshot"]["context_window"]["fingerprint"] != window["fingerprint"]
-
-
 def test_selected_progress_retains_equivalent_backend_model_context(story):
     store, original = story
     selected = original["messages"][2]
-    selected["snapshot"]["context_window"] = {
-        "covered_count": 1,
-        "fingerprint": fingerprint(original["messages"][:1]),
-    }
+    selected["snapshot"]["story"]["window"]["start"] = 1
     with store.connection() as db:
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(selected["snapshot"]), selected["id"]))
     fork = store.fork_session(original["id"], selected["id"], original["revision"])
@@ -113,18 +97,16 @@ def test_selected_progress_retains_equivalent_backend_model_context(story):
         "snapshot": selected["snapshot"],
     }
     document = selected["snapshot"]["content"]["document"]
-    expected = compile_context(
+    expected = compile_window(
         document,
         at_progress,
         at_progress["messages"],
         at_progress["snapshot"],
         "继续",
         store.settings(),
-        "same-seed",
+        [],
     )
-    actual = compile_context(
-        document, fork, fork["messages"], fork["snapshot"], "继续", store.settings(), "same-seed"
-    )
+    actual = compile_window(document, fork, fork["messages"], fork["snapshot"], "继续", store.settings(), [])
     assert actual["messages"] == expected["messages"]
     assert fork["snapshot"]["scopes"] == selected["snapshot"]["scopes"]
     assert fork["snapshot"]["lore"] == selected["snapshot"]["lore"]

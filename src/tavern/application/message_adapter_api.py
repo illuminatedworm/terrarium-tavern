@@ -3,7 +3,6 @@
 from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.core.message_adapter import catalog
-from tavern.storage.message_adapters import recipe_types
 
 
 class AdapterUpdate(BaseModel):
@@ -14,16 +13,10 @@ class AdapterUpdate(BaseModel):
 
 def register_message_adapter_routes(app, store):
     @app.get("/api/message-adapter/types")
-    async def adapter_types(lane: str = "foreground"):
-        if lane not in ("foreground", "background", "full_agent", "card_author", "advisor"):
+    async def adapter_types(lane: str = "story"):
+        if lane not in ("story", "card_author", "advisor"):
             raise ValueError("未知模型调用链")
-        recipe = recipe_types(store.settings_document().half_agent.context_recipe.model_dump())
-        extra = (
-            [b["message_type"] for b in recipe["blocks"] if b.get("message_type")]
-            if lane == "foreground"
-            else []
-        )
-        return catalog(lane, extra)
+        return catalog(lane)
 
     @app.get("/api/sessions/{sid}/message-adapter")
     async def story_adapter(sid: str):

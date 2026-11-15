@@ -4,6 +4,7 @@ import copy
 from uuid import uuid4
 
 from tavern.character.cards import is_initvar, lore_entries
+from tavern.character.lore_purpose import validate_lore_purposes
 
 
 def sync_runtime_lore(mirror, document, previous_document):
@@ -105,4 +106,5 @@ def merge_script_lore(document, initial_lore, processed, *, include_existing=Fal
         entries = [replacements.get(i, copy.deepcopy(v)) for i, v in enumerate(existing) if i not in deleted]
         entries.extend(copy.deepcopy(final[eid]) for eid in added)
     book["entries"] = entries
+    validate_lore_purposes(book)
     return result

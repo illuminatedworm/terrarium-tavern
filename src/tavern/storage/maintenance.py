@@ -78,9 +78,7 @@ def _plan(store, db, now):
             (row["id"],),
         ).fetchall()
         detailed = [
-            e
-            for e in events
-            if e["kind"] not in ("usage", "error", "memory_failed", "committed", "cancelled", "started")
+            e for e in events if e["kind"] not in ("usage", "error", "committed", "cancelled", "started")
         ]
         size = sum(p.stat().st_size for p in files)
         size += sum(e["bytes"] for e in detailed)

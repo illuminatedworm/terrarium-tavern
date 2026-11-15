@@ -1,58 +1,13 @@
 """Release regressions use invented lore, never the private playthrough."""
 
-import copy
 import json
 import sqlite3
 import time
 
 import pytest
 
-from tavern.conversation.context import compile_context
-from tavern.core.models import ContextRecipe, SessionCreate, Settings, TurnRequest
+from tavern.core.models import SessionCreate, Settings, TurnRequest
 from tavern.storage.store import Store
-
-
-def test_final_request_cannot_resurrect_rejected_lore():
-    document = {
-        "name": "Test",
-        "character_book": {
-            "entries": [
-                {"id": "harbor", "keys": ["港口"], "content": "港口附近有钟塔。"},
-                {"id": "tower", "keys": ["钟塔"], "content": "钟塔的秘密与当前行动无关。"},
-            ]
-        },
-    }
-    session = {
-        "id": "s",
-        "persona": "用户",
-        "recipe": ContextRecipe().model_dump(),
-        "lore_injection_mode": "conversation",
-    }
-    history = [{"id": "g", "role": "assistant", "raw": "欢迎", "model": "欢迎"}]
-    retrieval = {
-        "ids": ["harbor"],
-        "query": "进入港口",
-        "diagnostics": [],
-        "rerank_scores": {"harbor": 0.9, "tower": 0.1},
-    }
-    result = compile_context(
-        document, session, history, {}, "进入港口", Settings(), "turn", retrieval=retrieval
-    )
-    assert [r["id"] for r in result["next_lore_injections"]] == ["harbor"]
-    snapshot = {"lore": result["next_lore"], "lore_injections": result["next_lore_injections"]}
-    original = copy.deepcopy(snapshot)
-    result = compile_context(
-        document,
-        session,
-        history,
-        snapshot,
-        "静静等待",
-        Settings(),
-        "next",
-        retrieval={"ids": [], "query": "静静等待", "diagnostics": []},
-    )
-    assert [r["id"] for r in result["next_lore_injections"]] == ["harbor"]
-    assert snapshot == original
 
 
 def test_database_version_is_stable_and_newer_database_is_untouched(tmp_path):

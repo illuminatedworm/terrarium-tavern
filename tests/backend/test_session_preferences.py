@@ -5,9 +5,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
-from tavern.conversation.context import compile_context
 from tavern.core.models import SessionCreate, Settings
 from tavern.storage.store import SCHEMA_VERSION, Store
+from tavern.story.context import compile_window
 
 
 @pytest.fixture
@@ -19,32 +19,27 @@ def story(tmp_path):
 
 
 def preview(store, session, **kwargs):
-    return compile_context(
+    return compile_window(
         store.card(session["card"])["document"],
         session,
         session["messages"],
         session["snapshot"],
         "继续",
         Settings(),
-        "preferences",
+        [],
         **kwargs,
     )
 
 
-def test_preference_is_optional_required_system_supplement_even_with_custom_order(story):
+def test_preference_is_injected_only_when_saved(story):
     store, session = story
     assert not any(m["source"] == "session_preference" for m in preview(store, session)["trace"])
-    changed = store.update_session(session["id"], 0, turn_preference="  节奏放缓，多用对话推进。  ")
-    compiled = preview(store, changed, generate={"ordered_prompts": ["user_input"]})
-    assert [m["source"] for m in compiled["trace"][:3]] == [
-        "rules",
-        "retrieval_protocol",
-        "session_preference",
-    ]
+    changed = store.update_session(session["id"], 0, turn_preference="节奏放缓，多用对话推进。")
+    compiled = preview(store, changed)
     preference = next(m for m in compiled["trace"] if m["source"] == "session_preference")
-    assert preference["role"] == "system" and preference["required"]
+    assert preference["role"] == "system"
     assert preference["content"].endswith("节奏放缓，多用对话推进。\n</tavern_preference>")
-    assert store.settings().system_prompt == Settings().system_prompt
+    assert store.settings().story_system_prompt == Settings().story_system_prompt
     other = store.new_session(SessionCreate(card_id=session["card"]))
     assert other["turn_preference"] == ""
     cleared = store.update_session(session["id"], changed["revision"], turn_preference="")
@@ -117,18 +112,3 @@ async def test_options_save_clear_and_partial_updates_preserve_preference(story)
         assert cleared.json()["update_variables"] is True
         disabled = await client.put(url, json={"expected_revision": 3, "update_variables": False})
         assert disabled.status_code == 200 and disabled.json()["update_variables"] is False
-
-
-async def test_messages_preview_exports_full_writer_array_without_committing(story):
-    store, session = story
-    app = create_app(store.root)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-        path = f"/api/sessions/{session['id']}"
-        context = (await client.post(path + "/preview", json={"text": "继续"})).json()
-        response = await client.post(path + "/messages-preview", json={"text": "继续"})
-        assert response.status_code == 200
-        messages = response.json()
-        assert messages == context["messages"]
-        assert all("MVU" not in message["content"] for message in messages)
-        assert all(set(message) == {"role", "content"} for message in messages)
-    assert store.session(session["id"])["revision"] == session["revision"]

@@ -5,9 +5,7 @@ import { api, rawApi } from '../../lib/api';
 import WorkData from './WorkData.vue';
 import { mergeWorkTurns } from '../../lib/workRecords';
 
-const props = defineProps<{ sessionId: string; turnId?: string; events: any[]; agentMode?: string }>();
-const isFullAgent = computed(() => props.agentMode === 'full_agent');
-const heading = computed(() => (isFullAgent.value ? 'Agent 工作记录 · Debug' : '后台工作记录'));
+const props = defineProps<{ sessionId: string; turnId?: string; events: any[] }>();
 const turns = ref<any[]>([]),
   next = ref<string | null>(null),
   loading = ref(false),
@@ -24,15 +22,9 @@ const rawEvents = ref(new Set<number>());
 let generation = 0,
   timer: ReturnType<typeof setTimeout> | undefined;
 const purposes: Record<string, string> = {
-  full_agent: 'Full Agent',
-  memory: '记忆整理',
-  memory_review: '疑难复核',
-  memory_recall: '归档召回筛选',
+  story: '剧情',
   variables: 'MVU 变量',
   maintenance: '设定维护',
-  tracker_pre: 'Tracker · 正文前',
-  tracker_post: 'Tracker · 正文后',
-  tracker_rebuild: 'Tracker · 记忆重建',
   runtime: '回合处理',
 };
 const statuses: Record<string, string> = {
@@ -46,15 +38,7 @@ const statuses: Record<string, string> = {
 };
 const statusLabel = (status: string) => statuses[status] || status;
 function title(turn: any) {
-  if (isFullAgent.value)
-    return turn.mode === 'regenerate' ? 'Full Agent · 重新生成' : 'Full Agent · 对话回合';
-  return turn.kind === 'memory'
-    ? '重新生成记忆'
-    : turn.kind === 'maintenance'
-      ? '设定维护与后台任务'
-      : turn.mode === 'regenerate'
-        ? '重生成中的后台任务'
-        : '发送消息后的后台任务';
+  return turn.mode === 'regenerate' ? '重新生成' : '对话回合';
 }
 function time(value: number) {
   return new Date(value * 1000).toLocaleString('zh-CN', {
@@ -188,15 +172,11 @@ useTimedError(error);
 </script>
 
 <template>
-  <section class="work-records" :aria-label="heading">
+  <section class="work-records" aria-label="Agent 工作记录">
     <div class="work-toolbar">
       <div>
-        <h2>{{ heading }}</h2>
-        <p>
-          {{
-            isFullAgent ? '模型请求与响应、工具数据、用量及运行时事件。' : '记忆、维护工具与回合处理。'
-          }}按时间从旧到新，展开查看结构化数据或原始 JSON。
-        </p>
+        <h2>Agent 工作记录 · Debug</h2>
+        <p>模型请求与响应、工具数据、用量及运行时事件。按时间从旧到新，展开查看结构化数据或原始 JSON。</p>
       </div>
       <div class="work-controls">
         <select v-model="category" aria-label="记录类型">

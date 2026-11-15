@@ -15,9 +15,8 @@ from tavern.core.tokens import request_tokens
 from tavern.scripting.model_transport import ModelTransport
 from tests.backend.chatgpt_fixtures import IdentityFixture, seed_account
 from tests.backend.test_chatgpt_provider import configuration
-from tests.backend.test_half_agent_alignment import sse
 from tests.backend.test_unified_cache import reply
-from tests.support.model_transport import request_payload
+from tests.support.model_transport import request_payload, sse
 
 IMAGES = [
     ("image/png", base64.b64encode(b"first-image-bytes").decode()),

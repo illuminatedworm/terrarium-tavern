@@ -37,7 +37,7 @@ it('replays tool preambles, rejected previews and terminal replacements without 
   const events: TurnEvent[] = [
     { seq: 1, kind: 'text', payload: { text: '先查找资料' } },
     { seq: 2, kind: 'text_reset', payload: { text: '' } },
-    { seq: 3, kind: 'full_agent_tool', payload: { name: 'read_state' } },
+    { seq: 3, kind: 'story_tool', payload: { name: 'read_state' } },
     { seq: 4, kind: 'text', payload: { text: '过早的正文' } },
     { seq: 5, kind: 'text_reset', payload: { text: '' } },
     { seq: 6, kind: 'text', payload: { text: '第一段' } },

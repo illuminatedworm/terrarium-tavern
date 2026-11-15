@@ -13,14 +13,14 @@ from httpx import ASGITransport, AsyncClient
 from tavern.application.api import create_app
 from tavern.chatgpt.errors import response_error as chatgpt_response_error
 from tavern.chatgpt.oauth import metadata
-from tavern.core.kemini import TOOL_NAME, KeminiConfig, control_text, inject_half
+from tavern.core.kemini import TOOL_NAME, KeminiConfig
 from tavern.core.provider import make_provider
 from tavern.core.settings import SettingsDocument
-from tavern.full_agent.prefix_debug import PrefixDebug, compare_parameters, wire_parameters
-from tavern.scripting.kemini import AuxiliaryParser, KeminiReply
 from tavern.scripting.model_stream import StreamState
+from tavern.storage.legacy_story import OLD_STORY_KEY
 from tavern.storage.request_debug import RequestDebugLog
 from tavern.storage.store import Store
+from tavern.story.prefix_debug import PrefixDebug, compare_parameters, wire_parameters
 from tests.backend.chatgpt_fixtures import IdentityFixture, seed_account, sse
 from tests.backend.test_chatgpt_provider import configuration
 from tests.backend.test_unified_cache import config, provider, reply
@@ -156,68 +156,6 @@ async def test_http_failure_explanation_reaches_work_records_without_debug(tmp_p
             await metadata(client)
 
 
-async def test_kemini_fragmented_reply_preserves_prose_and_rejects_mixed_tools():
-    from types import SimpleNamespace
-
-    cfg = config(model_request_mode="stream")
-    cfg.kemini = KeminiConfig(enabled=True, normal_disclaimer_enabled=True)
-    prose = "开门😀\n```html\n<Interleaving><thinking>代码原文</thinking></Interleaving>\n```"
-    raw = (
-        '前附加内容<Interleaving><thinking>创作安排\n含"引号"</thinking>'
-        + prose
-        + "<thinking>第二段自检</thinking>继续<thinking>第三段自检</thinking>收尾"
-        + "</Interleaving>后附加内容<disclaimer>声明</disclaimer>"
-    )
-    expected = "前附加内容" + prose + "继续收尾后附加内容"
-    encoded = json.dumps({"content": raw})
-    frames = [
-        {
-            "choices": [
-                {
-                    "delta": {
-                        "tool_calls": [
-                            {"index": 0, "id": "reply1", "function": {"name": TOOL_NAME, "arguments": ""}}
-                        ]
-                    }
-                }
-            ]
-        }
-    ]
-    frames.extend(
-        {
-            "choices": [
-                {"delta": {"tool_calls": [{"index": 0, "function": {"arguments": encoded[i : i + 7]}}]}}
-            ]
-        }
-        for i in range(0, len(encoded), 7)
-    )
-    frames.append({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})
-    chunks = []
-    async with provider(cfg, lambda _: sse(events=frames)) as p:
-        p.operation_purpose = "narrative"
-        response = await p.chat_complete_with_preview(MESSAGES, chunks.append)
-        assert response.content == "".join(chunks) == expected
-        assert p.last_auxiliary == [
-            {"kind": "thinking", "text": '创作安排\n含"引号"'},
-            {"kind": "thinking", "text": "第二段自检"},
-            {"kind": "thinking", "text": "第三段自检"},
-            {"kind": "disclaimer", "text": "声明"},
-        ]
-        assert len(chunks) > 1
-        assert p.last_response_record["raw_response"]["choices"][0]["message"]["tool_calls"]
-    call = SimpleNamespace(name=TOOL_NAME, arguments=encoded)
-    with pytest.raises(ValueError, match="不能与业务工具混合"):
-        KeminiReply(cfg.kemini, True).finish("", [call, SimpleNamespace(name="read_state")])
-    with pytest.raises(ValueError, match="未闭合"):
-        KeminiReply(cfg.kemini, True).finish("<thinking>不完整", [])
-    assert KeminiReply(cfg.kemini, True).finish("普通正文", [])[0] == "普通正文"
-    assert KeminiReply(cfg.kemini, True).finish("<Interleaving>开标签正文", [])[0] == "开标签正文"
-    assert KeminiReply(cfg.kemini, False).finish("闭标签正文</Interleaving>", [])[0] == "闭标签正文"
-    assert AuxiliaryParser(KeminiConfig()).feed(raw, final=True) == raw
-    disabled_disclaimer = AuxiliaryParser(KeminiConfig(normal_disclaimer_enabled=True))
-    assert disabled_disclaimer.feed(raw, final=True) == raw
-
-
 def test_prefix_debug_preserves_wire_bytes_and_separate_parameters():
     previous = '{"messages":[{"content":"中文原文"}],"tools":[{"name":"old"}],"system":"stable","gone":true}'.encode()
     current = '{"messages":[{"content":"中文原文"},{"content":"追加"}],"tools":[{"name":"new"}],"system":"stable","added":null}'.encode()
@@ -265,34 +203,32 @@ async def test_prefix_debug_setting_defaults_projection_and_page_undo(tmp_path):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         editor = (await client.post("/api/settings/edit-sessions", json={})).json()
         before = editor["settings"]
-        assert before["shared"]["debug_full_agent_prefix"] is False
+        assert before["shared"]["debug_story_prefix"] is False
         assert not before["shared"]["kemini"]["enabled"]
         assert not before["shared"]["kemini"]["normal_disclaimer_enabled"]
-        assert (
-            "debug_full_agent_prefix" in next(p for p in before["pages"] if p["id"] == "shared.misc")["paths"]
-        )
+        assert "debug_story_prefix" in next(p for p in before["pages"] if p["id"] == "shared.misc")["paths"]
         changed = await client.patch(
             "/api/settings/shared",
             json={
                 "expected_revision": before["revisions"]["shared"],
                 "edit_session": editor["id"],
                 "changes": {
-                    "debug_full_agent_prefix": True,
+                    "debug_story_prefix": True,
                     "kemini.normal_disclaimer_enabled": True,
                     "kemini.filler_text": "完整填充末尾",
                 },
             },
         )
         assert changed.status_code == 200, changed.text
-        runtime = app.state.store.settings("full_agent").for_role("full_agent")
-        assert runtime.debug_full_agent_prefix
+        runtime = app.state.store.settings().for_role("story")
+        assert runtime.debug_story_prefix
         assert runtime.kemini.normal_disclaimer_enabled and not runtime.kemini.enabled
         assert runtime.kemini.filler_text.endswith("末尾")
         invalid = await client.patch(
             "/api/settings/shared",
             json={
                 "expected_revision": changed.json()["revisions"]["shared"],
-                "changes": {"debug_full_agent_prefix": "false"},
+                "changes": {"debug_story_prefix": "false"},
             },
         )
         assert invalid.status_code == 400
@@ -300,12 +236,12 @@ async def test_prefix_debug_setting_defaults_projection_and_page_undo(tmp_path):
             f"/api/settings/edit-sessions/{editor['id']}/undo",
             json={"page": "shared.misc", "expected_revision": changed.json()["revisions"]["shared"]},
         )
-        assert undone.status_code == 200 and not undone.json()["shared"]["debug_full_agent_prefix"]
+        assert undone.status_code == 200 and not undone.json()["shared"]["debug_story_prefix"]
         assert not undone.json()["shared"]["kemini"]["normal_disclaimer_enabled"]
-        assert runtime.debug_full_agent_prefix
+        assert runtime.debug_story_prefix
     legacy = SettingsDocument().model_dump()
-    del legacy["shared"]["debug_full_agent_prefix"]
-    assert SettingsDocument.model_validate(legacy).shared.debug_full_agent_prefix is False
+    del legacy["shared"]["debug_story_prefix"]
+    assert SettingsDocument.model_validate(legacy).shared.debug_story_prefix is False
 
 
 def events(api):
@@ -567,11 +503,10 @@ async def test_selection_persists_projects_to_all_roles_and_undo_restores_defaul
         )
         assert changed.status_code == 200, changed.text
         doc = Store(tmp_path).settings_document()
-        for mode in ("full_agent", "half_agent"):
-            runtime = doc.runtime(mode)
-            assert runtime.model_request_mode == "stream"
-            for role in ("foreground", "background", "card_author", "full_agent"):
-                assert runtime.for_role(role).model_request_mode == "stream"
+        runtime = doc.runtime()
+        assert runtime.model_request_mode == "stream"
+        for role in ("card_author", "story"):
+            assert runtime.for_role(role).model_request_mode == "stream"
         undone = await client.post(
             f"/api/settings/edit-sessions/{session['id']}/undo",
             json={"page": "shared.web", "expected_revision": changed.json()["revisions"]["shared"]},
@@ -665,48 +600,6 @@ async def test_named_sse_error_after_terminal_is_not_success():
         assert not p.usage_history
 
 
-async def test_non_stream_mode_returns_complete_response_without_incremental_callbacks():
-    cfg = config(model_request_mode="non_stream")
-    cfg.kemini = KeminiConfig(enabled=True, normal_disclaimer_enabled=True)
-    chunks = []
-    payload = reply("chat_completions")
-    payload["choices"][0]["message"]["content"] = "OK<disclaimer>声明</disclaimer>"
-
-    def messages():
-        return [
-            {key: message[key] for key in ("role", "content")}
-            for message in inject_half([{**message, "source": "input"} for message in MESSAGES], cfg.kemini)
-        ]
-
-    def route(request):
-        body = json.loads(request.content)
-        if cfg.kemini.enabled:
-            assert body["tools"][0]["function"]["name"] == TOOL_NAME
-            assert cfg.kemini.disclaimer_text in body["messages"][-1]["content"]
-        else:
-            assert "tools" not in body
-            assert body["messages"] == MESSAGES
-        return httpx.Response(200, json=payload)
-
-    async with provider(cfg, route) as p:
-        p.operation_purpose = "narrative"
-        result = await p.chat_complete_with_preview(messages(), chunks.append)
-        assert result.content == "OK"
-        assert chunks == []
-        assert p.last_auxiliary == [{"kind": "disclaimer", "text": "声明"}]
-        # Turning off the parent suppresses both request instructions and output
-        # parsing without erasing the user's saved child preference.
-        cfg.kemini.enabled = False
-        assert control_text(cfg.kemini) == ""
-        result = await p.chat_complete_with_preview(messages(), chunks.append)
-        assert result.content == "OK<disclaimer>声明</disclaimer>"
-        assert p.last_auxiliary == [] and cfg.kemini.normal_disclaimer_enabled
-        cfg.kemini.enabled = True
-        result = await p.chat_complete_with_preview(messages(), chunks.append)
-        assert result.content == "OK" and chunks == []
-        assert p.last_auxiliary == [{"kind": "disclaimer", "text": "声明"}]
-
-
 async def test_failed_request_debug_redacts_compressed_response_at_capture_boundary(tmp_path, monkeypatch):
     cfg = config(debug_failed_requests=True, model_request_mode="non_stream")
     cfg._data_root = tmp_path
@@ -755,11 +648,10 @@ async def test_failed_request_debug_settings_download_privacy_and_retention(tmp_
             },
         )
         assert changed.status_code == 200, changed.text
-        for mode in ("full_agent", "half_agent"):
-            runtime = store.settings(mode)
-            for role in ("foreground", "background", "card_author", "full_agent"):
-                assert runtime.for_role(role).debug_failed_requests
-                assert runtime.for_role(role)._data_root == tmp_path
+        runtime = store.settings()
+        for role in ("card_author", "story"):
+            assert runtime.for_role(role).debug_failed_requests
+            assert runtime.for_role(role)._data_root == tmp_path
         cfg = config(debug_failed_requests=True, log_max_mib=1)
         cfg._data_root = tmp_path
         cfg.api_key = "private-key-for-failure-debug"
@@ -811,17 +703,22 @@ async def test_failed_request_debug_settings_download_privacy_and_retention(tmp_
         )
         assert undone.status_code == 200 and not undone.json()["shared"]["debug_failed_requests"]
         assert runtime.debug_failed_requests  # Running operations keep their captured setting.
-        log.save({**record, "turn_id": "recoverable:tracker:0"}, b"request", b"response")
+        log.save(
+            {**record, "turn_id": "recoverable:detail:0", "purpose": OLD_STORY_KEY}, b"request", b"response"
+        )
         monkeypatch.setattr("tavern.storage.request_debug.time", lambda: record["created"] + 400 * 86400)
         paths, report = log.plan({"recoverable"})
         assert len(paths) == 1 and report["request_debug_protected_bytes"] > 0
         log.cleanup({"recoverable"})
-        assert len(log.records()) == 1
+        saved = log.records()
+        assert len(saved) == 1 and saved[0]["purpose"] == "story"
+        with zipfile.ZipFile(log.path(saved[0]["id"])) as archive:
+            assert json.loads(archive.read("metadata.json"))["purpose"] == OLD_STORY_KEY
         storage = (await client.get("/api/storage")).json()
         assert storage["request_debug_bytes"] > 0 and storage["request_debug_reclaimable_bytes"] > 0
         await client.post("/api/storage/cleanup", json={})
         assert not log.records()
-        log.save({**record, "turn_id": "recoverable:tracker:0"}, b"request", None)
+        log.save({**record, "turn_id": "recoverable:detail:0"}, b"request", None)
         log.save(record, b"request", None)
         assert log.clear({"recoverable"}) == {"removed": 1, "protected": 1}
         assert (await client.delete("/api/debug/failed-requests")).json() == {"removed": 1, "protected": 0}

@@ -8,21 +8,18 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from tavern.application.service import RoleplayRuntime
+from tavern.application.service import StoryService
 from tavern.character.card_author import CardAuthorService
 from tavern.character.card_workflow import validation_report
 from tavern.character.editor_config import SYSTEM
 from tavern.character.editor_sandbox import test_card as probe_card
 from tavern.character.editor_tools import Skill, tool_definitions
-from tavern.conversation.context import compile_context
 from tavern.core.model_view import ModelView
 from tavern.core.models import SessionCreate
-from tavern.full_agent.context import compile_window
 from tavern.storage.store import Store, dump
-from tavern.tracker.task import TrackerTask
+from tavern.story.context import compile_window
 from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_card_authoring import run
-from tests.support.tracker_model import PatchModel
 
 TEMPLATE = (
     "<details><summary>状态栏</summary><div>TIME: {{getvar::Time}} MONEY: {{getvar::Money}}</div></details>"
@@ -61,7 +58,7 @@ def test_legacy_status_card_reports_locations_and_missing_contract_without_mutat
     assert report["valid"] and not report["adapted"]
     warnings = "\n".join(report["warnings"])
     assert all(
-        text in warnings for text in ("first_mes", "世界书第 1 条", "逐轮", "根路径", "初始化", "tracker_mvu")
+        text in warnings for text in ("first_mes", "世界书第 1 条", "逐轮", "根路径", "初始化", "mvu_rules")
     )
     assert "4af8b4de" not in warnings and TEMPLATE not in warnings
     assert document == original
@@ -102,7 +99,7 @@ def test_negation_does_not_hide_later_requirement_and_relabeling_template_is_not
     document = card()
     entry = document["character_book"]["entries"][0]
     entry["content"] = "不要重复叙事。每次回复必须输出状态栏。\n" + TEMPLATE
-    entry["extensions"] = {"terrarium": {"audience": "tracker_mvu"}}
+    entry["extensions"] = {"terrarium": {"purpose": "mvu_rules"}}
     assert any("世界书第 1 条：可能要求" in w for w in validation_report(document)["warnings"])
     entry["enabled"] = False
     document["first_mes"] = "纯叙事"
@@ -113,7 +110,7 @@ def test_initialization_hints_follow_disabled_init_and_inline_openings():
     document = card()
     entries = document["character_book"]["entries"]
     entries.append({"comment": "[InitVar]", "enabled": False, "content": "Time: '08:20'\nMoney: 12"})
-    entries.append({"content": RULE, "extensions": {"terrarium": {"audience": "tracker_mvu"}}})
+    entries.append({"content": RULE, "extensions": {"terrarium": {"purpose": "mvu_rules"}}})
     assert not any("未发现" in w for w in validation_report(document)["warnings"])
     entries[-2]["comment"] = "普通初值"
     assert any("初始化来源" in w for w in validation_report(document)["warnings"])
@@ -224,7 +221,7 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
                         {
                             "op": "add",
                             "path": "/character_book/entries/0/extensions",
-                            "value": {"terrarium": {"audience": "tracker_mvu"}},
+                            "value": {"terrarium": {"purpose": "mvu_rules"}},
                         },
                         {
                             "op": "add",
@@ -283,15 +280,12 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
             # Compile actual new-story messages in an isolated store: an existing
             # story would intentionally retain its original opening and settings.
             session = store.new_session(SessionCreate(card_id=migrated["id"], greeting=index))
-            runtime = RoleplayRuntime(store)
+            runtime = StoryService(store)
             try:
-                session = await runtime.initialize_session(session["id"])
+                session = await runtime.story.initialize_session(session["id"])
             finally:
                 await runtime.close()
             snapshot = session["snapshot"]
-            half = compile_context(
-                document, session, session["messages"], snapshot, "继续", store.settings(), "test"
-            )
             full = compile_window(
                 document,
                 session,
@@ -302,30 +296,10 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
                 [],
                 require_state_patch=True,
             )
-            for compiled in (half, full):
-                wire = dump(compiled["messages"])
-                assert TEMPLATE not in wire and "<details>" not in wire and "<initvar>" not in wire
-                assert "旅客放下行李。" in wire and "旅店在清晨开门。" in wire
-            assert RULE not in dump(half["messages"])
-            assert RULE in dump(full["messages"])
-        # Half Agent sends the same semantic rule to the independent variable task.
-        provider = PatchModel([])
-        work = TrackerTask(
-            store,
-            "test",
-            store.settings(),
-            {**session, "persona": "店主"},
-            document,
-            [],
-            snapshot,
-            phase="post",
-            variables=True,
-            user_input="继续",
-            narrative="旅客等待。",
-            provider=provider,
-        )
-        await work.run()
-        assert RULE in dump(provider.last_messages) and TEMPLATE not in dump(provider.last_messages)
+            wire = dump(full["messages"])
+            assert TEMPLATE not in wire and "<details>" not in wire and "<initvar>" not in wire
+            assert "旅客放下行李。" in wire and "旅店在清晨开门。" in wire
+            assert RULE in wire
         assert store.card(source["id"])["document"] == original
     finally:
         await editor.close()

@@ -1,20 +1,13 @@
-import json
 from pathlib import Path
 
-import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
-from openai import AsyncOpenAI
 
 from tavern.application.api import create_app
-from tavern.application.service import RoleplayRuntime
 from tavern.conversation.cache_breakpoint import context_breakpoint_index
-from tavern.core.models import SessionCreate, Settings, TurnRequest
-from tavern.memories.memory import fingerprint
-from tavern.scripting.agent import make_provider
+from tavern.core.models import SessionCreate, Settings
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.store import Store, dump, uid
-from tests.support.history_labels import strip_label
 from tests.support.model_transport import request_payload
 
 
@@ -62,9 +55,8 @@ def test_clipped_target_falls_back_and_invalid_manual_target_is_rejected(story):
     store, session, replies = story
     with pytest.raises(ValueError):
         store.set_cache_breakpoint(session["id"], session["revision"], False, session["messages"][1]["id"])
-    snapshot = session["snapshot"] | {
-        "context_window": {"covered_count": 5, "fingerprint": fingerprint(session["messages"][:5])}
-    }
+    snapshot = session["snapshot"]
+    snapshot["story"]["window"]["start"] = 5
     with store.connection() as db:
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), session["head"]))
     assert store.session(session["id"])["cache_breakpoint_effective_id"] is None
@@ -119,91 +111,3 @@ async def test_cache_breakpoint_endpoint_and_schema_migration(story):
     reopened = Store(store.root)
     assert reopened.session(session["id"])["cache_breakpoint_auto"] is True
     assert reopened.session(session["id"])["cache_breakpoint_message"] is None
-
-
-async def test_writer_turn_marks_second_latest_reply_in_responses_request(story):
-    store, session, replies = story
-    settings = store.settings()
-    settings.foreground.api_mode = "responses"
-    settings.providers[0].api_key = "test"
-    settings.network.api_proxy = False
-    settings.foreground.model = "gpt-fixture"
-    settings.memory_interval_turns = 100
-    store.save_settings(settings)
-    provider = await make_provider(settings.for_role("foreground"))
-    await provider._client.close()
-    requests = []
-
-    def route(request):
-        requests.append(json.loads(request.content))
-        final = {
-            "id": "resp_test",
-            "object": "response",
-            "created_at": 0,
-            "status": "completed",
-            "model": "fixture",
-            "usage": {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110},
-            "output": [
-                {
-                    "type": "message",
-                    "id": "msg_test",
-                    "role": "assistant",
-                    "status": "completed",
-                    "content": [{"type": "output_text", "text": "故事继续。", "annotations": []}],
-                }
-            ],
-        }
-        events = [
-            {
-                "type": "response.output_text.delta",
-                "delta": "故事继续。",
-                "item_id": "msg_test",
-                "output_index": 0,
-                "content_index": 0,
-                "sequence_number": 1,
-            },
-            {"type": "response.completed", "response": final, "sequence_number": 2},
-        ]
-        return httpx.Response(
-            200,
-            headers={"content-type": "text/event-stream"},
-            text="".join(f"data: {json.dumps(event, ensure_ascii=False)}\n\n" for event in events),
-        )
-
-    provider._client = AsyncOpenAI(
-        api_key="test", max_retries=0, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
-    )
-    service = RoleplayRuntime(store)
-    service.provider_factory = lambda: provider
-    try:
-        turn = service.submit(
-            session["id"],
-            TurnRequest(text="继续", operation_id="cache-breakpoint", expected_revision=session["revision"]),
-        )
-        await service.tasks[turn["id"]]
-        assert store.turn(turn["id"])["status"] == "committed"
-        committed = store.session(session["id"])
-        assert committed["cache_breakpoint_effective_id"] == replies[2]
-        assert committed["cache_breakpoint_follow"] == {
-            "interval": 1,
-            "offset": 2,
-            "anchor": replies[2],
-            "progress": 0,
-        }
-        assert len(requests) == 1
-        wire = requests[0]
-        assert wire["prompt_cache_options"] == {"mode": "explicit"}
-        marked = [
-            item
-            for item in wire["input"]
-            if isinstance(item.get("content"), list)
-            and any(part.get("prompt_cache_breakpoint") for part in item["content"])
-        ]
-        assert len(marked) == 1
-        assert marked[0]["role"] == "assistant"
-        assert strip_label(marked[0]["content"][0]["text"]) == next(
-            message["model"] for message in session["messages"] if message["id"] == replies[1]
-        )
-    finally:
-        await service.close()
-        await provider.close()

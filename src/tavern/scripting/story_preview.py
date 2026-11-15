@@ -1,4 +1,4 @@
-"""Provisional decoding of Full Agent story submissions."""
+"""Provisional decoding of story submissions."""
 
 import json
 

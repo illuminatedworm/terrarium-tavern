@@ -19,7 +19,6 @@ Windows 双击 clear-conversations.cmd；也可使用项目 Python 执行本文�
 """
 
 import argparse
-import asyncio
 import hashlib
 import json
 import os
@@ -153,9 +152,13 @@ def prepare_store(staged, recovery):
         db.execute("DELETE FROM sessions")
     store = Store(staged)
     with store.connection() as db:
+        current_columns = {row[1] for row in db.execute("PRAGMA table_info(sessions)")}
+        keep = [index for index, column in enumerate(columns) if column in current_columns]
+        names = ",".join(quote(columns[index]) for index in keep)
+        marks = ",".join("?" for _ in keep)
         db.executemany(
-            f"INSERT INTO sessions ({','.join(map(quote, columns))}) VALUES ({','.join('?' for _ in columns)})",
-            sessions,
+            f"INSERT INTO sessions ({names}) VALUES ({marks})",
+            (tuple(row[index] for index in keep) for row in sessions),
         )
         present = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
         for name, sql in triggers:
@@ -188,16 +191,8 @@ def preserved_rows(db):
     return result
 
 
-async def delete_conversations(store, session_ids):
-    from tavern.application.service import RoleplayRuntime
+def delete_conversations(store, session_ids):
     from tavern.storage.request_debug import RequestDebugLog
-
-    class OfflineDeletionRuntime(RoleplayRuntime):
-        async def cancel(self, tid):
-            # The live service is stopped and this is a disposable copy. There are
-            # no running tasks to cancel. In particular, do not decode old pending
-            # turns through the current retry/review format merely to delete them.
-            pass
 
     with store.connection() as db:
         retained = preserved_rows(db)
@@ -206,21 +201,23 @@ async def delete_conversations(store, session_ids):
             for table in ("turns", "advisor_runs", "context_operations")
             for row in db.execute(f"SELECT id FROM {quote(table)}")
         }
-    runtime = OfflineDeletionRuntime(store)
-    try:
-        for index, sid in enumerate(session_ids, 1):
-            await runtime.delete_session(sid)
-            print(f"已清理剧情对话 {index}/{len(session_ids)}", flush=True)
-    finally:
-        await runtime.close()
+    for index, sid in enumerate(session_ids, 1):
+        turn_ids = store.session_turn_ids(sid)
+        store.delete_session(sid)
+        store.prune_turn_runs(turn_ids)
+        print(f"已清理剧情对话 {index}/{len(session_ids)}", flush=True)
 
     # All stories are gone, so no story retrieval cache has a surviving owner.
     # The per-session deletion already handled shared assets using the live
     # program's reference rules. Do not clear blobs, dependencies or runs wholesale.
     with store.connection() as db:
-        for table in ("retrieval_collections", "retrieval_indexes", "retrieval_vectors"):
+        caches = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('retrieval_collections','retrieval_indexes','retrieval_vectors')"
+        ).fetchall()
+        for (table,) in caches:
             db.execute(f"DELETE FROM {quote(table)}")
-    logs = RequestDebugLog(store.root, store.settings_document().runtime("half_agent"))
+    logs = RequestDebugLog(store.root, store.settings())
     for path in logs.entries():
         if logs._protected(logs._metadata(path), owners):
             path.unlink()
@@ -239,7 +236,7 @@ async def delete_conversations(store, session_ids):
                 "turns",
                 "events",
                 "changes",
-                "full_agent_progress",
+                "story_progress",
                 "advisor_events",
             }:
                 if db.execute(f"SELECT 1 FROM {quote(table)} LIMIT 1").fetchone():
@@ -295,7 +292,7 @@ def clear_conversations(root, expected):
             )
             copy_data(root, staged)
             store, session_ids = prepare_store(staged, recovery)
-            asyncio.run(delete_conversations(store, session_ids))
+            delete_conversations(store, session_ids)
             # Exercise the actual startup format check, without starting a server,
             # loading models, running scripts or contacting any external service.
             Store(staged)
