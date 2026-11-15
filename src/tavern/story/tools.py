@@ -217,6 +217,7 @@ def result_field(session, tool, field):
     return session.get("tool_result_options", {}).get(tool, {}).get(field, RESULT_FIELDS[tool][field])
 
 
+# Insertion order is the API order; keep it aligned with StoryTools.vue groups.
 SPECS = {
     "find_lore_for_edit": (
         Search,
@@ -237,6 +238,16 @@ SPECS = {
         "Entries already in this context are left out, and entry conditions, cooldowns or relevance limits may leave no matches. "
         "When titles and L handles are shown, recalled entries can serve as the current text for later edits.",
     ),
+    "revise_content": (
+        ContentRevision,
+        "Edit character settings and worldbook entries with semantic actions: set_character, add_lore, update_lore "
+        "and remove_lore. Use these actions, not JSON Patch or storage IDs.\n"
+        "Only for turns whose instructions authorize content edits; authorization from earlier turns does not "
+        "carry over, and calls without it are REJECTED.\n"
+        "Omitted properties stay unchanged, and a failed batch changes nothing. Success returns the final contents of "
+        "each changed target, which count as current for later edits. Script-bearing targets and execution settings "
+        "are protected.",
+    ),
     "search_history": (
         Search,
         "Search this branch's dialogue by literal text. Use short fragments; query=* lists recent messages. "
@@ -246,6 +257,41 @@ SPECS = {
         HistoryRead,
         "Read original dialogue in full by H reference (H12) or closed span (H12-H18), including the current user input. "
         "A span returns every message in order.",
+    ),
+    "search_notes": (
+        Search,
+        "Search active notes by literal text in keys or content; query=* lists notes. Returns keys with optional previews. "
+        "Note contents are not automatically injected; use read_note for the full text.",
+    ),
+    "read_note": (
+        NoteRead,
+        "Read a note in full by key, including archived notes. Metadata may include kind and H sources.",
+    ),
+    "write_note": (
+        Note,
+        "Create a note or fully replace one by key. Updates are cumulative: start from the note's current text, keep "
+        "information that is still valid, and record how things happened and changed, not just the current state. "
+        "Attribute claims to whoever made them, keep uncertainty visible, and "
+        "treat retracted information as no longer valid.\n"
+        "kind: fact needs H sources from this branch; hypothesis marks uncertainty; plan records a character's own "
+        "intentions inside the story. Author-level outlines belong in write_plot.\n"
+        "Writing to an archived key reactivates it.",
+    ),
+    "archive_note": (
+        NoteKey,
+        "Archive a note that is no longer relevant. It drops out of normal searches but stays readable by key; "
+        "nothing is deleted. Writing to the same key reactivates it.",
+    ),
+    "write_plot": (
+        Plot,
+        "Create or fully replace this branch's author-level outline of where the story may go. The current outline is "
+        "in <tavern_plot>; no read is needed.\n"
+        "Updates are cumulative: revise the current outline instead of starting over, keeping its structure and "
+        "everything that still holds. Keep each anchor (锚点) and its severity (冷酷度) unchanged unless it has been "
+        "fulfilled or the user asked out of character to change it. The tool protocol describes the suggested "
+        "sections.\n"
+        "Apart from anchors, contents are revisable possibilities. None of it is an established fact, something "
+        "characters know, or an action decided for the user.",
     ),
     "write_handoff": (
         HandoffWrite,
@@ -280,41 +326,6 @@ SPECS = {
         "constraints, unresolved issues and tone. Do not copy whole notes or the plot outline.\n"
         "Call alone: a batch containing new_context is rejected and none of its tools run.",
     ),
-    "search_notes": (
-        Search,
-        "Search active notes by literal text in keys or content; query=* lists notes. Returns keys with optional previews. "
-        "Note contents are not automatically injected; use read_note for the full text.",
-    ),
-    "read_note": (
-        NoteRead,
-        "Read a note in full by key, including archived notes. Metadata may include kind and H sources.",
-    ),
-    "write_note": (
-        Note,
-        "Create a note or fully replace one by key. Updates are cumulative: start from the note's current text, keep "
-        "information that is still valid, and record how things happened and changed, not just the current state. "
-        "Attribute claims to whoever made them, keep uncertainty visible, and "
-        "treat retracted information as no longer valid.\n"
-        "kind: fact needs H sources from this branch; hypothesis marks uncertainty; plan records a character's own "
-        "intentions inside the story. Author-level outlines belong in write_plot.\n"
-        "Writing to an archived key reactivates it.",
-    ),
-    "write_plot": (
-        Plot,
-        "Create or fully replace this branch's author-level outline of where the story may go. The current outline is "
-        "in <tavern_plot>; no read is needed.\n"
-        "Updates are cumulative: revise the current outline instead of starting over, keeping its structure and "
-        "everything that still holds. Keep each anchor (锚点) and its severity (冷酷度) unchanged unless it has been "
-        "fulfilled or the user asked out of character to change it. The tool protocol describes the suggested "
-        "sections.\n"
-        "Apart from anchors, contents are revisable possibilities. None of it is an established fact, something "
-        "characters know, or an action decided for the user.",
-    ),
-    "archive_note": (
-        NoteKey,
-        "Archive a note that is no longer relevant. It drops out of normal searches but stays readable by key; "
-        "nothing is deleted. Writing to the same key reactivates it.",
-    ),
     "read_state": (
         StateRead,
         "Read runtime variables by JSON Pointer.\n"
@@ -334,16 +345,6 @@ SPECS = {
         "with the final story text, and cite the story evidence in comment. Use this tool instead of writing MVU blocks "
         "in the story text.",
     ),
-    "revise_content": (
-        ContentRevision,
-        "Edit character settings and worldbook entries with semantic actions: set_character, add_lore, update_lore "
-        "and remove_lore. Use these actions, not JSON Patch or storage IDs.\n"
-        "Only for turns whose instructions authorize content edits; authorization from earlier turns does not "
-        "carry over, and calls without it are REJECTED.\n"
-        "Omitted properties stay unchanged, and a failed batch changes nothing. Success returns the final contents of "
-        "each changed target, which count as current for later edits. Script-bearing targets and execution settings "
-        "are protected.",
-    ),
     "read_character": (
         CharacterRead,
         "Read one character setting in full: name, description, personality, scenario, mes_example, system_prompt "
@@ -359,7 +360,6 @@ SPECS = {
 
 
 SPECS.update(MAIN_SPECS)
-SPECS["present_ui"] = (PresentUI, VISUAL_DESCRIPTION)
 SPECS["submit_story"] = (
     Story,
     f"Append a new story segment to this turn's draft. At most {MAX_SEGMENTS} successful submissions per turn; "
@@ -368,6 +368,7 @@ SPECS["submit_story"] = (
     "Ordinary assistant text is commentary. Tools may run before, between or after segments, including after "
     "the third. Check variables and notes against the entire story, then end normally; delivery does not commit the turn.",
 )
+SPECS["present_ui"] = (PresentUI, VISUAL_DESCRIPTION)
 
 PARTIAL_UNICODE_TOOL_DESCRIPTION = (
     "Append new story prose. Encode every erotic or sexually explicit description and every graphic description "
