@@ -477,6 +477,7 @@ def compile_window(
             )
     available = settings.context_tokens
     allowed_fields = {
+        "_media_image_refs",
         "role",
         "content",
         "tool_calls",

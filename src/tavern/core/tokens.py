@@ -120,7 +120,7 @@ def counting_payload(message, settings=None):
     elif api == "responses":
         keys.append("reasoning")
     result = {key: message[key] for key in keys if key in message}
-    if refs := message.get(IMAGE_REFS):
+    if refs := message.get(IMAGE_REFS) or message.get("_media_image_refs"):
         # materialize_images appends the original images to the user text;
         # wrapping may add text parts on either side. Count their complete text
         # once and identify the images by the same immutable references in both

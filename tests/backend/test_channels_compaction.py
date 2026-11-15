@@ -544,6 +544,86 @@ async def test_long_replay_resumes_at_complete_batch_and_rebuilds_after_model_ch
     assert checkpoint["origin"] == response_origin(settings)
 
 
+async def test_compact_replay_preserves_images_in_uncompressed_tail(monkeypatch):
+    from tavern.conversation.compaction import hashes, project_compact, rebuild
+    from tavern.core.message_adapter import provider_messages
+    from tavern.core.models import Settings
+    from tavern.media.images import materialize
+    from tavern.scripting.protocols import response_input
+
+    settings = Settings(model="fixture", api_mode="responses")
+    settings._image_loader = lambda messages: materialize(messages, None, "story")
+    monkeypatch.setattr("tavern.media.images.asset_by_ref", lambda *args: {"mime": "image/png"})
+    monkeypatch.setattr("tavern.media.images.read_image", lambda *args: b"image")
+    body = [
+        {"role": "user", "content": "First exchange"},
+        {"role": "assistant", "content": "First reply"},
+        {"role": "user", "content": "Second exchange"},
+        {"role": "user", "content": "Viewed I1", "_media_image_refs": ["I1"]},
+        {"role": "assistant", "content": "Second reply"},
+        {"role": "user", "content": "Third exchange"},
+        {"role": "assistant", "content": "Third reply"},
+    ]
+    opaque = {"type": "compaction", "encrypted_content": "opaque-fixture"}
+
+    def compile_history(checkpoint=None):
+        return project_compact(
+            {
+                "messages": body,
+                "trace": [dict(message) for message in body],
+                "diagnostics": [],
+                "_replay_starts": [{"offset": i} for i in (0, 2, 5)],
+            },
+            {"compaction": checkpoint},
+            settings,
+            [],
+            0,
+        )
+
+    class Provider:
+        def __init__(self):
+            self.requests = []
+
+        async def chat_complete(self, messages, **kwargs):
+            wire = response_input(messages)
+            self.requests.append(wire)
+            # The provider compacts the first exchange only.
+            if body[0] in wire and body[2] in wire:
+                raise ValueError("maximum context length exceeded")
+            self.last_native_response = {"items": [opaque] if body[0] in wire else []}
+            return SimpleNamespace(usage={})
+
+    def assert_image_once(request):
+        assert json.dumps(request).count("data:image/png;base64,aW1hZ2U=") == 1
+
+    saved = []
+
+    async def interrupt_after_second_exchange(state):
+        if state["batches"] == 2:
+            saved.append(state)
+            raise asyncio.CancelledError()
+
+    provider = Provider()
+    with pytest.raises(asyncio.CancelledError):
+        await rebuild(compile_history(), settings, provider, force=True, save=interrupt_after_second_exchange)
+    assert_image_once(provider.requests[-1])
+    (progress,) = saved
+    assert progress["items"] == [opaque]
+    legacy_progress = {**progress, "version": 2, "items": [opaque, *response_input(body[2:5])]}
+    resumed = Provider()
+    checkpoint, _ = await rebuild(compile_history(), settings, resumed, force=True, progress=legacy_progress)
+    assert_image_once(resumed.requests[0])
+    assert checkpoint["covered"] == hashes(body[:2])
+    legacy_checkpoint = {
+        **checkpoint,
+        "items": [opaque, *response_input(body[2:])],
+        "covered": hashes(body),
+    }
+    for saved_checkpoint in (checkpoint, legacy_checkpoint):
+        messages = compile_history(saved_checkpoint)["messages"]
+        assert_image_once(response_input(provider_messages(resumed, messages, settings)))
+
+
 async def test_subscription_stream_compaction_item_survives_empty_terminal_output(tmp_path):
     from tavern.conversation.compaction import opaque_message
     from tavern.core.provider import make_provider

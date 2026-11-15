@@ -226,16 +226,36 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 错误信息不回显提交的密钥。冲突后须先取得新版本再重试，不能直接替换 `expected_revision` 覆盖他人的修改。
 
+## 会话媒体接口
+
+以下路径均位于 `/api/sessions/{sid}/media`。配置保存在 `sessions.media_config`，复用全局提供商凭据；任务保存实际生成参数，密钥不写入任务、工具结果或媒体数据包。
+
+| 方法与后缀 | 用途 |
+|---|---|
+| `GET /` | 返回当前配置、修订号、可选 API Key 连接（不含密钥）、声音、尺寸、图片目录和角色卡图片名称。 |
+| `PUT /` | `{expected_revision, config}` 保存配置与声线表；运行中剧情和上下文整理期间拒绝修改。关闭功能取消待发任务并尝试停止运行请求。 |
+| `POST /jobs` | `{message_ids}` 查询最多100条回复的媒体任务及产物元信息，不读取媒体字节。 |
+| `POST /jobs/{jid}/retry` | `{operation_id}` 使用原参数重试失败／中断／取消任务；操作编号1–100字符，同一操作重复提交返回同一结果。 |
+| `POST /jobs/{jid}/regenerate` | `{operation_id}` 使用当前设置新建重做任务，保留原产物；同样按操作编号去重。 |
+| `POST /jobs/{jid}/cancel` | 停止本地任务；不承诺撤销服务端费用。 |
+| `GET /events` | SSE 发送带序号的状态更新；重连先刷新数据库权威状态。 |
+| `GET /assets/{aid}` | 返回本故事的媒体文件，支持浏览器音频范围请求。 |
+| `POST /references` | multipart 的 `file/expected_revision/name/description`，导入最多32 MiB的PNG、JPEG或静态WebP图片并授权为常驻参考。 |
+| `POST /card-reference` | `{expected_revision,key,name,description,selected}` 从当前会话卡片选择图片，不接受任意路径或远程URL。 |
+| `PUT /references/{aid}` | `{expected_revision,name,description,selected}` 修改图片说明和常驻选择；此前已查看的历史图片仍保留。 |
+
+配音文本不做正文匹配、来源或逐字校验。任务有独立的 `queued/running/completed/failed/interrupted/cancelled` 状态；默认最多两个外部任务并行，单任务超时默认900秒，可设置5–3600秒。未知远端结果不会自动重发。图片目录中已给出的编号和真正看图的引用均随历史保留，分支不会把同一编号重新用于另一张图。完整操作说明见[角色配音与剧情插图](../guides/story.md#角色配音与剧情插图)。
+
 ## 数据库与设置迁移
 
 ### 当前格式与旧剧情
 
 | 格式 | 当前版本 |
 |---|---|
-| 数据库 schema | **28** |
+| 数据库 schema | **29** |
 | 设置文档 | **22** |
 | 剧情快照 `story.version` | **4**（handoff 由模型维护，不含章节手工标记） |
-| 个人数据包 | **16** |
+| 个人数据包 | **17** |
 
 整轮重试从 schema 9 开始。缺少可恢复回合结构的旧数据库会在写入前给出处理说明。对可升级的数据库，程序先备份，再迁移已有的分支、回合及快照。旧数据包预览会列出格式过旧的故事，并提供同包可导入的资料。
 
@@ -243,7 +263,7 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 ### 升级流程
 
-存储层接受 schema 1–28，先只读核对版本与设置。数据库低于 28、设置需要迁移或会话表缺少新增列时，在任何写入前生成 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份。剧情迁移和格式版本写入在同一事务中完成。其他数据库版本在写入前报错。
+存储层接受 schema 1–29，先只读核对版本与设置。数据库低于 29、设置需要迁移或会话表缺少新增列时，在任何写入前生成 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份。剧情迁移和格式版本写入在同一事务中完成。其他数据库版本在写入前报错。
 
 旧程序不能直接打开已升级的数据库，回退应使用迁移前的备份。重复迁移不覆盖已迁移的配置。设置导入接受旧版本并使用相同的迁移规则。升级操作与恢复步骤见[安装与维护](../guides/maintenance.md#备份升级与回退)。
 
@@ -275,6 +295,7 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 - **26** 移除无法转换到现有格式的旧故事及其附属记录，并保留升级前的备份。
 - **27** 将剧情快照、恢复进度、工具轨迹、消息适配和回合事件转为当前字段名。已提交正文、用户变量、待审核草稿和已完成工具结果随迁移保留。
 - **28** 将角色卡、世界书及其结构化副本的条目用途迁移至 `extensions.terrarium.purpose`。涵盖分支快照、回合草稿、续接进度与制卡撤销。个人数据包 version 16 使用同一格式。
+- **29** 增加 `sessions.media_config/media_sequence`、`media_assets`、`media_jobs` 和手动操作幂等记录 `media_actions`。配音、生图及看图默认关闭，设置均可在会话中查看和修改。`story_progress` version 8 保存生成计划、新声线和待提供图片；兼容旧进度。个人数据包 version 17 携带媒体及引用，导入／分支复制不会自动重发付费任务。全局设置仍为 version 22。
 
 ### 设置格式变更
 

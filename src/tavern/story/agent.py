@@ -22,6 +22,7 @@ from tavern.core.message_adapter import provider_messages
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
 from tavern.core.story_segments import MAX_SEGMENTS, SEPARATOR, text_length
+from tavern.media.tools import MediaDraft
 from tavern.scripting.kemini import AuxiliaryParser
 from tavern.scripting.lore import merge_script_lore, sync_runtime_lore
 from tavern.scripting.native_response import completion_message, message_digest
@@ -152,6 +153,7 @@ class StoryAgent:
             self.exiting = set(progress["exiting"])
             self.tools.reads.restore(progress.get("tool_reads", {}))
             self.patch_state_done = progress["patch_state_done"]
+        self.media = MediaDraft(self, (progress or {}).get("media"))
 
     async def save_progress(self, *, script_mirror=None):
         if script_mirror is None:
@@ -160,6 +162,7 @@ class StoryAgent:
             self.tid,
             {
                 "version": PROGRESS_VERSION,
+                "media": self.media.saved(),
                 "user": self.user_message,
                 "output_id": self.output_id,
                 "snapshot": self.snapshot,
@@ -500,6 +503,15 @@ class StoryAgent:
             if hasattr(provider, "echo_reasoning"):
                 provider.echo_reasoning = True
             for step in range(self.settings.story_config.max_steps):
+                # Publish the catalog once per turn/window, after the fixed prefix.
+                # Its contents are user-visible configuration and short resource names.
+                if not any(m.get("_media_catalog") for m in self.continuation) and any(
+                    t["function"]["name"] in ("generate_speech", "generate_image", "view_image")
+                    for t in self.definitions
+                ):
+                    self.append(
+                        {**self.media.context_frame(), "_media_catalog": True}, self.state["window"]["id"]
+                    )
                 if self.novel and self.session.get("novel_enabled"):
                     await self.novel.deliver(self)
                 reports = []
@@ -731,6 +743,8 @@ class StoryAgent:
                 if self.model_completed and batch_failed:
                     await self.finished_text(batch_failed=True)
         self.legacy_protocol = False
+        if frame := self.media.image_frame():
+            self.append(frame, self.state["window"]["id"])
         await self.save_progress()
 
     async def execute_tools(self, assistant, window_id, assistant_seq, returned=(), *, legacy=False):
@@ -920,6 +934,11 @@ class StoryAgent:
             await self.save_progress()
         if legacy and batch_failed:
             self.model_completed = False
+            await self.save_progress()
+        # Native tool results must all be paired before a user image message.
+        # Pending refs were saved with each result, so recovery cannot lose a view.
+        if frame := self.media.image_frame():
+            self.append(frame, self.state["window"]["id"])
             await self.save_progress()
         return batch_failed
 

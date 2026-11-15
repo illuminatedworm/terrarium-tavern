@@ -33,11 +33,12 @@ from tavern.storage.worldbooks import read_defaults, write_defaults
 MAX_UPLOAD = 256 * 1024 * 1024
 MAX_UNPACKED = 512 * 1024 * 1024
 FORMAT = "terrarium-tavern-personal-data"
-PACKAGE_VERSION = 16
+PACKAGE_VERSION = 17
 JSON_FIELDS = {
     "worldbooks": {"book"},
     "cards": {"resources", "document", "report"},
     "sessions": {
+        "media_config",
         "model_selection",
         "persona_data",
         "card_data",
@@ -211,6 +212,9 @@ def export_package(store, selection):
                     session = decoded(table, row)
                     session["card_data"] = pin(session["card_data"])
                     bundle = {"session": session}
+                    from tavern.media.transfer import export_bundle as export_media
+
+                    bundle["media"] = export_media(db, identity, blobs)
                     from tavern.advisor.transfer import export_bundle as export_advisor
 
                     bundle["advisor"] = export_advisor(db, identity)
@@ -582,7 +586,10 @@ def validate_package(store, package, blobs):
                 ):
                     raise ValueError("对话上下文轨迹无效")
                 trace_keys.add(key)
+            from tavern.media.transfer import validate_bundle as validate_media
             from tavern.story.visuals import successful_specs, validate_spec
+
+            validate_media(bundle, by_id, blobs, identity)
 
             visual_records = {}
             for trace in bundle.get("story_trace", []):
@@ -730,6 +737,9 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
     for bundle in story_bundles:
         ids[bundle["session"]["id"]] = uid()
         ids.update({row["id"]: uid() for row in bundle["messages"]})
+        for table in ("assets", "jobs"):
+            ids.update({row["id"]: uid() for row in bundle.get("media", {}).get(table, [])})
+        card_blobs.update(a["blob"] for a in bundle.get("media", {}).get("assets", []))
     result = {
         "personas": [],
         "worldbooks": [],
@@ -826,6 +836,8 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 source = session_record(bundle, package["version"])
                 row = remap(source, ids)
                 row["model_selection"] = copy.deepcopy(source.get("model_selection", {}))
+                if "media_config" in source:
+                    row["media_config"] = copy.deepcopy(source["media_config"])
                 # A session owns its pinned card even when the library card was deleted.
                 row["card"] = ids.get(source["card"], uid())
                 row["card_data"]["id"] = row["card"]
@@ -850,6 +862,9 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 from tavern.novel.transfer import import_bundle as import_novel
 
                 import_novel(store, db, row["id"], bundle.get("novel"), blobs, written, novel_source_ids)
+                from tavern.media.transfer import import_bundle as import_media
+
+                import_media(db, row["id"], bundle.get("media", {}), ids)
                 if adapter:
                     insert(db, "message_adapter_configs", {**remap(adapter, ids), "revision": 0})
                 else:

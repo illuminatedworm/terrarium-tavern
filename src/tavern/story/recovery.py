@@ -7,12 +7,12 @@ from tavern.scripting.native_response import portable
 from tavern.story.delivery import StoryFormat
 from tavern.story.protocol import failed as tool_failed
 
-PROGRESS_VERSION = 7
+PROGRESS_VERSION = 8
 
 
 def saved_story_format(progress: dict) -> StoryFormat:
     version = progress.get("version", 1)
-    if version == 7:
+    if version >= 7:
         return progress["story_format"]
     return "unicode_full" if version == 6 and progress["unicode_story"] else "plain"
 
@@ -25,7 +25,7 @@ def load_progress(progress):
     if version >= 2 and (not isinstance(progress.get("output_id"), str) or not progress["output_id"]):
         raise ValueError("剧情回合进度缺少有效的正文身份；原进度未修改")
     if (version == 6 and type(progress.get("unicode_story")) is not bool) or (
-        version == 7 and progress.get("story_format") not in ("plain", "unicode_full", "unicode_partial")
+        version >= 7 and progress.get("story_format") not in ("plain", "unicode_full", "unicode_partial")
     ):
         raise ValueError("剧情回合进度缺少有效的正文传输格式；原进度未修改")
     if version < 3:

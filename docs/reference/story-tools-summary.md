@@ -1,6 +1,6 @@
 # 剧情工具速查
 
-当前共 **25 个工具**，其中六个原著调查工具仅在用户绑定文件并开启参考后提供给模型。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
+当前共 **28 个工具**，其中六个原著调查工具仅在用户绑定文件并开启参考后提供给模型，三个媒体工具由右侧“配音与生图”页控制。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
 
 ## 如何工作
 
@@ -10,6 +10,9 @@
 
 | 工具名 | 描述 | 参数 | 额外备注 |
 |---|---|---|---|
+| `generate_speech` | 登记角色配音 | `text: string`；`speaker: string`；`delivery: string=""`；`voice: string或null=null` | 文本直接传递，不与正文核对。已有角色沿用声线，新角色首次选择可用声音；正文提交后才生成。默认每轮最多20段、2000字符，用户可改。 |
+| `generate_image` | 登记剧情插图 | `prompt: string`；`references: string[]=[]`（最多16个I引用）；`size: "auto"或"1024x1024"或"1536x1024"或"1024x1536"="auto"` | 尺寸单位为像素；画质与模型由用户控制。默认每轮最多1张，用户可改；正文提交后才生成。 |
+| `view_image` | 主动查看图片 | `ref: string`（一个I引用） | 只可查看授权参考图或当前剧情中的完成图片；在完整工具批次之后向当前模型提供原图。 |
 | `submit_story` | 交付本轮故事正文 | `content: string` | 必须非空白且结构完整，始终启用。每轮最多追加三段。普通文本仅作备注。 |
 | `present_ui` | 展示冻结的交互图形 | `spec: object`（json-render 规格） | 新建故事默认关闭；Kemini 实验对话不提供。每轮至多接收三份，失败不计数；与 `submit_story` 按调用顺序穿插显示；不接受 HTML、SVG、脚本或 URL，界面操作只改变本地显示或填写输入框。 |
 | `start_novel_research` | 异步委派原著调查者 | `question: string`；`background: string=""`；`auto_destroy: boolean=false` | 调查者看不到主上下文，问题需能独立理解；每分支同时最多三个，每轮最多启动五次，销毁或重生成不退回次数。`auto_destroy=true` 在首份最终报告可靠送达后自动销毁，保留报告和历史；报告后仍需复用上下文追问时保持 `false`；提问、失败和暂停不触发。 |
@@ -65,7 +68,7 @@
 <details>
 <summary>查看工具描述原文与 JSON 示例</summary>
 
-工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。原著调查示例还要求用户已绑定文件并开启参考；异步状态以实际任务为准。参数与错误恢复见[完整协议](story-tools.md)。
+工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。原著调查示例要求绑定文件并开启参考；媒体示例要求开启对应功能、配置 API Key 连接，并已选择人物参考图 I1。异步状态以实际任务为准。参数与错误恢复见[完整协议](story-tools.md)。
 
 ### `find_lore_for_edit`
 
@@ -123,6 +126,26 @@ Write a short, self-contained query in the worldbook's language. Returns complet
 {"ok":true,"data":{"matches":[{"title":"港口","text":"<lorebook>\n港口有一座灯塔。\n</lorebook>"}]}}
 ```
 
+### `revise_content`
+
+```text
+Edit character settings and worldbook entries with semantic actions: set_character, add_lore, update_lore and remove_lore. Use these actions, not JSON Patch or storage IDs.
+Only for turns whose instructions authorize content edits; authorization from earlier turns does not carry over, and calls without it are REJECTED.
+Omitted properties stay unchanged, and a failed batch changes nothing. Success returns the final contents of each changed target, which count as current for later edits. Script-bearing targets and execution settings are protected.
+```
+
+请求：
+
+```json
+{"operations":[{"op":"set_character","field":"description","value":"新的角色描述。"}],"comment":"用户要求调整描述"}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"saved_to_draft":true,"added_refs":[],"characters":[{"ref":"description","text":"新的角色描述。"}],"entries":[],"removed_refs":[]}}
+```
+
 ### `search_history`
 
 ```text
@@ -157,53 +180,6 @@ Read original dialogue in full by H reference (H12) or closed span (H12-H18), in
 
 ```json
 {"ok":true,"data":{"ref":"H1","role":"user","text":"我明天去港口。"}}
-```
-
-### `write_handoff`
-
-```text
-Update the handoff without switching windows. Start from the latest <tavern_memory> or your later successful write, whichever is newer, and re-check points marked as having changed sources.
-- chapters are an append-only record of what will still matter later: irreversible events, relationship turns, promises and debts, secrets and who knows them, recurring people, items and places. Skip one-off actions, scenery and dialogue texture; the original text stays readable with read_history.
-- add: usually give only a title and points. Leave through empty and the chapter covers all committed history not yet in a chapter; set through only to split chapters deliberately.
-- Do not rewrite finished chapters. Use revise only to fix an error; merge the oldest adjacent chapters when nearing the total limit.
-- current fully replaces the current handoff: the scene, relationships, constraints, unresolved issues and tone. Do not retell chapter events.
-- refs are optional. Cite a known H reference only when precise lookup will help later; never invent one.
-- Do not copy whole notes or the plot outline into the handoff.
-```
-
-请求：
-
-```json
-{"current":[{"text":"明天去港口，相关笔记：计划/港口。"}]}
-```
-
-成功返回：
-
-```json
-{"ok":true,"data":{"saved_to_draft":true,"window":1,"chapters":[],"notice":"正文完成后与本回合统一提交。"}}
-```
-
-### `new_context`
-
-```text
-Switch to a fresh context window. Older messages and earlier tool calls leave the window; afterwards you continue the same turn, and the call budget does not reset.
-- When to switch: the runtime measures context usage for you, so do not estimate it yourself. Without a context notice, do not switch. A budget reminder means plan the switch, ideally at a natural break; a forced-rollover notice means switch now.
-- keep_recent sets how many recent messages stay. It is rounded up to whole user/assistant exchanges, and the current input always stays.
-- Every message that leaves must already be covered by a chapter. If it is, call with just keep_recent. Otherwise pass handoff with add operations for the missing part, leaving through empty. If all history stays, an empty handoff is fine.
-- Omitting handoff keeps the current one unchanged. When you pass it, chapters keep lasting events, relationship changes, promises, secrets and recurring people, items and places; current holds the scene, relationships, constraints, unresolved issues and tone. Do not copy whole notes or the plot outline.
-Call alone: a batch containing new_context is rejected and none of its tools run.
-```
-
-请求：
-
-```json
-{}
-```
-
-成功返回：
-
-```json
-{"ok":true,"data":{"saved_to_draft":true,"window":2,"chapters":[],"notice":"正文完成后与本回合统一提交。"}}
 ```
 
 ### `search_notes`
@@ -262,6 +238,24 @@ Writing to an archived key reactivates it.
 {"ok":true,"data":{"key":"计划/港口","saved_to_draft":true}}
 ```
 
+### `archive_note`
+
+```text
+Archive a note that is no longer relevant. It drops out of normal searches but stays readable by key; nothing is deleted. Writing to the same key reactivates it.
+```
+
+请求：
+
+```json
+{"key":"计划/港口"}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"key":"计划/港口","archived":true}}
+```
+
 ### `write_plot`
 
 ```text
@@ -282,22 +276,51 @@ Apart from anchors, contents are revisable possibilities. None of it is an estab
 {"ok":true,"data":{"saved_to_draft":true}}
 ```
 
-### `archive_note`
+### `write_handoff`
 
 ```text
-Archive a note that is no longer relevant. It drops out of normal searches but stays readable by key; nothing is deleted. Writing to the same key reactivates it.
+Update the handoff without switching windows. Start from the latest <tavern_memory> or your later successful write, whichever is newer, and re-check points marked as having changed sources.
+- chapters are an append-only record of what will still matter later: irreversible events, relationship turns, promises and debts, secrets and who knows them, recurring people, items and places. Skip one-off actions, scenery and dialogue texture; the original text stays readable with read_history.
+- add: usually give only a title and points. Leave through empty and the chapter covers all committed history not yet in a chapter; set through only to split chapters deliberately.
+- Do not rewrite finished chapters. Use revise only to fix an error; merge the oldest adjacent chapters when nearing the total limit.
+- current fully replaces the current handoff: the scene, relationships, constraints, unresolved issues and tone. Do not retell chapter events.
+- refs are optional. Cite a known H reference only when precise lookup will help later; never invent one.
+- Do not copy whole notes or the plot outline into the handoff.
 ```
 
 请求：
 
 ```json
-{"key":"计划/港口"}
+{"current":[{"text":"明天去港口，相关笔记：计划/港口。"}]}
 ```
 
 成功返回：
 
 ```json
-{"ok":true,"data":{"key":"计划/港口","archived":true}}
+{"ok":true,"data":{"saved_to_draft":true,"window":1,"chapters":[],"notice":"正文完成后与本回合统一提交。"}}
+```
+
+### `new_context`
+
+```text
+Switch to a fresh context window. Older messages and earlier tool calls leave the window; afterwards you continue the same turn, and the call budget does not reset.
+- When to switch: the runtime measures context usage for you, so do not estimate it yourself. Without a context notice, do not switch. A budget reminder means plan the switch, ideally at a natural break; a forced-rollover notice means switch now.
+- keep_recent sets how many recent messages stay. It is rounded up to whole user/assistant exchanges, and the current input always stays.
+- Every message that leaves must already be covered by a chapter. If it is, call with just keep_recent. Otherwise pass handoff with add operations for the missing part, leaving through empty. If all history stays, an empty handoff is fine.
+- Omitting handoff keeps the current one unchanged. When you pass it, chapters keep lasting events, relationship changes, promises, secrets and recurring people, items and places; current holds the scene, relationships, constraints, unresolved issues and tone. Do not copy whole notes or the plot outline.
+Call alone: a batch containing new_context is rejected and none of its tools run.
+```
+
+请求：
+
+```json
+{}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"saved_to_draft":true,"window":2,"chapters":[],"notice":"正文完成后与本回合统一提交。"}}
 ```
 
 ### `read_state`
@@ -339,26 +362,6 @@ Paths are relative to stat_data: /hp, not /stat_data/hp. Follow the latest <mvu_
 
 ```json
 {"ok":true,"data":{"saved_to_draft":true,"patch_state_completed":true,"notice":"已确认本轮变量无变化；未执行变量补丁或脚本回调。"}}
-```
-
-### `revise_content`
-
-```text
-Edit character settings and worldbook entries with semantic actions: set_character, add_lore, update_lore and remove_lore. Use these actions, not JSON Patch or storage IDs.
-Only for turns whose instructions authorize content edits; authorization from earlier turns does not carry over, and calls without it are REJECTED.
-Omitted properties stay unchanged, and a failed batch changes nothing. Success returns the final contents of each changed target, which count as current for later edits. Script-bearing targets and execution settings are protected.
-```
-
-请求：
-
-```json
-{"operations":[{"op":"set_character","field":"description","value":"新的角色描述。"}],"comment":"用户要求调整描述"}
-```
-
-成功返回：
-
-```json
-{"ok":true,"data":{"saved_to_draft":true,"added_refs":[],"characters":[{"ref":"description","text":"新的角色描述。"}],"entries":[],"removed_refs":[]}}
 ```
 
 ### `read_character`
@@ -505,6 +508,78 @@ Cancel an investigator and free its slot; delivered reports and history are kept
 {"ok":true,"data":{"ref":"R1","status":"destroyed"}}
 ```
 
+### `generate_speech`
+
+```text
+Arrange a character voice clip. Generation starts only after this story turn is committed. Text is used exactly as supplied, without comparison to the story.
+```
+
+请求：
+
+```json
+{"text":"明天在灯塔见。","speaker":"向导","voice":"marin","delivery":"轻声"}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"saved_to_draft":true,"message":"已登记；正文接受并提交后开始生成，可在回复下查看进度"}}
+```
+
+### `generate_image`
+
+```text
+Arrange one story illustration. Generation starts only after this story turn is committed. Quality and model are controlled by the user.
+```
+
+请求：
+
+```json
+{"prompt":"雨中的港口灯塔","references":["I1"],"size":"1536x1024"}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"saved_to_draft":true,"message":"已登记；正文接受并提交后开始生成，可在回复下查看进度"}}
+```
+
+### `view_image`
+
+```text
+View an authorized reference or a completed story image with your current model. Does not generate an image.
+```
+
+请求：
+
+```json
+{"ref":"I1"}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"ref":"I1","name":"人物参考","message":"原图将在本批工具结果后提供"}}
+```
+
+### `submit_story`
+
+```text
+Append a new story segment to this turn's draft. At most 3 successful submissions per turn; 1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. Ordinary assistant text is commentary. Tools may run before, between or after segments, including after the third. Check variables and notes against the entire story, then end normally; delivery does not commit the turn.
+```
+
+请求：
+
+```json
+{"content":"她在港口的灯塔下等你。"}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"saved_to_draft":true,"ref":"H2","message":"已接收第 1/3 段；可继续追加或结束。"}}
+```
+
 ### `present_ui`
 
 ```text
@@ -526,24 +601,6 @@ press is one action or a list of 1-3: setState {statePath:'/selection'|'/detail'
 
 ```json
 {"ok":true,"data":{"saved_to_draft":true,"message":"图形已接收，随本轮正文统一提交；界面操作仅改变本地显示或填写输入框。"}}
-```
-
-### `submit_story`
-
-```text
-Append a new story segment to this turn's draft. At most 3 successful submissions per turn; 1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. Ordinary assistant text is commentary. Tools may run before, between or after segments, including after the third. Check variables and notes against the entire story, then end normally; delivery does not commit the turn.
-```
-
-请求：
-
-```json
-{"content":"她在港口的灯塔下等你。"}
-```
-
-成功返回：
-
-```json
-{"ok":true,"data":{"saved_to_draft":true,"ref":"H2","message":"已接收第 1/3 段；可继续追加或结束。"}}
 ```
 
 ### 运行时追加的描述

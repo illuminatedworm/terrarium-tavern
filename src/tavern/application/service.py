@@ -19,6 +19,9 @@ class StoryService:
         self.japanese_dictionary = self.retrieval.dictionary
         self.context_operations = ContextOperations(store)
         self.story = StoryRuntime(store, self.retrieval, self.dependencies)
+        from tavern.media.service import MediaService
+
+        self.media = MediaService(store)
 
     async def edit_opening(self, sid, edit):
         from tavern.scripting.opening import prepare_opening
@@ -38,17 +41,23 @@ class StoryService:
         )
         return self.store.save_opening(session, greeting)
 
-    async def delete_session(self, sid):
-        for oid in list(self.context_operations.tasks):
-            if self.context_operations.get(oid)["session"] == sid:
-                await self.context_operations.cancel(oid)
-        turn_ids = self.store.session_turn_ids(sid)
-        for tid in turn_ids:
-            if tid in self.story.tasks:
-                await self.story.cancel(tid)
-                self.story.tasks.pop(tid, None)
-        async with self.dependencies.lock:
-            self.store.delete_session(sid)
+    async def delete_session(self, sid, *, advisor=None):
+        async with self.media.deleting_session(sid):
+            if advisor is not None:
+                await advisor.cancel_session(sid)
+            for job in self.story.novel.data.jobs(sid):
+                if job["status"] != "destroyed":
+                    await self.story.novel.destroy(job["id"])
+            for oid in list(self.context_operations.tasks):
+                if self.context_operations.get(oid)["session"] == sid:
+                    await self.context_operations.cancel(oid)
+            turn_ids = self.store.session_turn_ids(sid)
+            for tid in turn_ids:
+                if tid in self.story.tasks:
+                    await self.story.cancel(tid)
+                    self.story.tasks.pop(tid, None)
+            async with self.dependencies.lock:
+                self.store.delete_session(sid)
         self.store.prune_turn_runs(turn_ids)
 
     async def delete_card(self, cid):
@@ -71,6 +80,7 @@ class StoryService:
             return None
 
     async def close(self):
+        await self.media.close()
         self.japanese_dictionary.stop()
         await self.context_operations.close()
         await self.story.close()

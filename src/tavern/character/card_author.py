@@ -108,18 +108,16 @@ class CardAuthorService:
                 db.execute("UPDATE card_edit_runs SET status='running' WHERE id=?", (rid,))
             owner = owner or EditorRun(self, rid)
             owner.save()
-            from tavern.character.editor_images import request_preview
 
             def capture_request(payload):
-                # The HTTP body is unchanged; diagnostics must not persist a
-                # second copy of every image on every tool continuation.
+                stats = owner.context.image_stats()
                 self.edits.event(
                     rid,
                     "provider_request",
                     {
-                        **request_preview(payload),
-                        **owner.context.image_stats(),
-                        "image_payloads_omitted": bool(owner.context.image_stats()["image_count"]),
+                        **payload,
+                        **stats,
+                        "image_payloads_omitted": bool(stats["image_count"]),
                     },
                 )
 

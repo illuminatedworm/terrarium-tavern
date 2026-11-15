@@ -7,11 +7,21 @@ from tavern.core.context_usage import apply_usage, context_overflow, context_usa
 from tavern.scripting.native_response import attachment, portable
 from tavern.scripting.request_context import response_origin
 
+REPLAY_VERSION = 3
+
 
 def canonical(message):
     value = {
         key: copy.deepcopy(message[key])
-        for key in ("role", "content", "tool_calls", "tool_call_id", "name", "_tool_error")
+        for key in (
+            "role",
+            "content",
+            "tool_calls",
+            "tool_call_id",
+            "name",
+            "_tool_error",
+            "_media_image_refs",
+        )
         if message.get(key) is not None
     }
     value.setdefault("content", "")
@@ -70,6 +80,14 @@ def checkpoint_items(output):
     )
 
 
+def _without_legacy_tail(items, messages):
+    """Remove the plaintext suffix written by old rebuilds so its source can be replayed."""
+    from tavern.scripting.protocols import response_input
+
+    length = len(response_input(messages))
+    return items[:-length] if length else items
+
+
 def project_compact(result, state, settings, tools, fixed_count):
     complete = [canonical(portable(message)) for message in result["messages"]]
     header, body = complete[:fixed_count], complete[fixed_count:]
@@ -88,27 +106,27 @@ def project_compact(result, state, settings, tools, fixed_count):
     # worth compacting; its replacement needs no new token observation.
     stale = not usable and bool(checkpoint and checkpoint.get("items"))
     covered = len(checkpoint["covered"]) if usable else 0
-    messages = header + (
-        [opaque_message(checkpoint["items"], settings)] if usable and checkpoint.get("items") else []
-    )
-    # A short history can be ready without having crossed the server threshold.
-    if usable and not checkpoint.get("items"):
-        messages = header + body
-    else:
-        messages += body[covered:]
+    items = checkpoint["items"] if usable else []
+    if items and (compressed := checkpoint.get("compressed_count", covered)) < covered:
+        items = _without_legacy_tail(items, body[compressed:covered])
+        covered = compressed
+    if not items:
+        # A short history can be ready without crossing the server threshold.
+        covered = 0
+    messages = header + ([opaque_message(items, settings)] if items else []) + body[covered:]
     result.update(
         messages=messages,
         runtime_messages=copy.deepcopy(messages),
         context_strategy="openai_compact",
         compact_requires_rebuild=needs_rebuild,
         _compact_stale=stale,
-        compaction_opaque=bool(usable and checkpoint.get("items")),
+        compaction_opaque=bool(items),
         _compact_header=header,
         _compact_body=body,
         _compact_signature=signature,
-        _compact_covered=covered if usable and checkpoint.get("items") else 0,
+        _compact_covered=covered,
     )
-    if usable and checkpoint.get("items"):
+    if items:
         rows = result["trace"]
         result["trace"] = [
             *rows[:fixed_count],
@@ -175,21 +193,22 @@ async def rebuild(compiled, settings, provider, *, progress=None, save=None, for
     body, header = compiled["_compact_body"], compiled["_compact_header"]
     completed = compiled.get("_replay_complete", len(body))
     signature = compiled["_compact_signature"]
+    history = hashes(body)
     state = copy.deepcopy(progress or {})
     if (
-        state.get("version") != 2
+        state.get("version") not in (2, REPLAY_VERSION)
         or state.get("signature") != signature
         or state.get("origin") != response_origin(settings)
-        or state.get("history") != hashes(body)
+        or state.get("history") != history
         or state.get("starts") != compiled.get("_replay_starts")
         or state.get("limit") != compact_limit(settings)
         or state.get("completed") != completed
     ):
         state = {
-            "version": 2,
+            "version": REPLAY_VERSION,
             "signature": signature,
             "origin": response_origin(settings),
-            "history": hashes(body),
+            "history": history,
             "cursor": 0,
             "items": [],
             "batches": 0,
@@ -201,6 +220,12 @@ async def rebuild(compiled, settings, provider, *, progress=None, save=None, for
         }
     groups = replay_groups(body[:completed], compiled.get("_replay_starts"))
     position = state["cursor"]
+    processed = sum(len(group) for group in groups[:position])
+    compressed = state["compressed_count"]
+    if state["version"] == 2:
+        if state["items"]:
+            state["items"] = _without_legacy_tail(state["items"], body[compressed : state["processed"]])
+        state["version"] = REPLAY_VERSION
     requested = (
         force or compiled["_compact_stale"] or exceeds(compiled["context_usage"], compact_limit(settings))
     )
@@ -212,21 +237,11 @@ async def rebuild(compiled, settings, provider, *, progress=None, save=None, for
     size = len(groups)
     # The maintenance instruction is per-request instructions, never a story
     # message or a window policy injected into ordinary gameplay.
-    while position < len(groups):
-        prefix = (
-            [opaque_message(state["items"], settings)]
-            if state["items"]
-            else [m for g in groups[:position] for m in g]
-        )
-        if not requested:
-            # Plain source is already a valid representation; absence of an
-            # encrypted checkpoint is not a model task.
-            if state["items"]:
-                from tavern.scripting.protocols import response_input
-
-                state["items"].extend(response_input([m for g in groups[position:] for m in g]))
-            position = len(groups)
-            break
+    while requested and position < len(groups):
+        prefix = [opaque_message(state["items"], settings)] if state["items"] else []
+        # Plaintext stays in the canonical body. Its image references are
+        # materialized with the rest of the actual request, including on resume.
+        prefix.extend(body[compressed:processed])
         end = min(len(groups), position + size)
         while True:
             batch = [m for g in groups[position:end] for m in g]
@@ -253,38 +268,30 @@ async def rebuild(compiled, settings, provider, *, progress=None, save=None, for
         # Keep the compaction and model state; helper acknowledgement is not a
         # historical assistant turn. No generated content is added to the story.
         compacted = checkpoint_items(output)
+        processed += len(batch)
         if compacted:
             state["items"] = [item for item in compacted if item.get("type") != "message"]
-            state["compressed_count"] = sum(len(g) for g in groups[:end])
-        elif state["items"]:
-            # Without a new compaction the just-sent batch must remain visible.
-            from tavern.scripting.protocols import response_input
-
-            state["items"].extend(response_input(batch))
+            compressed = state["compressed_count"] = processed
         position = end
         state.update(
             cursor=position,
             batches=state["batches"] + 1,
-            processed=sum(len(g) for g in groups[:position]),
+            processed=processed,
             total=len(body),
         )
         state["usage"].append(copy.deepcopy(response.usage or {}))
         if save:
             await save(copy.deepcopy(state))
-    # The active user input/tool continuation has no final AI reply yet. Carry
-    # that entire unfinished exchange verbatim into the ordinary request.
-    if state["items"] and body[completed:]:
-        from tavern.scripting.protocols import response_input
-
-        state["items"].extend(response_input(body[completed:]))
-    state.update(cursor=position, processed=len(body), total=len(body))
+    # Expose every exchange after the last compaction, including unfinished
+    # input, as a source tail. A plain baseline can still recognize all history.
+    state.update(cursor=len(groups), processed=len(body), total=len(body))
     return {
         "version": 1,
         "origin": state["origin"],
         "signature": signature,
         "items": state["items"],
-        "covered": hashes(body),
-        "compressed_count": state.get("compressed_count", 0),
+        "covered": history[:compressed] if state["items"] else history,
+        "compressed_count": compressed,
     }, state
 
 

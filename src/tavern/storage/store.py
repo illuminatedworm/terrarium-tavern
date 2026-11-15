@@ -66,6 +66,10 @@ class Store(MessageAdapters):
         self.path = root / "tavern.sqlite3"
         initialize_database(self)
 
+    def notify_media(self, sid):
+        if listener := getattr(self, "media_listener", None):
+            listener(sid)
+
     @contextmanager
     def connection(self):
         db = sqlite3.connect(self.path, timeout=15)
@@ -379,10 +383,10 @@ class Store(MessageAdapters):
             temporary.write_text(dump(current), encoding="utf-8")
             temporary.replace(path)
 
-    def prune_card_assets(self, card, manifest):
+    def prune_card_assets(self, card, manifest, extra_blobs=()):
         from tavern.character.resources import prune_card_assets
 
-        prune_card_assets(self, card, manifest)
+        prune_card_assets(self, card, manifest, extra_blobs)
 
     def edit_card(self, card, document, expected_revision=None):
         from tavern.character.card_workflow import validate_document
@@ -427,6 +431,7 @@ class Store(MessageAdapters):
         return settings
 
     def session_settings(self, session, *, require_origin=True):
+        sid = session if isinstance(session, str) else session["id"]
         if isinstance(session, str):
             with self.connection() as db:
                 row = db.execute(
@@ -454,6 +459,9 @@ class Store(MessageAdapters):
             settings = select_runtime(settings, "story", selection, channel)
         if session["kemini"]:
             settings.kemini.enabled = True
+        from tavern.media.images import materialize
+
+        settings._image_loader = lambda messages: materialize(messages, self, sid)
         return settings
 
     @property
@@ -648,6 +656,9 @@ class Store(MessageAdapters):
             from tavern.novel.storage import fork as fork_novel
 
             fork_novel(db, sid, new_sid)
+            from tavern.media.storage import copy_media
+
+            copy_media(db, sid, new_sid, ids)
             # Prefix hashes need no message-ID remapping. Only matching content
             # boundaries will be replayed in the fork's actual request.
             db.execute(
@@ -672,6 +683,7 @@ class Store(MessageAdapters):
             ]
             result = dict(row)
             result["model_selection"] = json.loads(result["model_selection"])
+            result["media_config"] = json.loads(result["media_config"])
             result["persona_data"] = json.loads(result["persona_data"])
             result["disabled_tools"] = json.loads(result["disabled_tools"])
             result["tool_result_options"] = json.loads(result["tool_result_options"])
@@ -740,6 +752,9 @@ class Store(MessageAdapters):
         """Delete all database state owned by a session in one transaction."""
         with self.connection() as db:
             row = db.execute("SELECT card_data FROM sessions WHERE id=?", (sid,)).fetchone()
+            media_blobs = {
+                row[0] for row in db.execute("SELECT blob FROM media_assets WHERE session=?", (sid,))
+            }
         card = json.loads(row["card_data"]) if row and row["card_data"] else None
         manifest = self.card_manifest(card) if card else None
         with self.connection() as db:
@@ -748,7 +763,7 @@ class Store(MessageAdapters):
                 raise NotFound("会话不存在")
             delete_session_rows(db, "id=?", (sid,))
         if card:
-            self.prune_card_assets(card, manifest)
+            self.prune_card_assets(card, manifest, media_blobs)
 
     def prune_turn_runs(self, turn_ids):
         """Remove derived run diagnostics after the owning story is gone."""
@@ -1521,6 +1536,12 @@ class Store(MessageAdapters):
 
                 # A content-only version replays the request that produced its original.
                 copy_traces(db, turn["session"], {original: last}, new_story=False)
+                from tavern.media.storage import copy_media
+
+                copy_media(db, turn["session"], turn["session"], {original: last})
+            from tavern.media.storage import commit as commit_media
+
+            commit_media(db, turn["session"], last, pending.get("media"))
             db.execute(
                 "INSERT INTO changes VALUES (?,?,?,?,?,?)",
                 (
@@ -1540,6 +1561,7 @@ class Store(MessageAdapters):
                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
                 (tid, "committed", dump({"message_id": last}), time.time()),
             )
+        self.notify_media(turn["session"])
 
     def backup(self, target):
         with self.connection() as source, closing(sqlite3.connect(target)) as dest:

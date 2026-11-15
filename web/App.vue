@@ -38,6 +38,8 @@ import { dialogueLoreRecords, type LoreRecord } from './lib/loreRecords';
 import ContextPreview from './components/story/ContextPreview.vue';
 import StoryDialogue from './components/story/StoryDialogue.vue';
 import DialogueMessage from './components/story/DialogueMessage.vue';
+import { useStoryMedia } from './composables/useStoryMedia';
+import { storyMediaKey } from './lib/media';
 import InlineMessageEditor from './components/story/InlineMessageEditor.vue';
 import MessageOoc from './components/story/MessageOoc.vue';
 import ConversationRail from './components/story/ConversationRail.vue';
@@ -107,6 +109,7 @@ const SettingsPanel = defineAsyncComponent({
 const AdvisorPanel = defineAsyncComponent(() => import('./components/story/AdvisorPanel.vue'));
 const NovelPanel = defineAsyncComponent(() => import('./components/story/NovelPanel.vue'));
 const StoryTools = defineAsyncComponent(() => import('./components/story/StoryTools.vue'));
+const MediaSettings = defineAsyncComponent(() => import('./components/story/MediaSettings.vue'));
 const CacheBreakpointPanel = defineAsyncComponent(
   () => import('./components/story/CacheBreakpointPanel.vue'),
 );
@@ -179,6 +182,10 @@ watch(
   },
 );
 provide('context-operations', contextOps);
+provide(
+  storyMediaKey,
+  useStoryMedia(() => session.value?.id),
+);
 const settingsChannel = ref<Channel>();
 async function classifyChannel(channel: Channel) {
   const sid = session.value?.id;
@@ -559,6 +566,7 @@ const inspectorPages = computed(() => [
   { id: 'novel', label: '原著', icon: 'book' },
   { id: 'mvu', label: 'MVU 变量', icon: 'braces' },
   { id: 'scene', label: '场景', icon: 'map' },
+  { id: 'media', label: '配音与生图', icon: 'media' },
   { id: 'options', label: '会话设置', icon: 'sliders' },
 ]);
 // Mirrors the left rail: clicking the open page collapses, any other page opens there.
@@ -569,6 +577,11 @@ function openInspector(id: string) {
 function showInspector(id: string) {
   inspectorTab.value = id;
   if (layout.value.rightCollapsed) void toggleRightSidebar();
+}
+async function followToolSource(id: string) {
+  showInspector(id);
+  await nextTick();
+  document.getElementById(`inspector-tab-${id}`)?.focus();
 }
 // Once opened, the advisor chat stays mounted for this story so a running reply
 // survives switching to another inspector page.
@@ -634,12 +647,15 @@ watch(
 );
 // The inspector pages mount when first shown for a story and then stay mounted, so
 // collapsing the inspector or visiting the advisor keeps the card status panel alive
-// instead of rebuilding its frame on every reopen.
+// instead of rebuilding its frame on every reopen. The media page keeps its own draft and scroll.
 const inspectorSeen = ref('');
+const mediaSeen = ref('');
 watch(
   [() => layout.value.rightCollapsed, inspectorTab, () => session.value?.id],
   ([collapsed, tab, id]) => {
-    if (!collapsed && tab !== 'advisor' && id) inspectorSeen.value = id;
+    if (collapsed || !id) return;
+    if (tab === 'media') mediaSeen.value = id;
+    else if (tab !== 'advisor') inspectorSeen.value = id;
   },
   { immediate: true },
 );
@@ -3068,6 +3084,7 @@ useTimedError(error);
           <button
             v-for="page in inspectorPages"
             :key="page.id"
+            :id="`inspector-tab-${page.id}`"
             role="tab"
             class="rail-tab"
             :aria-selected="inspectorTab === page.id"
@@ -3113,9 +3130,22 @@ useTimedError(error);
           @use-input="useAdvisorInput"
           @title="applyAdvisorTitle"
         />
+        <div v-if="mediaSeen === session.id" v-show="inspectorTab === 'media'" class="inspector-content">
+          <MediaSettings
+            :key="session.id"
+            :session="session"
+            :disabled="storyLocked || previewMessagesBusy"
+            :provider-settings-open="panel === 'settings' && settingsInitialPage === 'shared.providers'"
+            @saved="applyFullSession"
+            @providers="
+              settingsInitialPage = 'shared.providers';
+              panel = 'settings';
+            "
+          />
+        </div>
         <div
           v-if="inspectorSeen === session.id"
-          v-show="inspectorTab !== 'advisor'"
+          v-show="inspectorTab !== 'advisor' && inspectorTab !== 'media'"
           class="inspector-content"
         >
           <CacheBreakpointPanel
@@ -3168,7 +3198,7 @@ useTimedError(error);
             :allow-content-edit="allowEdit"
             :unicode-story-enabled="settings?.shared.unicode_story_enabled ?? false"
             @saved="applyFullSession"
-            @navigate="showInspector"
+            @navigate="followToolSource"
             @settings="
               settingsInitialPage = 'shared.misc';
               panel = 'settings';

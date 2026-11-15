@@ -504,6 +504,7 @@ def adapt_messages(messages, settings, snapshot=None, *, managed=None):
 
 
 WIRE_FIELDS = {
+    "_media_image_refs",
     "role",
     "content",
     "tool_calls",
@@ -566,6 +567,9 @@ def project_context(context, settings, *, tools=None, managed=None):
 def provider_messages(provider, messages, settings):
     # ModelTransport owns the real SDK boundary. Test/injected providers are that boundary themselves.
     from tavern.scripting.model_transport import ModelTransport
+
+    if settings._image_loader:
+        messages = settings._image_loader(messages)
 
     if isinstance(provider, ModelTransport):
         # Subscription providers copy Settings for auth. Counting identity must

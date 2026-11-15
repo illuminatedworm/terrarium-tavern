@@ -30,7 +30,7 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 
 - 首页：[HomeView.vue](../../web/components/story/HomeView.vue)。
 - 侧栏列表：[SessionList.vue](../../web/components/story/SessionList.vue)、[CardList.vue](../../web/components/character/CardList.vue)、[WorldbookList.vue](../../web/components/character/WorldbookList.vue)、[CardConversationList.vue](../../web/components/character/CardConversationList.vue)；[阅读排版](../../web/components/settings/ReadingLayoutPanel.vue)。
-- 右侧栏：MVU 变量、场景与会话设置页（[MvuInspector.vue](../../web/components/story/MvuInspector.vue)、[SceneInspector.vue](../../web/components/story/SceneInspector.vue)、[SessionOptions.vue](../../web/components/story/SessionOptions.vue)；会话设置编辑本地草稿，保存后才写回）。
+- 右侧栏：MVU 变量、场景、配音与生图和会话设置页（[MvuInspector.vue](../../web/components/story/MvuInspector.vue)、[SceneInspector.vue](../../web/components/story/SceneInspector.vue)、[MediaSettings.vue](../../web/components/story/MediaSettings.vue)、[SessionOptions.vue](../../web/components/story/SessionOptions.vue)；媒体设置与会话设置各自编辑本地草稿，保存后才写回）。
 - 弹窗：变量与记忆、分支、删除角色卡和关于面板。
 
 故事 API 的响应类型集中在 [types.ts](../../web/lib/types.ts)。`components/` 按 `common`、`story`、`settings`、`character`、`records` 分类；`lib/` 保存请求与业务辅助逻辑，`composables/` 保存组合式函数。

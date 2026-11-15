@@ -63,6 +63,20 @@ def png_chunks(blob):
     raise ValueError("PNG 缺少结束标记")
 
 
+def strip_card_png_data(blob: bytes) -> bytes:
+    """Remove the embedded card and its resources while preserving the image chunks."""
+    if b"chara\0" not in blob and b"ccv3\0" not in blob and b"chara-ext-asset_:" not in blob:
+        return blob
+    chunks = [PNG]
+    for kind, data, raw in png_chunks(blob):
+        if kind in (b"tEXt", b"zTXt", b"iTXt"):
+            key = data.split(b"\0", 1)[0]
+            if key in (b"chara", b"ccv3") or key.startswith(b"chara-ext-asset_:"):
+                continue
+        chunks.append(raw)
+    return b"".join(chunks)
+
+
 def parse_card(blob: bytes):
     if len(blob) > MAX_BYTES:
         raise ValueError("角色卡超过 32 MB")

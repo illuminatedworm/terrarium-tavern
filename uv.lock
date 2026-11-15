@@ -2306,6 +2306,7 @@ dependencies = [
     { name = "sudachipy" },
     { name = "tiktoken" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -2355,6 +2356,7 @@ requires-dist = [
     { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32' and extra == 'retrieval'", specifier = "==2.11.0" },
     { name = "transformers", marker = "extra == 'retrieval'", specifier = ">=4.51,<5" },
     { name = "uvicorn", specifier = ">=0.34,<1" },
+    { name = "websockets", specifier = ">=15,<17" },
 ]
 provides-extras = ["retrieval"]
 

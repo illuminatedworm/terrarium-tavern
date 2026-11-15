@@ -310,6 +310,7 @@ class StoryRuntime:
                     "before": before,
                     "reason": "剧情回合提交",
                     "story_trace": agent.new_trace,
+                    "media": agent.media.saved(),
                 }
                 agent.preview.replace(text, breaks=raw_breaks)
                 finish_turn(self.store, tid, session, pending, snapshot)

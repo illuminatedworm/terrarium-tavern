@@ -14,6 +14,8 @@ from tavern.core.models import Settings
 from tavern.core.ooc import with_ooc
 from tavern.core.story_segments import MAX_SEGMENTS
 from tavern.core.tokens import count_text
+from tavern.media.config import SPECS as MEDIA_SPECS
+from tavern.media.config import MediaConfig, enabled_tools
 from tavern.novel.tools import MAIN_SPECS
 from tavern.scripting.runtime import RuntimeRollbackError
 from tavern.scripting.state_patch import InvalidStatePatch, InvalidStatePath, ProtectedStateField, stage
@@ -360,6 +362,7 @@ SPECS = {
 
 
 SPECS.update(MAIN_SPECS)
+SPECS.update(MEDIA_SPECS)
 SPECS["submit_story"] = (
     Story,
     f"Append a new story segment to this turn's draft. At most {MAX_SEGMENTS} successful submissions per turn; "
@@ -402,6 +405,8 @@ def tool_definitions(
         names.difference_update({"new_context", "write_handoff"})
     if not catalog:
         names.difference_update(session.get("disabled_tools", []))
+        names.difference_update(MEDIA_SPECS)
+        names.update(enabled_tools(MediaConfig.model_validate(session.get("media_config", {}))))
         # This capability has one player-facing switch, not two conflicting ones.
         if session.get("plot_enabled", False):
             names.add("write_plot")
@@ -546,6 +551,8 @@ class AgentTools:
             except ValidationError as error:
                 raise ToolArgumentError(name, model, error) from None
         state = owner.state
+        if name in MEDIA_SPECS:
+            return owner.media.execute(name, args)
         if name == "present_ui":
             if len(successful_specs(item["message"] for item in owner.new_trace)) >= 3:
                 raise ToolError("CONTENT_LIMIT", "本轮已接收三份图形；保留已有产物，完成正文后结束。")
@@ -623,6 +630,12 @@ class AgentTools:
                 self.read(row["text"], **({"ref": row["ref"], "role": row["role"]} if include else {}))
                 for row in rows[span[0] - 1 : span[1]]
             ]
+            if any(t["function"]["name"] in ("view_image", "generate_image") for t in owner.definitions):
+                sources = owner.source_history[span[0] - 1 : span[1]]
+                images = owner.media.historical_images([m["id"] for m in sources])
+                for item, source in zip(selected, sources, strict=True):
+                    if source["id"] in images:
+                        item["images"] = images[source["id"]]
             return {"messages": selected} if span[0] < span[1] else selected[0]
         if name in ("write_handoff", "new_context"):
             # Chapters and rollover use committed history; current may also

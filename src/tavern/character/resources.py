@@ -11,8 +11,9 @@ def references(card, manifest):
     return blobs, set(manifest.get("scripts", {}))
 
 
-def prune_card_assets(store, card, manifest):
+def prune_card_assets(store, card, manifest, extra_blobs=()):
     candidates, sources = references(card, manifest)
+    candidates.update(extra_blobs)
     path = store.card_manifest_path(card)
     if path.is_file():
         path.unlink()
@@ -36,6 +37,7 @@ def prune_card_assets(store, card, manifest):
             for row in db.execute("SELECT snapshot FROM card_edit_versions WHERE snapshot IS NOT NULL")
         )
         retained, retained_sources = set(), set()
+        retained.update(row[0] for row in db.execute("SELECT blob FROM media_assets"))
         for survivor in survivors:
             current_manifest = (
                 store.card_manifest(survivor) if survivor.get("id") or survivor.get("session_id") else {}

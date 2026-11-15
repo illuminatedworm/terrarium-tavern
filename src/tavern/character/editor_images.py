@@ -55,28 +55,6 @@ def image_stats(messages: list[dict]) -> dict:
     return {"image_count": count}
 
 
-def request_preview(value):
-    """Request diagnostics keep image positions/types without duplicating blobs."""
-    if isinstance(value, list):
-        return [request_preview(item) for item in value]
-    if not isinstance(value, dict):
-        return value
-    result = {key: request_preview(item) for key, item in value.items()}
-    kind = value.get("type")
-    omitted = "[图片二进制已省略，实际请求发送原图]"
-    if kind == "image_url" and isinstance(value.get("image_url"), dict):
-        result["image_url"]["url"] = omitted
-    elif kind == "input_image":
-        result["image_url"] = omitted
-    elif (
-        kind == "image" and isinstance(value.get("source"), dict) and value["source"].get("type") == "base64"
-    ):
-        result["source"]["data"] = omitted
-    if isinstance(value.get("inlineData"), dict):
-        result["inlineData"]["data"] = omitted
-    return result
-
-
 def materialize_images(messages: list[dict], store, wid: str, files: list[dict]) -> list[dict]:
     """Hydrate a request copy only, scoped to the run's already-sent attachments."""
     from tavern.character.editor_attachments import attachment_path

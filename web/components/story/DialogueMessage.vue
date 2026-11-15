@@ -3,6 +3,7 @@ import StoryMessage from './StoryMessage.vue';
 import CharacterPortrait from '../character/CharacterPortrait.vue';
 import InlineMessageEditor from './InlineMessageEditor.vue';
 import MessageOoc from './MessageOoc.vue';
+import MediaOutputs from './MediaOutputs.vue';
 import Icon from '../common/Icon.vue';
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { copyableText } from '../../lib/storyPresentation';
@@ -146,6 +147,11 @@ function forwardAction(
           @action="forwardAction"
         />
         <MessageOoc v-if="message.ooc" :text="message.ooc" />
+        <MediaOutputs
+          v-if="message.role === 'assistant'"
+          :key="session.id + ':' + message.id"
+          :message-id="message.id"
+        />
       </template>
       <button
         v-if="panelElsewhere && editingMessageId !== message.id"

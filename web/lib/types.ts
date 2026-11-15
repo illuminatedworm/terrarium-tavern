@@ -134,6 +134,7 @@ export interface TurnRecord {
 
 /** `Store.session()`: one opened story with its current branch. */
 export interface Session {
+  media_config: import('./media').MediaConfig;
   novel_enabled?: boolean;
   novel_active?: number;
   id: string;

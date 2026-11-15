@@ -55,6 +55,7 @@ class Settings(BaseModel):
     _settings_source: Any = PrivateAttr(default=None)
     _settings_channel: str = PrivateAttr(default="standard")
     _adapter_loader: Any = PrivateAttr(default=None)
+    _image_loader: Any = PrivateAttr(default=None)
     _context_meter: Any = PrivateAttr(default=None)
     _context_generation: str = PrivateAttr(default="")
     _data_root: Any = PrivateAttr(default=None)

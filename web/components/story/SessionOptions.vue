@@ -115,7 +115,7 @@ const advanced = ref(false);
 
     <section class="options-section" aria-labelledby="options-advanced">
       <button class="options-advanced" :aria-expanded="advanced" @click="advanced = !advanced">
-        <h3 id="options-advanced"><span>06</span>高级</h3>
+        <h3 id="options-advanced"><span>05</span>高级</h3>
         <small>消息适配 · 导出请求</small>
         <Icon :name="advanced ? 'chevron-up' : 'chevron-down'" :size="16" />
       </button>

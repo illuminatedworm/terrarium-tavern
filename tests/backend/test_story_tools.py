@@ -31,6 +31,458 @@ from tests.backend.test_story import Model, current_text, handoff, runtime, turn
 story = test_story.story
 
 
+def media_story(store, session):
+    from tavern.media.config import MediaConfig
+    from tavern.media.storage import save_config
+
+    settings = store.settings()
+    settings.providers[0].api_key = "media-fixture-key"
+    store.save_settings(settings)
+    config = MediaConfig()
+    config.speech.enabled = config.image.enabled = config.view_images = True
+    config.speech.provider_id = config.image.provider_id = settings.providers[0].id
+    config.image.quality = "low"
+    save_config(store, session["id"], session["revision"], config)
+    return store.session(session["id"])
+
+
+async def test_media_intents_commit_with_review_and_keep_original_parameters(story):
+    """Rejected drafts must not create paid work or overwrite the saved speaker table."""
+    from tavern.media.storage import config, jobs, save_config
+
+    store, session = story
+    session = media_story(store, session)
+    with store.connection() as db:
+        db.execute("UPDATE sessions SET policy='review' WHERE id=?", (session["id"],))
+    session = store.session(session["id"])
+    service = runtime(store)
+    spoken = "  单独交给配音的文本。\n保留尾部空白  "
+
+    class ReviewScript(test_story.Script):
+        async def call(self, method, *args):
+            if method == "process" and args[1]:
+                self.mirror["state"]["stat_data"] = {"energy": 3}
+            return await super().call(method, *args)
+
+    class ReviewHost(test_story.ScriptHost):
+        async def open(self, document, history, snapshot, *args, **kwargs):
+            return ReviewScript(history, snapshot)
+
+    service.story.runtime = ReviewHost()
+
+    def model():
+        return Model(
+            ("generate_speech", {"text": spoken, "speaker": "艾琳", "voice": "marin", "delivery": "轻声"}),
+            ("generate_image", {"prompt": "雨中的灯塔", "size": "1536x1024"}),
+            ("read_state", {}),
+            (
+                "patch_state",
+                {"operations": [{"op": "add", "path": "/energy", "value": 3}], "comment": "体力变化"},
+            ),
+            "正文独立交付。",
+        )
+
+    try:
+        rejected, _ = await turn(
+            service, session, model(), update_variables=True, operation_id="media-reject"
+        )
+        assert rejected["status"] == "awaiting_review", rejected["error"]
+        with store.connection() as db:
+            assert db.execute("SELECT count(*) FROM media_jobs").fetchone()[0] == 0
+        assert config(store, session["id"]).voices == {}
+        store.review_turn(rejected["id"], False)
+        accepted, _ = await turn(
+            service, session, model(), update_variables=True, operation_id="media-accept"
+        )
+        assert accepted["status"] == "awaiting_review", accepted["error"]
+        pending = accepted["pending"]
+        store.review_turn(accepted["id"], True)
+        store.commit_turn(accepted["id"], pending)
+        current = store.session(session["id"])
+        tasks = jobs(store, session["id"], [current["head"]])
+        assert len(tasks) == 2 and {job["status"] for job in tasks} == {"queued"}
+        assert tasks[0]["request"]["text"] == spoken
+        assert current["messages"][-1]["raw"] == "正文独立交付。"
+        assert config(store, session["id"]).voices == {"艾琳": "marin"}
+        edited = config(store, session["id"])
+        edited.image.quality = "high"
+        save_config(store, session["id"], current["revision"], edited)
+        assert jobs(store, session["id"], [current["head"]])[1]["request"]["connection"]["quality"] == "low"
+    finally:
+        await service.close()
+
+
+async def test_media_recovery_and_manual_operations_do_not_duplicate_paid_work(story, monkeypatch):
+    """An uncertain request never auto-replays; duplicate manual operations share one intent."""
+    import wave
+
+    from tavern.media import storage
+    from tavern.media.providers import ADAPTERS, MediaResult
+    from tavern.media.service import MediaService
+
+    store, session = story
+    session = media_story(store, session)
+    config = storage.config(store, session["id"])
+    config.voices["艾琳"] = "marin"
+    storage.save_config(store, session["id"], session["revision"], config)
+    request = {
+        "connection": storage.connection_snapshot(store.settings(), config.speech),
+        "text": "请留下。",
+        "speaker": "艾琳",
+        "voice": "marin",
+        "delivery": "平静",
+    }
+    with store.connection() as db:
+        identity = storage.create_job(db, session["id"], session["head"], "speech", request)
+        db.execute("UPDATE media_jobs SET status='running' WHERE id=?", (identity,))
+    restarted = MediaService(store)
+    await restarted.start()
+    assert storage.job(store, session["id"], identity)["status"] == "interrupted"
+    await restarted.close()
+    calls = []
+    output = io.BytesIO()
+    with wave.open(output, "wb") as audio:
+        audio.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
+        audio.writeframes(b"\0\0" * 64)
+
+    class Adapter:
+        async def generate(self, payload, **kwargs):
+            calls.append(payload)
+            if len(calls) > 1:
+                raise ConnectionError("响应丢失")
+            return MediaResult(output.getvalue(), "audio/wav")
+
+    monkeypatch.setitem(ADAPTERS, "openai_realtime", Adapter())
+    worker = MediaService(store)
+
+    async def execute(jid):
+        with store.connection() as db:
+            db.execute("UPDATE media_jobs SET status='running' WHERE id=?", (jid,))
+            row = dict(db.execute("SELECT * FROM media_jobs WHERE id=?", (jid,)).fetchone())
+        await worker.run(row)
+
+    try:
+        first = storage.retry(store, session["id"], identity, operation_id="retry-one")
+        assert storage.retry(store, session["id"], identity, operation_id="retry-one")["id"] == first["id"]
+        await execute(first["id"])
+        original = storage.job(store, session["id"], identity)
+        assert original["status"] == "completed" and len(calls) == 1
+        config.voices["艾琳"] = "cedar"
+        storage.save_config(store, session["id"], store.session(session["id"])["revision"], config)
+        redo = storage.retry(store, session["id"], identity, regenerate=True, operation_id="redo-one")
+        assert (
+            storage.retry(store, session["id"], identity, regenerate=True, operation_id="redo-one")["id"]
+            == redo["id"]
+        )
+        assert redo["request"]["voice"] == "cedar" and original["request"]["voice"] == "marin"
+        await execute(redo["id"])
+        assert storage.job(store, session["id"], redo["id"])["status"] == "failed"
+        assert storage.job(store, session["id"], identity)["output"] == original["output"]
+        assert len(calls) == 2
+    finally:
+        await worker.close()
+
+
+def queue_media_images(store, session, *prompts):
+    from tavern.media import storage
+
+    sid = session["id"]
+    connection = storage.connection_snapshot(store.settings(), storage.config(store, sid).image)
+    with store.connection() as db:
+        return [
+            storage.create_job(
+                db, sid, session["head"], "image", {"connection": connection, "prompt": prompt}
+            )
+            for prompt in prompts
+        ]
+
+
+async def test_media_delete_prevents_claims_until_the_story_is_removed(story, monkeypatch):
+    from tavern.media import storage
+    from tavern.media.providers import ADAPTERS
+
+    store, session = story
+    session = media_story(store, session)
+    other = media_story(store, store.new_session(SessionCreate(card_id=session["card"])))
+    _, _, queued = queue_media_images(store, session, "first", "second", "queued")
+    queue_media_images(store, other, "other")
+    two_started, other_started = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    class Adapter:
+        async def generate(self, payload, **kwargs):
+            calls.append(payload["prompt"])
+            if len(calls) == 2:
+                two_started.set()
+            if payload["prompt"] == "other":
+                other_started.set()
+            await asyncio.Future()
+
+    monkeypatch.setitem(ADAPTERS, "openai_images", Adapter())
+    service = runtime(store)
+    deleting = None
+    try:
+        await service.media.start()
+        await asyncio.wait_for(two_started.wait(), timeout=1)
+        # Hold the final deletion so the dispatcher has a chance to claim both
+        # the soon-to-be-deleted job and an unrelated job.
+        async with service.dependencies.lock:
+            deleting = asyncio.create_task(service.delete_session(session["id"]))
+            await asyncio.wait_for(other_started.wait(), timeout=1)
+            assert storage.job(store, session["id"], queued)["status"] == "queued"
+        await deleting
+        assert "queued" not in calls
+    finally:
+        if deleting:
+            await asyncio.gather(deleting, return_exceptions=True)
+        await service.close()
+
+
+async def test_media_cancel_before_workers_start_frees_the_queue(story, monkeypatch):
+    from tavern.media import storage
+    from tavern.media.providers import ADAPTERS
+    from tavern.media.service import MediaService
+
+    store, session = story
+    session = media_story(store, session)
+    sid = session["id"]
+    first, second, _ = queue_media_images(store, session, "first", "second", "next")
+    next_started, calls = asyncio.Event(), []
+
+    class Adapter:
+        async def generate(self, payload, **kwargs):
+            calls.append(payload["prompt"])
+            next_started.set()
+            await asyncio.Future()
+
+    monkeypatch.setitem(ADAPTERS, "openai_images", Adapter())
+    worker = MediaService(store)
+    try:
+        await worker.start()
+        # This task runs after the dispatcher claims jobs and before the
+        # worker tasks it schedules get their first instructions.
+        await asyncio.create_task(worker.cancel_running(sid))
+        assert [storage.job(store, sid, jid)["status"] for jid in (first, second)] == ["cancelled"] * 2
+        await asyncio.wait_for(next_started.wait(), timeout=1)
+        assert calls == ["next"]
+    finally:
+        await worker.close()
+
+
+def test_media_retry_checks_the_switch_under_the_enqueue_lock(story, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
+    from threading import Event
+
+    from tavern.media import storage
+
+    store, session = story
+    session = media_story(store, session)
+    sid = session["id"]
+    (jid,) = queue_media_images(store, session, "retry")
+    with store.connection() as db:
+        db.execute("UPDATE media_jobs SET status='failed' WHERE id=?", (jid,))
+    config = storage.config(store, sid)
+    config.image.enabled = False
+    enqueuing = Event()
+    connection = store.connection
+
+    @contextmanager
+    def observe_enqueue():
+        with connection() as db:
+            db.set_trace_callback(lambda sql: enqueuing.set() if sql == "BEGIN IMMEDIATE" else None)
+            yield db
+
+    monkeypatch.setattr(store, "connection", observe_enqueue)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with connection() as db:
+            db.execute("UPDATE sessions SET media_config=? WHERE id=?", (config.model_dump_json(), sid))
+            retry = pool.submit(storage.retry, store, sid, jid, operation_id="disabled-retry")
+            assert enqueuing.wait(timeout=1)
+        with pytest.raises(ValueError, match="请先开启"):
+            retry.result(timeout=1)
+    assert storage.job(store, sid, jid)["status"] == "failed"
+
+
+async def test_media_card_reference_sends_only_the_image_without_logging_its_bytes(story):
+    import base64
+    import hashlib
+
+    import httpx
+    from fastapi import FastAPI
+    from PIL import Image
+
+    from tavern.character.cards import export_card
+    from tavern.core.message_adapter import provider_messages
+    from tavern.media.api import register_routes
+    from tavern.media.providers import reference_bytes
+    from tavern.media.service import MediaService
+    from tavern.media.storage import assets
+    from tavern.scripting.model_transport import ModelTransport
+    from tests.backend.test_image_protocols import response
+
+    store, _ = story
+    image = io.BytesIO()
+    Image.new("RGBA", (2, 2), (20, 40, 60, 120)).save(image, format="PNG")
+    cover = image.getvalue()
+    raw, _, _ = export_card({"name": "Card", "description": "Private card text"}, "png", cover, {})
+    card = store.import_card(raw)
+    session = store.new_session(SessionCreate(card_id=card["id"]))
+    sid = session["id"]
+
+    app = FastAPI()
+    register_routes(app, MediaService(store))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        catalog = (await client.get(f"/api/sessions/{sid}/media")).json()
+        chosen = await client.post(
+            f"/api/sessions/{sid}/media/card-reference",
+            json={
+                "expected_revision": session["revision"],
+                "key": catalog["card_images"][0],
+                "name": "Cover",
+            },
+        )
+        chosen.raise_for_status()
+    (asset,) = assets(store, sid)
+    assert asset["blob"] == hashlib.sha256(cover).hexdigest()
+    # An existing asset or imported package can still point to the card blob.
+    with store.connection() as db:
+        db.execute(
+            "UPDATE media_assets SET blob=?,size=? WHERE id=?", (card["original"], len(raw), asset["id"])
+        )
+    assert reference_bytes(store, sid, {"references": [asset["id"]]}) == [(cover, "image/png")]
+
+    wire, records = [], []
+    cfg = store.session_settings(session).model_copy(
+        update={"model": "fixture", "api_mode": "chat_completions", "model_request_mode": "non_stream"}
+    )
+
+    def send(request):
+        wire.append(json.loads(request.content))
+        return response("chat_completions", False)
+
+    http = AsyncClient(transport=httpx.MockTransport(send), trust_env=False)
+    provider = ModelTransport(cfg, "fixture-key", records.append, http_client=http)
+    try:
+        history = [{"role": "user", "content": "Reference cover", "_media_image_refs": [f"I{asset['ref']}"]}]
+        await provider.chat_complete(provider_messages(provider, history, cfg))
+    finally:
+        await provider.close()
+    url = wire[0]["messages"][0]["content"][1]["image_url"]["url"]
+    assert base64.b64decode(url.split(",", 1)[1]) == cover
+    logged = json.dumps(records[0], ensure_ascii=False)
+    assert url not in logged and "图片二进制已省略" in logged and "Reference cover" in logged
+
+
+async def test_story_image_views_survive_resume_fork_transfer_and_owner_deletion(story):
+    """A viewed image must keep its bytes and ownership through replay and copying."""
+    import base64
+
+    from PIL import Image
+
+    from tavern.conversation.compaction import canonical
+    from tavern.core.tokens import request_tokens
+    from tavern.media.images import materialize
+    from tavern.media.providers import MediaResult
+    from tavern.media.storage import add_asset, assets, config, connection_snapshot, create_job
+    from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
+    from tavern.story.context import load_trace
+
+    store, session = story
+    session = media_story(store, session)
+    image = io.BytesIO()
+    Image.new("RGB", (2, 2), "blue").save(image, format="PNG")
+    with store.connection() as db:
+        asset_id = add_asset(
+            store,
+            db,
+            session["id"],
+            data=image.getvalue(),
+            kind="image",
+            mime="image/png",
+            name="人物参考",
+            selected=True,
+        )
+    asset = assets(store, session["id"])[0]
+    service = runtime(store)
+    try:
+        failed_model = Model(("view_image", {"ref": "I1"}), ValueError("模型连接中断"))
+        failed, current = await turn(service, session, failed_model, operation_id="image-read")
+        assert failed["status"] == "error"
+        images = [
+            part
+            for message in failed_model.requests[-1]["messages"]
+            if isinstance(message.get("content"), list)
+            for part in message["content"]
+            if part.get("type") == "image_url"
+        ]
+        assert len(images) == 1
+        assert base64.b64decode(images[0]["image_url"]["url"].split(",", 1)[1]) == image.getvalue()
+        resumed_model = Model("看过参考图后的正文。")
+        result, current = await turn(
+            service, current, resumed_model, resume_turn_id=failed["id"], operation_id="image-resume"
+        )
+        assert result["status"] == "committed", result["error"]
+        sent = json.dumps(resumed_model.requests, ensure_ascii=False)
+        assert asset_id not in sent and asset["blob"] not in sent
+        with store.connection() as db:
+            generated = create_job(
+                db,
+                current["id"],
+                current["head"],
+                "image",
+                {
+                    "connection": connection_snapshot(store.settings(), config(store, current["id"]).image),
+                    "prompt": "人物在灯塔前",
+                    "size": "1024x1024",
+                    "references": [asset_id],
+                    "reference_names": [{"ref": "I1", "name": "人物参考"}],
+                },
+            )
+            db.execute("UPDATE media_jobs SET status='running' WHERE id=?", (generated,))
+            generated_row = dict(db.execute("SELECT * FROM media_jobs WHERE id=?", (generated,)).fetchone())
+        service.media.finish(generated_row, MediaResult(image.getvalue(), "image/png"))
+        with store.connection() as db:
+            former = add_asset(
+                store,
+                db,
+                current["id"],
+                data=image.getvalue(),
+                kind="image",
+                mime="image/png",
+                name="曾选入目录的参考图",
+                selected=True,
+            )
+        result, current = await turn(service, current, Model("继续这段故事。"), operation_id="image-catalog")
+        assert result["status"] == "committed", result["error"]
+        with store.connection() as db:
+            db.execute("UPDATE media_assets SET selected=0 WHERE id=?", (former,))
+        fork = store.fork_session(current["id"], current["head"], current["revision"])
+        assert {a["ref"] for a in assets(store, fork["id"])} == {1, 2, 3}
+        package, blobs = read_package(
+            export_package(store, ExportSelection(settings=False, sessions=[fork["id"]])), store
+        )
+        imported_id = import_package(store, package, blobs)["sessions"][0]
+        imported = store.session(imported_id)
+        frames = [
+            canonical(item["message"])
+            for item in load_trace(store, imported_id, imported["messages"])
+            if item["message"].get("_media_image_refs")
+        ]
+        assert len(frames) == 1 and frames[0]["_media_image_refs"] == ["I1"]
+        hydrated = materialize(frames, store, imported_id)
+        assert request_tokens(frames) == request_tokens(hydrated)
+        assert hydrated[0]["content"][1]["image_url"]["url"] == images[0]["image_url"]["url"]
+        path = store.root / "blobs" / asset["blob"]
+        store.delete_session(current["id"])
+        store.delete_session(fork["id"])
+        assert path.is_file()
+        store.delete_session(imported_id)
+        assert not path.exists()
+    finally:
+        await service.close()
+
+
 async def test_novel_research_isolates_reads_and_delivers_cross_turn_once(story):
     """A late read-only report must not leak its reading context or rewrite a committed turn."""
     from tavern.novel.source import import_file

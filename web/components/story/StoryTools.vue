@@ -71,6 +71,10 @@ const groups: Array<{ label: string; tools: Record<string, string> }> = [
       destroy_novel_research: '销毁调查者',
     },
   },
+  {
+    label: '配音与图片',
+    tools: { generate_speech: '角色配音', generate_image: '生成插图', view_image: '查看图片' },
+  },
   { label: '正文与图形', tools: { submit_story: '提交正文', present_ui: '交互图形' } },
 ];
 const grouped = computed(() => {
@@ -92,6 +96,7 @@ const grouped = computed(() => {
 const enabledCount = computed(() => tools.value.filter((tool) => tool.enabled).length);
 const unauthorized = computed(() => tools.value.filter((tool) => tool.enabled && !tool.available).length);
 const controlSource: Record<string, { label: string; page?: string }> = {
+  media: { label: '由右侧“配音与生图”控制', page: 'media' },
   plot_enabled: { label: '由场景页“剧情规划”控制', page: 'scene' },
   novel_enabled: { label: '由原著页授权控制', page: 'novel' },
   story_protocol: { label: '始终启用' },

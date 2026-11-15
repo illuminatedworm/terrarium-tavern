@@ -33,6 +33,7 @@ from tavern.scripting.cloud_cache import (
 from tavern.scripting.failure_debug import FailureDebug
 from tavern.scripting.genai_transport import GenAITransport
 from tavern.scripting.http_errors import response_error, upstream_message
+from tavern.scripting.image_content import request_preview
 from tavern.scripting.model_stream import StreamState
 from tavern.scripting.native_response import (
     attachment,
@@ -555,13 +556,14 @@ class ModelTransport(BaseLLMProvider):
         if not self.capture:
             return
         cfg = self.settings
-        wire_messages = body.get("messages", body.get("input", body.get("contents", [])))
+        wire = request_preview(body)
+        wire_messages = wire.get("messages", wire.get("input", wire.get("contents", [])))
         payload = {
             "model": cfg.model,
             "api_mode": cfg.api_mode,
             "url": url,
             "messages": wire_messages,
-            "wire": copy.deepcopy(body),
+            "wire": wire,
             "cache": diagnostic,
             "tools": [t.get("function", t).get("name") for t in definitions(tools)],
             "tools_sha256": fingerprint(definitions(tools)),

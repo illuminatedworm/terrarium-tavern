@@ -75,6 +75,7 @@ def cancel_producers(app):
     Desktop and Android hosts share this list so a new task owner reaches both.
     """
     service = app.state.service
+    service.media.stop()
     service.japanese_dictionary.stop()
     service.story.novel.closed = True
     service.story.novel.notify()
@@ -108,6 +109,7 @@ def create_app(data_dir=None):
     @asynccontextmanager
     async def lifespan(app):
         store.recover()
+        await service.media.start()
 
         async def maintain():
             from tavern.storage.maintenance import cleanup
@@ -144,6 +146,9 @@ def create_app(data_dir=None):
     from tavern.advisor.api import register_routes as register_advisor_routes
 
     register_advisor_routes(app, advisor)
+    from tavern.media.api import register_routes as register_media_routes
+
+    register_media_routes(app, service.media)
     from tavern.novel.api import register_routes as register_novel_routes
 
     register_novel_routes(app, service.story.novel, service.story)
@@ -644,11 +649,7 @@ def create_app(data_dir=None):
 
     @app.delete("/api/sessions/{sid}")
     async def delete_session(sid: str):
-        await advisor.cancel_session(sid)
-        for job in service.story.novel.data.jobs(sid):
-            if job["status"] != "destroyed":
-                await service.story.novel.destroy(job["id"])
-        await service.delete_session(sid)
+        await service.delete_session(sid, advisor=advisor)
         return {"deleted": sid}
 
     @app.get("/api/sessions/{sid}/branches")

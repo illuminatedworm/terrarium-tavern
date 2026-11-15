@@ -9,6 +9,7 @@ import pytest
 
 from tavern.core.model_view import ModelView
 from tavern.core.models import Settings, TurnRequest
+from tavern.media.config import SPECS as MEDIA_SPECS
 from tavern.novel.tools import MAIN_SPECS
 from tavern.story.agent import StoryAgent
 from tavern.story.protocol import success
@@ -26,7 +27,9 @@ def test_generated_documents_and_catalog_match_source():
     assert set(re.findall(r"^\| `([a-z_]+)` \|", table, re.M)) == set(SPECS)
 
 
-@pytest.mark.parametrize("name", [name for name in SPECS if name not in MAIN_SPECS])
+@pytest.mark.parametrize(
+    "name", [name for name in SPECS if name not in MAIN_SPECS and name not in MEDIA_SPECS]
+)
 async def test_documented_minimal_results_match_execution(name):
     settings = Settings()
     state = new_state()

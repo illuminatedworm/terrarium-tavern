@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tavern.core.settings import SettingsDocument, migrate_settings
+from tavern.media.config import MediaConfig
 from tavern.storage.legacy_lore import upgrade_stored_lore_purposes
 from tavern.storage.legacy_story import (
     discard_unsupported_stories,
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 SETTINGS_VERSIONS = range(2, 23)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
@@ -43,6 +44,8 @@ SESSION_COLUMNS = {
     # Old stories have no durable first-request fact; never infer it from prunable logs.
     "opening_locked": "INTEGER NOT NULL DEFAULT 1",
     "unicode_story": "INTEGER NOT NULL DEFAULT 0",
+    "media_config": "TEXT NOT NULL DEFAULT '" + MediaConfig().model_dump_json().replace("'", "''") + "'",
+    "media_sequence": "INTEGER NOT NULL DEFAULT 0",
 }
 MESSAGE_COLUMNS = {
     "auxiliary": "TEXT NOT NULL DEFAULT '[]'",
@@ -222,6 +225,7 @@ def _initialize_feature_tables(store: "Store") -> None:
     # These modules import Store helpers, so load them only after Store is defined.
     from tavern.advisor.storage import initialize as initialize_advisor
     from tavern.character.card_author_store import initialize_editor_tables
+    from tavern.media.storage import initialize as initialize_media
     from tavern.novel.storage import initialize as initialize_novel
     from tavern.storage.worldbooks import initialize as initialize_worldbooks
 
@@ -229,6 +233,7 @@ def _initialize_feature_tables(store: "Store") -> None:
     initialize_advisor(store)
     initialize_novel(store)
     initialize_worldbooks(store)
+    initialize_media(store)
 
 
 def _migrate_data(db: sqlite3.Connection, previous_schema: int) -> None:

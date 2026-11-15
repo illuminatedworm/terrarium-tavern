@@ -7,6 +7,7 @@ from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tavern.core.tokens import count_text
+from tavern.media.config import SPECS as MEDIA_SPECS
 from tavern.novel.tools import MAIN_SPECS
 from tavern.storage.store import Conflict, dump
 from tavern.story.activity import compact, message_items, part_page, turn_items
@@ -93,7 +94,9 @@ def register_story_routes(app, store, context_operations=None):
                 {
                     **t["function"],
                     "enabled": (
-                        True
+                        t["function"]["name"] in defined_tools
+                        if t["function"]["name"] in MEDIA_SPECS
+                        else True
                         if t["function"]["name"] == "submit_story"
                         else session["plot_enabled"]
                         if t["function"]["name"] == "write_plot"
@@ -102,6 +105,7 @@ def register_story_routes(app, store, context_operations=None):
                         else t["function"]["name"] not in session["disabled_tools"]
                     ),
                     **({"controlled_by": "plot_enabled"} if t["function"]["name"] == "write_plot" else {}),
+                    **({"controlled_by": "media"} if t["function"]["name"] in MEDIA_SPECS else {}),
                     **(
                         {"controlled_by": "story_protocol"} if t["function"]["name"] == "submit_story" else {}
                     ),
@@ -133,6 +137,8 @@ def register_story_routes(app, store, context_operations=None):
             raise ValueError("submit_story 是本轮正文交付工具，不能关闭")
         if set(edit.disabled_tools) & MAIN_SPECS.keys():
             raise ValueError("原著调查工具由原著面板的授权开关统一控制")
+        if set(edit.disabled_tools) & MEDIA_SPECS.keys():
+            raise ValueError("媒体工具由会话设置的配音与生图开关统一控制")
         options = (
             session["tool_result_options"] if edit.tool_result_options is None else edit.tool_result_options
         )
