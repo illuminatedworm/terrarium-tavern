@@ -10,7 +10,7 @@ import jsonpointer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from tavern.character.card_workflow import validate_document, validation_report
-from tavern.character.cards import diagnose, lore_title, normalize
+from tavern.character.cards import card_view, diagnose, lore_title, normalize
 from tavern.character.editor_config import FIELD_PURPOSES, blank_card
 from tavern.character.editor_files import read_document, read_text_file
 from tavern.character.editor_images import IMAGE_FORMATS
@@ -43,6 +43,10 @@ class Overview(Arguments):
     card_ref: str | None = Field(
         default=None,
         description="C handle to inspect in detail; omit to list all cards attached to this conversation.",
+    )
+    path: str | None = Field(
+        default=None,
+        description="Optional JSON Pointer within the given card_ref, e.g. /data/extensions. Lists immediate child paths and types, without reading their values.",
     )
 
 
@@ -94,7 +98,7 @@ class Read(Card):
     )
     path: str = Field(
         default="",
-        description="JSON Pointer from the complete document root. Empty reads the entire card; wrapped cards use /data/description. Escape ~ as ~0 and / as ~1 in keys.",
+        description="JSON Pointer from the document root. Select the specific field or entry needed, e.g. /data/character_book/entries/2. Empty reads the entire card. Escape ~ as ~0 and / as ~1 in keys.",
     )
 
 
@@ -133,7 +137,7 @@ class Patch(Card):
     operations: list[Operation] = Field(
         min_length=1,
         max_length=100,
-        description="1–100 JSON Patch operations applied atomically. Read current affected fields first; preserve unrelated fields and extensions.",
+        description="1–100 JSON Patch operations applied atomically. Read existing values before modifying them. Adding a missing object key or appending with /- needs no parent read.",
     )
     comment: str = Field(
         min_length=1, max_length=2000, description="Brief user-facing comment about this operation."
@@ -330,15 +334,15 @@ SPECS = {
     ),
     "overview": (
         Overview,
-        "Inspect attached cards or the structure of one card. Returns current C handles, data root, field purposes/types/sizes, and worldbook paths. No library search.",
+        "Locate fields by card and path. Shows top-level metadata or immediate child paths with path specified. Use search_entries to locate relevant worldbook entries.",
     ),
     "read_field": (
         Read,
-        "Read a complete current field, entry, extension, script or whole card. A read makes that subtree available for edits; source is never paginated or truncated.",
+        "Read the complete field, entry or script at a specific path. Select the smallest relevant subtree with overview or search_entries first. Reserve whole-card and whole-collection reads for tasks that need all of their contents.",
     ),
     "search_entries": (
         Search,
-        "Locate worldbook entries by literal words. Previews are only navigation; read_field returns full entries before editing.",
+        "Search titles, keys and contents locally before reading worldbook text. Returns matching paths, titles, content lengths and navigation previews. Read the relevant originals by path.",
     ),
     "create_draft": (
         Create,
@@ -350,7 +354,7 @@ SPECS = {
     ),
     "patch_draft": (
         Patch,
-        "Apply a batch to the specified current draft; a reference is promoted without changing its C handle. Read affected values first. Paths start at the document root (/data/... for wrapped cards). Write display regex to extensions.regex_scripts, with findRegex, replaceString, placement:[2], markdownOnly:true, promptOnly:false; read references/regex-display.md for the full contract. For worldbook entry purpose, extensions.terrarium.purpose accepts narrative or mvu_rules. New lore entries omit IDs; hidden fields are preserved by Runtime. A failed batch changes nothing.",
+        "Apply an atomic batch to the current draft. Read existing values before changing them. Add missing keys or append at /- without reading the whole parent. Use replace to change an existing key. Paths start at the document root (/data/... for wrapped cards). Write display regex to extensions.regex_scripts, with findRegex, replaceString, placement:[2], markdownOnly:true, promptOnly:false; read references/regex-display.md for the full contract. For worldbook entry purpose, extensions.terrarium.purpose accepts narrative or mvu_rules. New lore entries omit IDs; hidden fields are preserved by Runtime.",
     ),
     "revert_draft": (
         Revert,
@@ -474,7 +478,7 @@ class EditorTools(PersonaTools):
         result = []
         for item in items:
             document = item["document"]
-            data = normalize(document)
+            data = card_view(document)
             prefix = "/data" if document.get("spec") else ""
             row = {
                 "ref": item["ref"],
@@ -509,10 +513,12 @@ class EditorTools(PersonaTools):
             raise ValueError("需要本对话中正确角色的有效 H 引用")
         return message
 
-    def require_read(self, ref, path):
+    def require_read(self, ref, path, *, document=None):
         if self.owner.legacy:
             return
-        if not known(self.owner.reads, ref, self.card(ref)["document"], path):
+        if document is None:
+            document = self.card(ref)["document"]
+        if not known(self.owner.reads, ref, document, path):
             raise ValueError(
                 f"修改前请先完整读取 {ref} 的 {path or '根对象'}；当前上下文中没有该字段有效的完整版本，请用 read_field 读取 current。"
             )
@@ -542,7 +548,35 @@ class EditorTools(PersonaTools):
         return self.view.expose(result)
 
     async def overview_call(self, args):
-        return self.overview(args.card_ref)
+        if args.path is None:
+            return self.overview(args.card_ref)
+        if args.card_ref is None:
+            raise ValueError("查看字段路径时请提供卡片编号")
+        pointer = self.view.pointer(args.path, restore=True)
+        if any(hidden_field(part) for part in jsonpointer.JsonPointer(pointer).parts):
+            raise ValueError("该字段由程序维护，无需读取或回写")
+        result = {"card_ref": args.card_ref, "path": args.path, "metadata_only": True}
+        try:
+            value = jsonpointer.resolve_pointer(self.card(args.card_ref)["document"], pointer)
+        except jsonpointer.JsonPointerException:
+            return {**result, "exists": False}
+        children = (
+            value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else ()
+        )
+        result.update(exists=True, type=type(value).__name__, fields=[])
+        for key, child in children:
+            if hidden_field(str(key)):
+                continue
+            field = {
+                "path": self.view.pointer(pointer + "/" + jsonpointer.escape(str(key))),
+                "type": type(child).__name__,
+            }
+            if isinstance(child, str):
+                field["chars"] = len(child)
+            if isinstance(child, dict) and isinstance(child.get("scriptName"), str):
+                field["name"] = child["scriptName"]
+            result["fields"].append(field)
+        return result
 
     async def web_search(self, args):
         # Sources in prior tool results may contain reversible opaque-token handles.
@@ -593,7 +627,12 @@ class EditorTools(PersonaTools):
             if args.version == "saved"
             else item["document"]
         )
-        value = self.view.expose(jsonpointer.resolve_pointer(document, pointer))
+        try:
+            source = jsonpointer.resolve_pointer(document, pointer)
+        except jsonpointer.JsonPointerException:
+            # jsonpointer's missing-key error can include the entire parent object.
+            raise ValueError(f"字段路径 {args.path} 不存在，请用 overview 核对") from None
+        value = self.view.expose(source)
         if args.version == "current":
             remember(self.owner.reads, args.card_ref, document, pointer)
         return {
@@ -605,7 +644,7 @@ class EditorTools(PersonaTools):
 
     async def search_entries(self, args):
         document = self.card(args.card_ref)["document"]
-        entries = (normalize(document).get("character_book") or {}).get("entries", [])
+        entries = (card_view(document).get("character_book") or {}).get("entries", [])
         rows = entries.items() if isinstance(entries, dict) else enumerate(entries)
         prefix = "/data" if document.get("spec") else ""
         terms = args.query.casefold().split()
@@ -615,6 +654,7 @@ class EditorTools(PersonaTools):
                     prefix + "/character_book/entries/" + str(key).replace("~", "~0").replace("/", "~1")
                 ),
                 "title": lore_title(entry),
+                "content_chars": len(entry.get("content", "")),
                 "preview": self.view.text(entry.get("content", ""))[:180],
             }
             for key, entry in rows
@@ -713,12 +753,28 @@ class EditorTools(PersonaTools):
     async def patch_draft(self, args):
         item = self.card(args.card_ref)
         operations = [op.model_dump(by_alias=True, exclude_unset=True) for op in args.operations]
-        for op in operations:
-            pointer = self.view.pointer(op["path"], restore=True)
-            self.require_read(args.card_ref, pointer.rpartition("/")[0] if op["op"] == "add" else pointer)
+
+        def check(document, op):
             if "from" in op:
-                self.require_read(args.card_ref, self.view.pointer(op["from"], restore=True))
-        changed = self.view.patch(item["document"], operations)
+                self.require_read(args.card_ref, op["from"])
+            path = op["path"]
+            if op["op"] == "add" and path:
+                parent_path, _, key = path.rpartition("/")
+                parent = jsonpointer.resolve_pointer(document, parent_path, default=None)
+                # Check the live patch copy: earlier operations can move a different
+                # value into this path before the add is applied.
+                if isinstance(parent, dict):
+                    if jsonpointer.unescape(key) in parent:
+                        self.require_read(args.card_ref, path, document=document)
+                    return
+                if isinstance(parent, list) and key == "-":
+                    return
+                if not isinstance(parent, (dict, list)):
+                    raise ValueError("add 的父路径须为对象或数组；请先创建缺失的父字段")
+                path = parent_path
+            self.require_read(args.card_ref, path)
+
+        changed = self.view.patch(item["document"], operations, check=None if self.owner.legacy else check)
         (validate_worldbook_document if is_worldbook(item) else validate_document)(changed)
         after_patch(
             self.owner.reads, args.card_ref, item["document"], changed, self.view.operations(operations)

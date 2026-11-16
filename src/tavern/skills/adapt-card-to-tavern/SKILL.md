@@ -19,12 +19,12 @@ description: 按 Terrarium Tavern 的卡片格式和游玩规则适配角色卡�
 
 ## 步骤
 
-1. **读取**：先 `overview`，再完整读取角色字段、世界书、全部开场、示例、正则与脚本。资料很多时逐个读完必要字段，先完成一个一致的子集，未完成项留到下一轮。
+1. **定位与读取**：从草稿概览和用户点名的内容开始。用 `search_entries` 在世界书中搜索相关名称、标记和用语（如 `HTML`、`[InitVar]`、`mvu_rules`、状态栏），再按路径完整读取命中的相关条目。用 `overview` 的 `path` 查扩展结构，只读取相关正则或脚本。需要检查的角色字段、开场和示例同样按字段读取。整卡适配也按实际要处理的来源分批核对，先完成一个一致的子集，再继续剩余部分。
 2. **盘点三项要素**：分别记下初值、变量规则、展示正则现在在哪、是否标准、缺什么。
 3. **初始化**：标准来源原位保留（`references/workflow.md`）；非标准来源按 `runtime-guide.md` 的“非标准初始化”改成标准形式并提醒用户。
-4. **变量规则**：用 `patch_draft` 为每个条目标记用途。混合条目拆分：原条目保留叙事，新规则条目省略 ID；需要 `split_from` 时只用读取工具给出的短编号，程序恢复真实关联。按“规则条目要求”确保有有效的 `mvu_rules` 条目，并按“局部更新语义”为每个值写清何时变化、何时保持旧值。
+4. **变量规则**：用 `patch_draft` 标记本次处理的规则条目，叙事条目沿用已有用途或默认的 `narrative`。混合条目拆分时保留原条目的叙事，新规则条目省略 ID；需要 `split_from` 时只用读取工具给出的短编号，程序恢复真实关联。按“规则条目要求”确保有有效的 `mvu_rules` 条目，并按“局部更新语义”为每个值写清何时变化、何时保持旧值。
 5. **改写输出要求**：检查角色字段、`system_prompt`、`post_history_instructions`、示例和常驻条目，删除或改写要求游玩模型在正文中输出变量块或状态栏的指令。
-6. **展示正则**：已有的展示和隐藏正则全部保留并逐条核对；正文状态栏按 `references/status-display.md` 迁移；没有展示时按 `references/regex-display.md` 新建。
+6. **展示正则**：保留已有的展示和隐藏正则，核对与本次改动有关的匹配范围与顺序。正文状态栏按 `references/status-display.md` 迁移，缺少展示时按 `references/regex-display.md` 新建。
 7. **开场**：叙事不改，不调用 `set_opening`，以下两种情况除外：改写非标准初始化时只改其中的初始化数据；用户明确要求迁移正文状态栏时，按 `references/status-display.md` 处理可见示范。
 8. **脚本**：schema 注册、校验与更新回调、宏和资源原样保留。不猜测复杂动态脚本产生的初值，也不把 arbitrary JavaScript 改写为初始化数据。无法可靠迁移的逻辑保留原状，列为人工核对项。ST-Prompt-Template 语法按 `references/prompt-template.md` 改写，并标明可靠性。
 9. **验证**：`validate_draft` 并修复可确定的问题；对每个受影响的开场运行 `test_draft`，按 `references/regex-display.md` 提供 `display_assertions` 与 `state_patch`。核对返回的实际状态，工具无异常不等于语义正确。

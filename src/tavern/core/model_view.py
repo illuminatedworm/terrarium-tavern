@@ -147,7 +147,7 @@ class ModelView:
             for raw in operations
         ]
 
-    def patch(self, document, operations):
+    def patch(self, document, operations, *, check=None):
         """Apply to the original, preserving fields the model was never shown.
 
         JSON Pointers may contain dictionary keys exposed as handles; translate
@@ -163,6 +163,8 @@ class ModelView:
                 hidden_field(part) for part in jsonpointer.JsonPointer(operation["from"]).parts
             ):
                 raise ValueError("模型不能读取或复制内部哈希")
+            if check is not None:
+                check(result, operation)
             op = copy.deepcopy(operation)
             if op.get("op") in ("add", "replace") and "value" in op:
                 old = jsonpointer.resolve_pointer(result, path, default=None)

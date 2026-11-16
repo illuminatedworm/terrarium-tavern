@@ -21,12 +21,12 @@
 | `read_document` | `path`、可选 `offset=0`（转换后 Markdown 的 Unicode 字符位置，0-based）、`limit=12000`（1–30000 字符）；DOCX/XLSX 离线转换，返回 `format/markdown/offset/returned_chars/total_chars/has_more/next_offset/limitations` |
 | `web_search` | `query`、可选 `limit`（1–10，默认 5）及 `objective`；本地限制来源数量，每条摘要最多 2,000 字符，URL／标题／摘要合计最多 20,000 字符，并标记省略。官方自动模式改为服务端原生搜索，详见[联网协议](web-tools.md) |
 | `read_webpage` | `url`、可选 `offset=0`（Unicode 字符）、`limit=12000`（1–30000）、`service`；返回提取文本片段和续读位置。续读沿用实际服务，上游截断明确标记，不把片段当作全文，详见[联网协议](web-tools.md) |
-| `overview` | 可选 `card_ref`；查看当前目录或指定卡的根路径、格式、字段用途/类型/大小 |
-| `read_field` | `card_ref`、JSON Pointer `path`；空路径读整卡。`version=current/round_start/saved` 分别读取当前、任务开始前或书架基准，始终返回完整原文 |
-| `search_entries` | `card_ref`、`query`；空查询列出全部。提供标题、定位路径及明确标识的摘要，修改前读取全文 |
+| `overview` | 可选 `card_ref`；查看当前目录或指定卡的根路径、格式、字段用途、类型和大小。提供卡片编号和 `path` 时，返回该路径是否存在、字段类型和直接子路径，正则规则另附名称 |
+| `read_field` | `card_ref`、JSON Pointer `path`，优先选择任务所需字段或条目。空路径读整卡。`version=current/round_start/saved` 分别读取当前、任务开始前或书架基准，始终返回所选原文全文 |
+| `search_entries` | `card_ref`、`query`，空查询列出全部。提供标题、定位路径、正文字数（Unicode 字符）及明确标识的摘要，可按路径读取相关原文 |
 | `create_draft` | `name`、可选 `fields`、`source_ref`、`proposal_ref`、`confirmation_ref`；明确直接制作或机械复制使用 `direct_instruction=true`。`fields` 可一次写入 description、personality、scenario、first_mes、alternate_greetings、mes_example、system_prompt、post_history_instructions、creator_notes、tags 的完整正文，省略项留空或沿用来源卡；世界书条目随后用 `patch_draft` 追加。返回新引用与校验结果；复制来源卡或未传 `fields` 时附完整初始文档，避免回传模型刚写入的正文 |
 | `set_portrait` | `card_ref`、`file_ref`（本对话图片附件的 F 编号，null 移除）；仅在用户表示该图用作头像时调用。JPEG/WebP 转为 PNG，草稿成为标准 PNG 卡容器，保存时写入书架；CHARX 卡不支持 |
-| `patch_draft` | `card_ref`、`operations`、`comment`；严格 JSON Patch，一批 1–100 项原子应用 |
+| `patch_draft` | `card_ref`、`operations`、`comment`，严格 JSON Patch，一批 1–100 项原子应用。新增缺失键或用 `/-` 追加数组项可直接提交，覆盖已有值须有目标的有效完整读取 |
 | `set_text_field` | `card_ref`、`path`、完整 `text`、`comment`；替换单个已有字符串字段，空文本清空；由程序生成补丁，沿用读取、投影和文档校验 |
 | `revert_draft` | `card_ref`、`comment`；程序恢复本轮开始前的整张卡，新创建的卡则从本轮移除，其他卡保持不变 |
 | `set_opening` | `card_ref`、`action=update/add/remove/move`、必填 `index`；N 个开场时新增接受 0–N，其余接受 0–N−1，均含两端。新增/修改须传完整 `narrative`；移动须传 0-based 的 `to_index`（0–N−1，移动后的位置），其余操作省略 |

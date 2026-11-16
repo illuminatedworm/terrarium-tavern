@@ -241,8 +241,8 @@ class EditorContext:
             self.update(
                 "overview",
                 value,
-                "当前草稿概览（取代此前概览；removed 引用已移除；updated 字段的旧读取可能失效，"
-                "修改前须有当前版本的完整读取，必要时用 read_field 重新读取；空字段路径表示整张卡）：",
+                "当前草稿概览（取代此前概览；removed 引用已移除；updated 字段的旧读取可能失效。"
+                "先用 overview 或 search_entries 定位，再用 read_field 完整读取相关字段或条目）：",
                 content=content,
             )
         # UI selection grants use of this exact snapshot, not write permission

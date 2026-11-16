@@ -92,13 +92,26 @@ async def test_text_field_rejects_unread_nontext_missing_hidden_and_stale_values
 
 async def test_removing_read_array_element_does_not_authorize_unseen_successor():
     tools, item = tools_for()
-    await read(tools, "/character_book/entries/0")
+    path = "/character_book/entries/0"
+    await read(tools, path)
+    original = copy.deepcopy(item["document"])
+    remove = {"op": "remove", "path": path}
+    with pytest.raises(ValueError, match="完整读取"):
+        await tools.execute(
+            "patch_draft",
+            {
+                "card_ref": "C1",
+                "comment": "删除后误覆盖未读条目",
+                "operations": [remove, {"op": "add", "path": path + "/extensions", "value": {}}],
+            },
+        )
+    assert item["document"] == original
     await tools.execute(
         "patch_draft",
         {
             "card_ref": "C1",
             "comment": "删除已读条目",
-            "operations": [{"op": "remove", "path": "/character_book/entries/0"}],
+            "operations": [remove],
         },
     )
     assert item["document"]["character_book"]["entries"][0]["comment"] == "变量规则"

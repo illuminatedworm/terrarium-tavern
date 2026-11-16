@@ -13,8 +13,8 @@
 
 ## 写入卡片字段
 
-1. 完整读取当前 `extensions`。
-2. 用 `patch_draft` 写入 `extensions.regex_scripts`（包装卡 `/data/extensions/regex_scripts`，旧卡 `/extensions/regex_scripts`）：数组已存在时用 `/-` 追加；缺数组时先添加数组，缺 `extensions` 时先建父对象。原有规则和未知扩展保持不变，无需生成脚本 ID。
+1. 用 `overview` 查看 `extensions.regex_scripts` 的路径、类型及规则名称（包装卡 `/data/extensions/regex_scripts`，旧卡 `/extensions/regex_scripts`）。需要核对或修改已有规则时，按索引完整读取相关规则。
+2. 用 `patch_draft` 写入 `extensions.regex_scripts`。数组已存在时用 `/-` 追加，缺数组时添加数组，缺 `extensions` 时先创建父对象。这些新增操作可直接提交。修改已有规则时用已完整读取的具体路径。
 3. 原卡用于隐藏开场或历史数据块的规则保留，可以放在展示挂载规则之前。展示规则可能有多条（不同面板、开场与后续回复、深度条件），新增规则不替换已有规则，逐条核对命中与顺序。
 
 以下是最小可运行规则，演示读取有来源的 Money 初值。实际制作要保留原卡的样式、布局和所有已映射字段：
@@ -56,7 +56,7 @@
 
 ## 验证闭环
 
-1. 回读完整 `regex_scripts`，运行 `validate_draft`，修复字段别名、类型和通道提示。
+1. 按具体路径回读新增和改动的规则，运行 `validate_draft`，修复字段别名、类型和通道提示。
 2. 对每个开场运行 `test_draft`，带一段纯叙事 `samples`：确认展示规则不影响模型和用户通道，原有隐藏规则继续剥离数据，`output_display` 包含前端。有隐藏规则时，`output_model` 与原始开场不同是正常的。无正则时结果为 skipped，只有转换结果时为 observed，二者都不代表前端已通过。
 3. 提供 `display_assertions` 验证真实 DOM，再提供 `state_patch` 与 `after_text` 验证更新后重新绘制。`sample_index=0` 是所选开场，1..N 是 samples。示例假设初值 Money=0：
 

@@ -200,7 +200,10 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
     store = Store(tmp_path)
     original = card()
     opaque_id = "50b3f562-051d-47f9-bfcc-e4c3e7076573"
-    original["character_book"]["entries"][0]["id"] = opaque_id
+    source_entry = original["character_book"]["entries"][0]
+    source_entry["id"] = opaque_id
+    source_entry["content"] += "\n" + "布局占位 " * 40 + "相关原文尾部"
+    original["extensions"]["unknown"] = "无关扩展原文"
     original["alternate_greetings"] = [OPENING.replace("08:20", "19:40").replace("12", "35")]
     source = store.import_card(dump(original).encode())
     editor = CardAuthorService(store)
@@ -209,7 +212,11 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
     model = ToolLLM(
         [
             ("read_skill", {"resource": "references/status-display.md"}),
-            ("read_field", {"card_ref": "C1", "path": ""}),
+            ("search_entries", {"card_ref": "C1", "query": "状态栏"}),
+            ("read_field", {"card_ref": "C1", "path": "/character_book/entries/0"}),
+            ("read_field", {"card_ref": "C1", "path": "/first_mes"}),
+            ("read_field", {"card_ref": "C1", "path": "/alternate_greetings"}),
+            ("overview", {"card_ref": "C1", "path": "/extensions/regex_scripts"}),
             ("validate_draft", {"card_ref": "C1"}),
             (
                 "patch_draft",
@@ -217,11 +224,19 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
                     "card_ref": "C1",
                     "comment": "迁移正文状态栏",
                     "operations": [
-                        {"op": "replace", "path": "/character_book/entries/0/content", "value": RULE},
+                        {
+                            "op": "replace",
+                            "path": "/character_book/entries/0/content",
+                            "value": "旅店接待过路的旅客。",
+                        },
                         {
                             "op": "add",
-                            "path": "/character_book/entries/0/extensions",
-                            "value": {"terrarium": {"purpose": "mvu_rules"}},
+                            "path": "/character_book/entries/-",
+                            "value": {
+                                "comment": "营业收入",
+                                "content": RULE,
+                                "extensions": {"terrarium": {"purpose": "mvu_rules"}},
+                            },
                         },
                         {
                             "op": "add",
@@ -240,6 +255,7 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
                     ],
                 },
             ),
+            ("overview", {"card_ref": "C1", "path": "/extensions/regex_scripts"}),
             *[
                 (
                     "set_opening",
@@ -262,11 +278,23 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
         model_wire = dump(model.call_log[-1])
         assert "世界书第 1 条" in model_wire and "初始化来源" in model_wire
         assert opaque_id not in model_wire
+        assert original["extensions"]["unknown"] not in model_wire
+        assert original["character_book"]["entries"][1]["content"] not in model_wire
+        outputs = [json.loads(m["content"]) for m in model.call_log[-1] if m["role"] == "tool"]
+        hit = next(result["entries"][0] for result in outputs if result.get("preview_only"))
+        assert hit["path"] == "/character_book/entries/0" and "相关原文尾部" not in hit["preview"]
+        selected = next(result for result in outputs if result.get("path") == hit["path"])
+        assert json.loads(selected["text"])["content"] == source_entry["content"]
+        before, after = (result for result in outputs if result.get("metadata_only"))
+        assert not before["exists"]
+        assert after["fields"] == [
+            {"path": "/extensions/regex_scripts/0", "type": "dict", "name": "隐藏初始化"}
+        ]
         item = editor.edits.conversation(wid)["cards"][0]
         document = item["document"]
         assert item["validation"]["warnings"] == []
         assert store.card(source["id"])["document"] == original
-        assert document["extensions"]["unknown"] == "preserved"
+        assert document["extensions"]["unknown"] == original["extensions"]["unknown"]
         assert document["character_book"]["entries"][0]["id"] == opaque_id
         assert document["description"] == original["description"]
         assert document["character_book"]["entries"][1] == original["character_book"]["entries"][1]
