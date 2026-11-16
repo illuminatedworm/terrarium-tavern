@@ -161,7 +161,7 @@ EXAMPLES = {
         {"investigators": [], "slots_remaining": MAX_LIVING, "starts_remaining_this_turn": MAX_STARTS},
     ),
     "message_novel_research": (
-        {"ref": "R1", "message": "请注明原著时期"},
+        {"ref": "R1", "message": "请注明资料适用的年代"},
         {"ref": "R1", "status": "running"},
     ),
     "wait_novel_research": ({"ref": "R1", "timeout_seconds": 30}, {"ref": "R1", "status": "completed"}),
@@ -188,7 +188,7 @@ def descriptions():
         "<details>",
         "<summary>查看工具描述原文与 JSON 示例</summary>",
         "",
-        "工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。原著调查示例要求绑定文件并开启参考；媒体示例要求开启对应功能、配置 API Key 连接，并已选择人物参考图 I1。异步状态以实际任务为准。参数与错误恢复见[完整协议](story-tools.md)。",
+        "工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。资料调查示例要求开启调查者并配置可用来源；媒体示例要求开启对应功能、配置 API Key 连接，并已选择人物参考图 I1。异步状态以实际任务为准。参数与错误恢复见[完整协议](story-tools.md)。",
         "",
     ]
     assert set(EXAMPLES) == set(SPECS)

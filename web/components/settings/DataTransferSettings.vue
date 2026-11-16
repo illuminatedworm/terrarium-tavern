@@ -247,7 +247,7 @@ onMounted(refresh);
           v-model="includeNovelFiles"
           type="checkbox"
           :disabled="!!busy"
-        />包含所选对话的原著参考文件及历史版本（关闭后，导入时会显示文件缺失）</label
+        />包含所选对话的参考文件及历史版本（关闭后，导入时会显示文件缺失）</label
       >
       <label class="transfer-choice transfer-secrets"
         ><input v-model="includeKeys" type="checkbox" :disabled="!!busy || !settings" />包含 API

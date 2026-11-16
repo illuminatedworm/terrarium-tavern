@@ -13,14 +13,14 @@ class Start(Arguments):
     question: str = Field(
         min_length=1,
         max_length=8000,
-        description="One specific, self-contained question about the novel: who or what (with names and aliases as "
-        "written in the novel), which part of the book if known, and what kind of answer you need.",
+        description="One specific, self-contained research question relevant to the story. Include known names, aliases, "
+        "the relevant place, time, or source version, and the kind of answer you need.",
     )
     background: str = Field(
         default="",
         max_length=16000,
-        description="Only the story background the investigator needs, such as where this story stands relative to "
-        "the novel and how it differs. Do not paste the whole context or cite H/L/R references and notes; the "
+        description="Only the story background needed to judge relevance, such as the current scene or how this story "
+        "differs from the reference material. Do not paste the whole context or cite H/L/R references and notes; the "
         "investigator cannot see them.",
     )
     auto_destroy: bool = Field(
@@ -113,7 +113,7 @@ class Ask(Arguments):
 MAIN_SPECS = {
     "start_novel_research": (
         Start,
-        "Delegate a question about the user's novel to a new read-only investigator. Returns an R reference "
+        "Delegate a question about reference material to a new read-only investigator. Returns an R reference "
         "immediately; the investigator runs in the background and can continue across turns. It cannot see your "
         "context, so write a self-contained question and pass only the background it needs. Limits: 3 investigators "
         "per branch until destroyed, 5 starts per story turn; destroying or regenerating does not return a start.",
@@ -151,7 +151,7 @@ MAIN_SPECS = {
 READ_SPECS = {
     "novel_outline": (
         Outline,
-        "List chapter headings in N1, detected by heading format. Detection may miss headings; search and range "
+        "List headings in reference file N1, detected by heading format. Detection may miss headings; search and range "
         "reading work without them.",
     ),
     "search_novel": (
@@ -167,7 +167,6 @@ READ_SPECS = {
 }
 
 WORKER_SPECS = {
-    **READ_SPECS,
     "ask_delegator": (
         Ask,
         "Ask the delegator a necessary question and pause until it answers. It may not reply for a long time; if you "

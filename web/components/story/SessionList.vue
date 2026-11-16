@@ -99,7 +99,7 @@ function open(event: MouseEvent, item: SessionSummary) {
             }}<small
               >{{ new Date(s.created * 1000).toLocaleDateString('zh-CN') }} · {{ s.persona }} ·
               {{ channelLabels[s.channel_origin as Channel] || '渠道待确认'
-              }}{{ investigators[s.id] ? ` · 原著调查者 ${investigators[s.id]}` : '' }}</small
+              }}{{ investigators[s.id] ? ` · 资料调查者 ${investigators[s.id]}` : '' }}</small
             ></span
           ></button
         ><span class="row-actions"

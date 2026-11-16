@@ -1,1 +1,1 @@
-"""Opt-in, branch-owned original-novel research, isolated from story generation."""
+"""Opt-in, branch-owned reference research, isolated from story generation."""

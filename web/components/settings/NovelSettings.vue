@@ -51,7 +51,7 @@ function follow(value: boolean) {
         :providers="channelProviders(providers, channel)"
         role="novel_research"
         :channel="channel"
-        label="用户指定的原著调查模型"
+        label="用户指定的资料调查模型"
         :effort-options="effortOptions"
         :flush="flush"
         @checked="$emit('checked')"
@@ -70,7 +70,7 @@ function follow(value: boolean) {
       }}。设置与「游玩 → 模型与生成 → 普通 API → 消息适配」共用新建对话默认值，撤回本页也会撤回这份设置。
     </p>
     <p class="muted">
-      调查者不能选择或更换模型。配置在创建时固定，修改只影响新建调查者；旧调查的实际模型在原著面板显示。
+      调查者不能选择或更换模型。配置在创建时固定，修改只影响新建调查者；旧调查的实际模型在「调查」页显示。
     </p>
     <fieldset>
       <legend>每个调查者的独立额度</legend>

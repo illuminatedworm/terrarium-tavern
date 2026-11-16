@@ -16,8 +16,10 @@ from tavern.storage.store import dump, uid
 class Authorization(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     expected_revision: int = Field(ge=0)
-    enabled: bool = False
+    enabled: bool | None = None
     unbind: bool = False
+    web_enabled: bool | None = None
+    web_guidance: str | None = None
 
 
 class AdvisorAuthorization(BaseModel):
@@ -42,10 +44,10 @@ def register_routes(app, service, main_runtime):
         encoding: str = Query("utf-8"),
     ):
         if request.headers.get("content-type", "").split(";", 1)[0] != "application/octet-stream":
-            raise HTTPException(415, "原著上传需要 application/octet-stream 原始文件")
+            raise HTTPException(415, "参考文件上传需要 application/octet-stream 原始文件")
         length = request.headers.get("content-length")
         if length is not None and (not length.isdecimal() or int(length) > MAX_BYTES):
-            raise ValueError("原著文件长度无效或超过 64 MiB")
+            raise ValueError("参考文件长度无效或超过 64 MiB")
         with store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             data.editable(db, sid, expected_revision)
@@ -57,7 +59,7 @@ def register_routes(app, service, main_runtime):
                 async for chunk in request.stream():
                     size += len(chunk)
                     if size > MAX_BYTES:
-                        raise ValueError("原著文件不能超过 64 MiB")
+                        raise ValueError("参考文件不能超过 64 MiB")
                     incoming.write(chunk)
                 incoming.seek(0)
 
@@ -77,17 +79,20 @@ def register_routes(app, service, main_runtime):
     def check_source(sid):
         binding = data.binding(sid)
         if not binding["source"]:
-            raise ValueError("请先导入原著文件")
+            raise ValueError("请先导入参考文件")
         NovelText(store.root, data.source(binding["source"]))
 
     @app.patch("/api/sessions/{sid}/novel")
     async def authorize(sid: str, payload: Authorization):
-        if payload.unbind and payload.enabled:
-            raise ValueError("解绑和开启不能同时进行")
-        if payload.enabled:
-            check_source(sid)
-        data.configure(sid, payload.expected_revision, enabled=payload.enabled, unbind=payload.unbind)
-        service.notify()
+        paused = data.configure(
+            sid,
+            payload.expected_revision,
+            enabled=payload.enabled,
+            unbind=payload.unbind,
+            web_enabled=payload.web_enabled,
+            web_guidance=payload.web_guidance,
+        )
+        await service.cancel_paused(paused)
         return service.public(sid)
 
     @app.patch("/api/sessions/{sid}/novel/advisor")
@@ -103,7 +108,7 @@ def register_routes(app, service, main_runtime):
             if not db.execute(
                 "SELECT 1 FROM novel_source_history WHERE session=? AND source=?", (sid, source_id)
             ).fetchone():
-                raise ValueError("此文件不属于当前对话的原著历史")
+                raise ValueError("此文件不属于当前对话的参考文件历史")
         return data.source(source_id)
 
     @app.get("/api/sessions/{sid}/novel/sources/{source_id}/download")
@@ -136,7 +141,16 @@ def register_routes(app, service, main_runtime):
             record["message"] = {
                 k: v
                 for k, v in record["message"].items()
-                if k in {"role", "content", "tool_calls", "tool_call_id", "through", "_novel_compaction"}
+                if k
+                in {
+                    "role",
+                    "content",
+                    "tool_calls",
+                    "tool_call_id",
+                    "through",
+                    "_novel_compaction",
+                    "web_sources",
+                }
             }
             record["message"]["content"] = visible(record["message"]["content"])
             for call in record["message"].get("tool_calls", []):

@@ -529,7 +529,7 @@ async def test_novel_research_isolates_reads_and_delivers_cross_turn_once(story)
         status = next(
             message
             for message in first.requests[0]["messages"]
-            if message.get("content", "").startswith("原著参考运行状态：")
+            if message.get("content", "").startswith("资料调查运行状态：")
         )
         assert status["role"] == "system"
         assert current["messages"][-1]["raw"] == "先独立完成本轮正文。"
@@ -571,7 +571,7 @@ async def test_novel_research_isolates_reads_and_delivers_cross_turn_once(story)
             message
             for request in second.requests
             for message in request["messages"]
-            if message.get("content", "").startswith("原著调查消息：")
+            if message.get("content", "").startswith("资料调查消息：")
         ]
         assert reports and all(message["role"] == "user" for message in reports)
         assert "原著独有证据尾" not in sent and original not in sent
@@ -615,7 +615,7 @@ async def test_novel_limits_fork_authorization_and_portable_paused_progress(stor
         )
     assert response.status_code == 200, response.text
     source_id = response.json()["source"]["id"]
-    assert not response.json()["enabled"]  # Uploading is not permission to send text to a model.
+    assert not response.json()["enabled"]  # Imports supply a source for the master switch.
     config = research.snapshot_config(session["id"])
     with pytest.raises(ValueError, match="尚未授权"):
         research.data.create(session["id"], "off", 2, "", "问题", "", config)
@@ -626,7 +626,7 @@ async def test_novel_limits_fork_authorization_and_portable_paused_progress(stor
     with pytest.raises(ValueError, match="同时最多三个"):
         research.data.create(session["id"], "fourth", 2, "", "问题", "", config)
     with pytest.raises(Conflict, match="尚未销毁"):
-        research.data.configure(session["id"], 2, enabled=False)
+        research.data.configure(session["id"], 2, unbind=True)
     research.data.configure_advisor(session["id"], 2, True)
     with pytest.raises(Conflict, match="确认后"):
         store.fork_session(session["id"], session["head"], session["revision"])
@@ -678,6 +678,251 @@ async def test_novel_limits_fork_authorization_and_portable_paused_progress(stor
     # A stale background response cannot resurrect a revoked investigator or send mail.
     saved["status"] = "completed"
     assert not research.data.save(saved, mail={"kind": "report", "content": "迟到", "operation": "late"})
+
+
+def test_novel_file_loss_preserves_revocable_authorization(story):
+    from tavern.novel.service import NovelService
+    from tavern.novel.source import directory, import_file
+    from tavern.storage.store import uid
+
+    store, session = story
+    sid, source = session["id"], uid()
+    research = NovelService(store)
+    metadata = import_file(store.root, source, io.BytesIO(b"Reference text."), "reference.txt")
+    research.data.bind(sid, 0, source, metadata)
+    research.data.configure(sid, 1, enabled=True)
+
+    folder = directory(store.root, source)
+    missing = folder.rename(folder.with_name("offline-copy"))
+    try:
+        state = research.public(sid)
+        assert state["authorized"] and not state["enabled"] and not state["can_enable"]
+        research.data.configure(sid, state["revision"], enabled=False)
+    finally:
+        missing.rename(folder)
+    state = research.public(sid)
+    assert state["can_enable"] and not state["authorized"] and not state["enabled"]
+
+
+async def test_novel_web_only_uses_shared_tools_and_holds_report_while_disabled(story, monkeypatch):
+    """A fileless job can verify a public source without handing the web service its background."""
+    from httpx import MockTransport, Response
+
+    from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
+
+    store, session = story
+    sid = session["id"]
+    settings = store.settings_document()
+    settings.shared.web.exa.enabled = False
+    store.save_settings(settings)
+    service = runtime(store)
+    research = service.story.novel
+    extract = asyncio.Event()
+    url = "https://work.example/chapters/794aab4ce5774fce83edd69e5406fd65"
+    private_ref = "471655ab2f354253a3f772b0f9fdb054"
+    unauthorized_url = "https://work.example/?ref="
+    guidance = "《旧港纪事》\n优先核对作者网站。"
+    external = []
+
+    async def public_url(candidate):
+        assert candidate in {
+            url,
+            unauthorized_url + private_ref,
+            "https://api.tavily.com/search",
+            "https://api.tavily.com/extract",
+        }
+        return candidate
+
+    async def web(request):
+        external.append((request.url.path, json.loads(request.content)))
+        if request.url.path == "/search":
+            return Response(200, json={"results": [{"url": url, "title": "旧港纪事", "content": "摘要"}]})
+        await extract.wait()  # Keep the report out of the already-running first story turn.
+        return Response(200, json={"results": [{"url": url, "raw_content": "完整的网页片段尾部。"}]})
+
+    monkeypatch.setattr("tavern.web.client.public_url", public_url)
+    research.web_transport = MockTransport(web)
+    investigator = Model(
+        ("read_webpage", {"url": unauthorized_url + "@D1"}),
+        ("web_search", {"query": "旧港纪事 作者"}),
+        ("read_webpage", {"url": "https://work.example/chapters/@D2"}),
+        "据作者网页 https://work.example/chapters/@D2 核对了钟声的来源。",
+    )
+    research.provider_factory = lambda cfg: investigator
+    first = Model(
+        ("start_novel_research", {"question": "查钟声来源", "background": "本局原创去向 " + private_ref}),
+        "继续剧情。",
+    )
+    try:
+        research.data.configure(sid, 0, web_enabled=True)
+        with pytest.raises(ValueError, match="调查指引"):
+            research.data.configure(sid, 1, enabled=True)
+        research.data.configure(sid, 1, enabled=True, web_guidance=guidance)
+        result, current = await turn(service, store.session(sid), first)
+        assert result["status"] == "committed"
+        extract.set()
+        await asyncio.gather(*research.tasks.values())
+        job = research.data.resolve(sid, "R1")
+        assert job["source"] is None and job["web_enabled"] and job["status"] == "completed", job["error"]
+        assert {tool["function"]["name"] for tool in investigator.requests[0]["extra_body"]["tools"]} == {
+            "web_search",
+            "read_webpage",
+            "ask_delegator",
+        }
+        assert json.loads(investigator.requests[0]["messages"][1]["content"])["web_guidance"] == guidance
+        assert "794aab4ce5774fce83edd69e5406fd65" not in json.dumps(investigator.requests, ensure_ascii=False)
+        assert [path for path, _ in external] == ["/search", "/extract"]
+        assert external[0][1]["query"] == "旧港纪事 作者" and external[1][1]["urls"] == [url]
+        assert "本局原创去向" not in json.dumps(external, ensure_ascii=False)
+        records = research.data.trace(job["id"])
+        assert "须完整引用" in records[1]["message"]["content"]
+        assert records[-2]["message"]["web_sources"][0]["url"] == url
+        assert "完整的网页片段尾部。" in records[-2]["message"]["content"]
+        assert url in research.data.inbox(sid)[0]["content"]
+
+        fork = store.fork_session(sid, current["head"], current["revision"], confirm_novel=True)
+        assert research.data.binding(fork["id"])["web_guidance"] == guidance
+        assert fork["novel_enabled"] and not fork["novel_active"]
+        archive = export_package(store, ExportSelection(settings=False, sessions=[sid]))
+        package, blobs = read_package(archive, store)
+        imported = import_package(store, package, blobs)["sessions"][0]
+        assert research.data.binding(imported)["web_guidance"] == guidance
+        assert research.data.resolve(imported, "R1")["status"] == "paused"
+
+        await research.cancel_paused(research.data.configure(sid, 2, enabled=False))
+        off = Model("调查者关闭时继续剧情。")
+        await turn(service, store.session(sid), off)
+        assert all(
+            tool["function"]["name"] not in MAIN_SPECS
+            for request in off.requests
+            for tool in request["extra_body"]["tools"]
+        )
+        assert len(research.data.inbox(sid)) == 1
+        research.data.configure(sid, 3, enabled=True)
+        on = Model("根据报告继续剧情。")
+        await turn(service, store.session(sid), on)
+        sent = json.dumps(on.requests, ensure_ascii=False)
+        assert "核对了钟声的来源" in sent and "完整的网页片段尾部" not in sent
+        assert research.data.inbox(sid) == []
+    finally:
+        extract.set()
+        await service.close()
+
+
+async def test_novel_web_revocation_cancels_inflight_tool_and_keeps_frozen_sources(story, monkeypatch):
+    """Revoking the web permission must stop in-flight usage and fence off stale saves."""
+    from tavern.novel.source import import_file
+    from tavern.storage.store import uid
+
+    store, session = story
+    sid = session["id"]
+    service = runtime(store)
+    research, entered, cancelled = service.story.novel, asyncio.Event(), asyncio.Event()
+    guidance = "按旧版本查钟声"
+
+    async def search(_client, _query, _limit, _objective):
+        if entered.is_set():
+            return {"results": [], "service": "tavily"}
+        entered.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr("tavern.novel.worker.WebTools.search", search)
+    investigator = Model(("web_search", {"query": "旧港纪事"}), "结论：资料不足。")
+    research.provider_factory = lambda cfg: investigator
+    research.data.configure(sid, 0, enabled=True, web_enabled=True, web_guidance=guidance)
+    config = research.snapshot_config(sid)
+    old, _ = research.data.create(sid, "web", 1, "", "问钟声", "", config)
+    try:
+        research.launch(old)
+        await asyncio.wait_for(entered.wait(), 1)
+        source = uid()
+        metadata = import_file(store.root, source, io.BytesIO("钟声来自旧港。".encode()), "原著.txt")
+        research.data.bind(sid, 1, source, metadata)
+        research.data.configure(sid, 2, web_guidance="优先作者网站")
+        mixed, _ = research.data.create(sid, "mixed", 1, "", "问原著", "", config)
+        stale = research.data.job(old)
+        assert stale["source"] is None and stale["web_guidance"] == guidance
+        assert research.data.job(mixed)["source"] == source
+        assert research.data.job(mixed)["web_guidance"] == "优先作者网站"
+
+        await research.cancel_paused(research.data.configure(sid, 3, web_enabled=False))
+        paused = research.data.job(old)
+        assert cancelled.is_set() and paused["status"] == "paused" and paused["requests"] == 1
+        assert paused["progress"]["pending"]
+        assert research.public(sid)["enabled"]  # The local file still supplies a source.
+        stale["status"] = "completed"
+        assert not research.data.save(stale, mail={"kind": "report", "content": "迟到", "operation": "late"})
+        with pytest.raises(ValueError, match="重新开启联网"):
+            research.launch(old)
+        research.data.configure(sid, 4, web_enabled=True)
+        assert research.data.job(old)["status"] == "paused"
+        research.launch(old)
+        await research.tasks[old]
+        assert research.data.job(old)["status"] == "completed"
+        assert json.loads(investigator.requests[-1]["messages"][1]["content"])["web_guidance"] == guidance
+
+        await research.destroy(mixed)
+        research.data.configure(sid, 5, web_enabled=False)
+        research.data.configure(sid, 6, unbind=True)
+        assert not research.data.binding(sid)["enabled"]
+        assert research.data.job(old)["status"] == "completed"
+    finally:
+        await service.close()
+
+
+def test_novel_schema_29_migration_preserves_job_references(story):
+    """Making the source nullable must preserve children and old file authorization."""
+    from tavern.novel.service import NovelService
+    from tavern.novel.source import import_file
+    from tavern.storage.store import uid
+
+    store, session = story
+    sid, source = session["id"], uid()
+    research = NovelService(store)
+    metadata = import_file(store.root, source, io.BytesIO("保留这份原著".encode()), "原著.txt")
+    research.data.bind(sid, 0, source, metadata)
+    research.data.configure(sid, 1, enabled=True)
+    identity, _ = research.data.create(sid, "old", 1, "", "查旧来源", "", research.snapshot_config(sid))
+    job = research.data.job(identity)
+    research.data.save(
+        job,
+        message={"role": "assistant", "content": "旧记录"},
+        mail={
+            "kind": "report",
+            "content": "旧报告",
+            "operation": "old-report",
+        },
+    )
+    with store.connection() as db:
+        db.executescript("""
+            PRAGMA foreign_keys=OFF;
+            BEGIN IMMEDIATE;
+            ALTER TABLE novel_bindings DROP COLUMN web_enabled;
+            ALTER TABLE novel_bindings DROP COLUMN web_guidance;
+            ALTER TABLE novel_jobs DROP COLUMN web_enabled;
+            ALTER TABLE novel_jobs DROP COLUMN web_guidance;
+            PRAGMA writable_schema=ON;
+            UPDATE sqlite_schema SET sql=replace(sql,'source TEXT REFERENCES','source TEXT NOT NULL REFERENCES')
+            WHERE name='novel_jobs';
+            PRAGMA writable_schema=OFF;
+            UPDATE meta SET value='29' WHERE key='schema_version';
+        """)
+    with store.connection() as db:
+        assert next(
+            row["notnull"] for row in db.execute("PRAGMA table_info(novel_jobs)") if row["name"] == "source"
+        )
+    migrated = Store(store.root)
+    research = NovelService(migrated)
+    assert list(store.root.glob("before-upgrade-schema29-*.sqlite3"))
+    assert research.public(sid)["enabled"] and not research.public(sid)["web_enabled"]
+    assert research.data.job(identity)["source"] == source and not research.data.job(identity)["web_enabled"]
+    assert research.data.trace(identity)[0]["message"]["content"] == "旧记录"
+    assert research.data.inbox(sid)[0]["content"] == "旧报告"
+    with migrated.connection() as db:
+        assert db.execute("PRAGMA foreign_key_check").fetchone() is None
 
 
 async def test_novel_auto_destroy_delivers_report_and_allows_clarification(story):
@@ -812,7 +1057,7 @@ def test_novel_character_ranges_preserve_long_lines_and_unicode(tmp_path):
     assert (bounded["total_matches"], bounded["has_more"], bounded["next_start"]) == (15, True, offset + 6)
     assert [h["title"] for h in book.outline(0, 50)["headings"]] == ["序章", "# 第二章"]
     assert book.read(len(text), 20)["text"] == ""
-    with pytest.raises(ValueError, match="超出原著范围"):
+    with pytest.raises(ValueError, match="超出参考文件范围"):
         book.read(len(text) + 1, 20)
     with pytest.raises(ValueError, match="解码失败"):
         import_file(tmp_path, uid(), io.BytesIO(b"\xffinvalid"), "wrong.txt")

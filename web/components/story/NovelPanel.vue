@@ -16,6 +16,7 @@ import {
 import AppModal from '../common/AppModal.vue';
 import FieldHelp from '../common/FieldHelp.vue';
 import Icon from '../common/Icon.vue';
+import WebSources from '../common/WebSources.vue';
 import type { ModelProfile, Provider } from '../../lib/settingsDocument';
 
 const props = defineProps<{
@@ -30,6 +31,7 @@ function providerName(id: string) {
 }
 const emit = defineEmits<{
   settings: [];
+  services: [];
   advisor: [];
   changed: [value: { enabled: boolean; active: number }];
   stopped: [];
@@ -37,6 +39,9 @@ const emit = defineEmits<{
 const state = ref<NovelState | null>(null),
   error = ref(''),
   busy = ref('');
+const guidance = ref(''),
+  savedGuidance = ref('');
+const guidanceDirty = computed(() => guidance.value !== savedGuidance.value);
 const advisorModel = computed(() =>
   props.advisorDefault ? state.value?.advisor_model_selection || props.advisorDefault : null,
 );
@@ -47,6 +52,12 @@ const expanded = ref(''),
   more = ref(false);
 const reports = ref<Array<{ kind: string; content: string }>>([]),
   detailExpired = ref(false);
+const sourceNames = computed(() => new Map(state.value?.history.map((source) => [source.id, source.name])));
+function jobSources(job: NovelJob) {
+  return [job.source && sourceNames.value.get(job.source), job.web_enabled && '网络查询']
+    .filter(Boolean)
+    .join(' · ');
+}
 const olderJobs = ref<NovelJob[]>([]),
   olderCursor = ref<number | null | undefined>();
 const jobs = computed(() =>
@@ -94,7 +105,13 @@ let disposed = false,
   loading = false,
   reload = false;
 const root = computed(() => `/sessions/${props.sessionId}/novel`);
-const fileLocked = computed(() => props.locked || !!state.value?.active || !!busy.value);
+const fileUsers = computed(
+  () =>
+    state.value?.jobs.filter(
+      (job) => job.source && job.source === state.value?.source?.id && job.status !== 'destroyed',
+    ).length ?? 0,
+);
+const fileLocked = computed(() => props.locked || !!fileUsers.value || !!busy.value);
 function accept(value: NovelState) {
   if (state.value && value.event_seq < state.value.event_seq) return;
   if (olderCursor.value !== undefined && state.value) {
@@ -107,6 +124,8 @@ function accept(value: NovelState) {
       ).values(),
     ];
   }
+  if (!guidanceDirty.value) guidance.value = value.web_guidance;
+  savedGuidance.value = value.web_guidance;
   state.value = value;
   received.value = now.value = performance.now();
   emit('changed', { enabled: value.enabled, active: value.active });
@@ -148,7 +167,7 @@ async function importSource(event: Event) {
     file = input.files?.[0];
   if (!file || !state.value) return;
   if (file.size > 64 * 1024 * 1024) {
-    error.value = '原著文件不能超过 64 MiB';
+    error.value = '参考文件不能超过 64 MiB';
     input.value = '';
     return;
   }
@@ -172,11 +191,21 @@ async function importSource(event: Event) {
   excerpt.value = viewing.value = null;
   choosingFile.value = false;
 }
-async function authorize(enabled: boolean, unbind = false) {
+type ResearchSettings = Partial<Pick<NovelState, 'enabled' | 'web_enabled' | 'web_guidance'>> & {
+  unbind?: boolean;
+};
+async function configure(patch: ResearchSettings) {
   if (!state.value) return;
   await action('source', () =>
-    rawApi(root.value, { expected_revision: state.value!.revision, enabled, unbind }, 'PATCH'),
+    rawApi(root.value, { expected_revision: state.value!.revision, ...patch }, 'PATCH'),
   );
+}
+function toggle(event: Event, key: 'enabled' | 'web_enabled') {
+  if (!state.value) return;
+  const input = event.target as HTMLInputElement;
+  const enabled = input.checked;
+  input.checked = key === 'enabled' ? state.value.authorized : state.value.web_enabled;
+  void configure({ [key]: enabled });
 }
 async function authorizeAdvisor(event: Event) {
   if (!state.value) return;
@@ -257,17 +286,16 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="novel-panel" aria-label="原著参考与调查">
+  <section class="novel-panel" aria-label="资料调查">
     <header class="novel-head">
-      <h2><Icon name="book" :size="20" />原著参考</h2>
+      <h2><Icon name="book" :size="20" />资料调查</h2>
       <button class="quiet" @click="emit('settings')"><Icon name="sliders" :size="16" />模型与额度</button>
       <p v-if="state" class="novel-summary">
-        <span>{{ state.source ? '已绑定' : '未绑定' }}</span>
-        <span>· 委派{{ state.enabled ? '已授权' : '未授权' }}</span>
+        <span>调查{{ state.enabled ? '已开启' : state.authorized ? '暂不可用' : '已关闭' }}</span>
+        <span v-if="state.source && !state.source.missing">· 本地文件</span>
+        <span v-if="state.web_enabled && state.can_enable">· 网络查询</span>
         <span :class="{ 'novel-live': state.active }">· 调查者 {{ state.active }}/3</span>
-        <FieldHelp
-          tooltip="每个分支只绑定一个纯文本文件。调查者独立查阅原文，剧情模型只接收报告；原著不会覆盖本局剧情。"
-        />
+        <FieldHelp tooltip="同一个调查者可以查文件和网页。剧情模型接收调查报告，剧情事实以本局为准。" />
       </p>
     </header>
     <p v-if="novelConnectionError" role="status" class="muted">
@@ -276,10 +304,10 @@ onBeforeUnmount(() => {
     <p v-if="error" role="alert" class="error">
       {{ error }} <button class="quiet" @click="load">刷新重试</button>
     </p>
-    <p v-if="!state" role="status" class="state-empty">正在读取原著设置…</p>
+    <p v-if="!state" role="status" class="state-empty">正在读取资料调查设置…</p>
     <template v-else>
       <article class="novel-book">
-        <div class="novel-spine" aria-hidden="true"><span>原著</span></div>
+        <div class="novel-spine" aria-hidden="true"><span>资料</span></div>
         <div class="novel-book-main">
           <template v-if="state.source">
             <h3>{{ state.source.name }}</h3>
@@ -291,7 +319,7 @@ onBeforeUnmount(() => {
               />
             </p>
             <p v-if="state.source.missing" role="alert" class="novel-alert">
-              参考文件缺失，调查无法读取。请先销毁调查者，再重新导入。
+              参考文件缺失。{{ fileUsers ? '请先销毁使用此文件的调查者，再重新导入。' : '可重新导入文件。' }}
             </p>
             <div class="novel-book-actions">
               <button
@@ -317,15 +345,15 @@ onBeforeUnmount(() => {
                 title="解绑"
                 aria-label="解绑"
                 :disabled="fileLocked"
-                @click="authorize(false, true)"
+                @click="configure({ unbind: true })"
               >
                 <Icon name="unlink" :size="16" />
               </button>
             </div>
           </template>
           <template v-else>
-            <h3>尚未绑定原著</h3>
-            <p class="novel-meta">导入纯文本文件后，可分别授权主对话委派调查和参谋 agent 查阅。</p>
+            <h3>尚未导入参考文件</h3>
+            <p class="novel-meta">导入纯文本文件即可供资料调查者使用。</p>
           </template>
           <div v-if="state.source && !choosingFile" class="novel-book-foot">
             <button
@@ -365,7 +393,7 @@ onBeforeUnmount(() => {
               取消
             </button>
             <FieldHelp
-              tooltip="支持 txt、md、markdown，最大 64 MiB。保存固定副本，外部原文件修改不会自动生效；导入后需明确开启授权。"
+              tooltip="支持 txt、md、markdown，最大 64 MiB。应用保存固定副本。调查时，查阅的片段将发送给调查模型。"
             />
           </div>
           <div v-if="history || (!state.source && state.history.length)" class="novel-history">
@@ -383,21 +411,60 @@ onBeforeUnmount(() => {
         </div>
         <input ref="fileInput" type="file" accept=".txt,.md,.markdown" hidden @change="importSource" />
       </article>
-      <p v-if="state.active" role="status" class="novel-alert">
-        {{ state.active }} 个调查者尚未销毁，暂不能替换、解绑或停用原著；已完成和已暂停的也需销毁。
+      <p v-if="fileUsers" role="status" class="novel-alert">
+        {{ fileUsers }} 个调查者使用当前文件。替换或解绑前请先销毁这些调查者。
       </p>
 
       <div class="novel-auth">
+        <label class="novel-auth-row">
+          <span>联网查询</span>
+          <input
+            type="checkbox"
+            class="switch"
+            role="switch"
+            :checked="state.web_enabled"
+            :disabled="!!busy"
+            @change="toggle($event, 'web_enabled')"
+          />
+        </label>
+        <label class="novel-guidance">
+          <span>调查指引</span>
+          <textarea
+            v-model="guidance"
+            rows="3"
+            :disabled="!!busy"
+            placeholder="填写主题、作品名、网址或优先查阅的来源"
+          />
+        </label>
+        <div v-if="guidanceDirty" class="novel-guidance-actions">
+          <button :disabled="!!busy" @click="configure({ web_guidance: guidance })">保存指引</button>
+          <button class="quiet" :disabled="!!busy" @click="guidance = savedGuidance">撤销修改</button>
+        </div>
+        <p class="novel-privacy">
+          指引供新任务参考。没有可读文件时，启用调查者需要填写指引。查询词和目标网址会发送给联网服务。
+        </p>
+        <p class="novel-model">
+          <button type="button" @click="emit('services')">
+            联网服务与代理<Icon name="arrow-right" :size="12" />
+          </button>
+        </p>
+      </div>
+
+      <div class="novel-auth">
         <label class="novel-auth-row"
-          ><span>允许主对话委派调查</span
+          ><span>启用资料调查者</span
           ><input
             type="checkbox"
             class="switch"
             role="switch"
-            :checked="state.enabled"
-            :disabled="fileLocked || !state.source || state.source.missing"
-            @change="authorize(($event.target as HTMLInputElement).checked)"
+            :checked="state.authorized"
+            :disabled="!!busy || (!state.authorized && !state.can_enable)"
+            @change="toggle($event, 'enabled')"
         /></label>
+        <p v-if="!state.can_enable" role="status" class="novel-alert">
+          {{ state.authorized ? '缺少可用来源。可关闭总开关撤销授权。' : '缺少可用来源。' }}
+          请导入参考文件，或填写调查指引并开启联网查询。
+        </p>
         <p class="novel-model">
           <button type="button" @click="emit('settings')">
             调查模型：{{ providerName(state.effective.profile.provider_id) }} /
@@ -416,12 +483,12 @@ onBeforeUnmount(() => {
             "
           />
         </p>
-        <p class="novel-privacy">开启后，相关原文片段会发送给上述模型服务；每次调查无需再次确认。</p>
+        <p class="novel-privacy">剧情模型按需委派，调查者将查阅的资料片段发送给调查模型。</p>
       </div>
 
       <div class="novel-auth">
         <label class="novel-auth-row">
-          <span>允许参谋 agent 查阅原著</span>
+          <span>允许参谋 agent 查阅参考文件</span>
           <input
             type="checkbox"
             class="switch"
@@ -440,7 +507,7 @@ onBeforeUnmount(() => {
           </button>
         </p>
         <p class="novel-privacy">
-          查阅时原文片段会发送给参谋模型。换模型沿用授权，换书或解绑会关闭授权。关闭后，旧片段仍可能随咨询历史发送，可在参谋栏清空咨询。
+          查阅时原文片段会发送给参谋模型。换模型沿用授权，替换或解绑文件会关闭授权。关闭后，旧片段仍可能随咨询历史发送，可在参谋栏清空咨询。
         </p>
       </div>
 
@@ -455,7 +522,7 @@ onBeforeUnmount(() => {
           <Icon name="stop" :size="16" />全部停止
         </button>
       </div>
-      <p v-if="!state.jobs.length" class="state-empty">尚无调查。开启参考后，由剧情模型按需委派。</p>
+      <p v-if="!state.jobs.length" class="state-empty">尚无调查。</p>
       <article v-for="job in jobs" :key="job.id" class="novel-job" :class="statusTone[job.status]">
         <div class="novel-job-head">
           <strong>{{ job.ref }}</strong>
@@ -477,7 +544,10 @@ onBeforeUnmount(() => {
               title="恢复调查"
               aria-label="恢复调查"
               :disabled="
-                !!busy || job.requests >= job.config.max_requests || job.elapsed >= job.config.timeout_seconds
+                !!busy ||
+                !!job.access_error ||
+                job.requests >= job.config.max_requests ||
+                job.elapsed >= job.config.timeout_seconds
               "
               @click="control(job.ref, 'resume')"
             >
@@ -513,9 +583,16 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <p v-if="job.pending_messages" class="novel-pending">
-          {{ job.pending_messages }} 条调查消息将在下次剧情请求时送达；空闲时不会自动唤醒。
+          {{ job.pending_messages }} 条待送达消息。{{
+            state.enabled
+              ? '将在下次剧情请求时送达。'
+              : state.authorized
+                ? '恢复可用来源后可送达。'
+                : '开启调查者后可送达。'
+          }}
         </p>
         <p v-if="job.error" role="status" class="error">{{ job.error }}</p>
+        <p v-if="job.access_error" class="novel-alert">{{ job.access_error }}</p>
         <button
           class="novel-more"
           :aria-expanded="expanded === job.ref"
@@ -537,6 +614,11 @@ onBeforeUnmount(() => {
             已送达剧情模型{{ job.delivered_messages }} 条调查消息。
           </p>
           <p v-if="job.background" class="muted">委派时背景：{{ job.background }}</p>
+          <p class="muted">任务来源：{{ jobSources(job) }}</p>
+          <div v-if="job.web_enabled && job.web_guidance">
+            <strong>任务使用的调查指引</strong>
+            <pre>{{ job.web_guidance }}</pre>
+          </div>
           <div v-for="(report, index) in reports" :key="index">
             <strong>{{
               report.kind === 'report'
@@ -562,6 +644,7 @@ onBeforeUnmount(() => {
                     : '委派者消息'
             }}</strong>
             <pre>{{ record.message.content }}</pre>
+            <WebSources v-if="record.message.web_sources?.length" :sources="record.message.web_sources" />
             <pre v-if="record.message.tool_calls">{{
               JSON.stringify(record.message.tool_calls, null, 2)
             }}</pre>
@@ -573,8 +656,8 @@ onBeforeUnmount(() => {
     </template>
     <Teleport to="body">
       <div v-if="viewing" class="modal-backdrop" @keydown.esc.prevent.stop="viewing = null">
-        <AppModal label="原著副本" size="large" class="novel-excerpt-modal" @close="viewing = null">
-          <span class="eyebrow">原著副本</span>
+        <AppModal label="参考文件副本" size="large" class="novel-excerpt-modal" @close="viewing = null">
+          <span class="eyebrow">参考文件副本</span>
           <h2>{{ viewing.name }}</h2>
           <p v-if="!excerpt" role="status" class="muted">正在读取…</p>
           <template v-else>

@@ -162,7 +162,7 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         with pytest.raises(ValueError, match="场外发言与模型消息不一致"):
             import_package(target, inconsistent, blobs)
         assert target.sessions() == []
-        assert payload["version"] == 16
+        assert payload["version"] == 18
         payload["version"] = 14
         previous_story_keys(payload["sessions"][0])
         imported = import_package(target, payload, blobs)

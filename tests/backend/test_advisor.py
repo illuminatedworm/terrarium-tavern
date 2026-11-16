@@ -111,7 +111,7 @@ async def test_advisor_novel_revocation_rejects_an_inflight_excerpt(tmp_path, mo
         assert run["status"] == "completed", run
         sent = dump(provider.call_log)
         assert "已授权证据 @D" in sent
-        assert "原著授权已关闭或文件已更换" in sent
+        assert "参考文件授权已关闭或文件已更换" in sent
         assert marker not in sent and binding["source"]["id"] not in sent and "撤权后不可见" not in sent
         replaced = await upload("新版原著", binding["revision"])
         assert not replaced["advisor_enabled"]

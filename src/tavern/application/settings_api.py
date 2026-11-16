@@ -98,7 +98,7 @@ def page_catalog():
         ("retrieval", "检索与世界书", retrieval),
         ("memory", "工具与记忆", ["tools"]),
         ("prompts", "提示词", [p["path"] for p in prompts if p["scope"] == "story"]),
-        ("novel", "原著调查", ["novel_research", "model.message_adapter"]),
+        ("novel", "资料调查", ["novel_research", "model.message_adapter"]),
     ]:
         result.append({"id": f"story.{key}", "scope": "story", "key": key, "label": label, "paths": paths})
     for key, label, paths in [
@@ -402,7 +402,7 @@ def save_probe(store, role, result, captured):
                 or profile.model_dump(exclude={"capability", "capability_key"})
                 != before.model_dump(exclude={"capability", "capability_key"})
             ):
-                raise Conflict("检查期间原著调查模型连接已改变，请重新检查")
+                raise Conflict("检查期间资料调查模型连接已改变，请重新检查")
             profile.capability, profile.capability_key = result.capability, result.capability_key
             doc.revisions["story"] += 1
             db.execute("UPDATE meta SET value=? WHERE key='settings'", (doc.model_dump_json(),))

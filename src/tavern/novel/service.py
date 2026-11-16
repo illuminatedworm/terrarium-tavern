@@ -9,8 +9,15 @@ from tavern.core.context_usage import bind_meter
 from tavern.core.errors import NotFound
 from tavern.core.model_view import HANDLE
 from tavern.core.provider import make_provider, require_model_connection
-from tavern.novel.source import FILES, directory
-from tavern.novel.storage import MAX_LIVING, MAX_STARTS, NovelStore
+from tavern.novel.source import available, directory
+from tavern.novel.storage import (
+    DISABLED,
+    MAX_LIVING,
+    MAX_STARTS,
+    NovelStore,
+    job_access_error,
+    research_sources,
+)
 from tavern.novel.worker import NovelWorker
 from tavern.scripting.request_context import ProviderRequestContext
 from tavern.search.retrieval_config import ModelProfile
@@ -33,6 +40,7 @@ class NovelService:
         self.workers = {}
         self.restart_requested = set()
         self.provider_factory = None
+        self.web_transport = None
         self.changed = asyncio.Event()
         self.generation = 0
         self.closed = False
@@ -110,8 +118,12 @@ class NovelService:
         if session is None:
             raise NotFound("对话不存在")
         binding = self.data.binding(sid)
+        file, web = research_sources(self.store.root, binding)
+        enabled = bool(binding["enabled"] and (file or web))
         jobs = self.data.jobs(sid)
         for job in jobs:
+            if job["status"] != "destroyed":
+                job["access_error"] = job_access_error(enabled, file, web, job)
             # SQLite only records elapsed at each save; a model request can run for a long time
             # between saves, so the panel's clock starts from the worker's live reading.
             worker = self.workers.get(job["id"])
@@ -130,15 +142,18 @@ class NovelService:
                 "SELECT coalesce(max(seq),0) FROM novel_events WHERE session=?", (sid,)
             ).fetchone()[0]
         for source in history:
-            source["missing"] = not all(
-                (directory(self.store.root, source["id"]) / f).is_file() for f in FILES
-            )
-            source["location"] = str(directory(self.store.root, source["id"]))
+            folder = directory(self.store.root, source["id"])
+            source["missing"] = not available(folder)
+            source["location"] = str(folder)
             source["current"] = source["id"] == binding["source"]
         return {
             "revision": binding["revision"],
             "event_seq": event_seq,
-            "enabled": bool(binding["enabled"]),
+            "enabled": enabled,
+            "authorized": bool(binding["enabled"]),
+            "can_enable": bool(file or web),
+            "web_enabled": bool(binding["web_enabled"]),
+            "web_guidance": binding["web_guidance"],
             "advisor_enabled": bool(binding["advisor_enabled"]),
             "advisor_model_selection": json.loads(session["advisor_model"])
             if session["advisor_model"]
@@ -185,11 +200,6 @@ class NovelService:
         cfg = self.settings({"id": owner.tid, "config": config})
         if self.provider_factory is None:
             require_model_connection(cfg)
-        binding = self.data.binding(sid)
-        if not binding["source"]:
-            raise ValueError("用户尚未指定原著文件")
-        if not all((directory(self.store.root, binding["source"]) / name).is_file() for name in FILES):
-            raise ValueError("原著参考文件缺失，请用户重新导入")
         job_id, created = self.data.create(
             sid,
             owner.novel_operation,
@@ -227,6 +237,7 @@ class NovelService:
             raise ValueError("应用正在关闭，调查已暂停")
         current = self.tasks.get(job_id)
         if current and not current.done():
+            self.data.require_job_access(self.data.job(job_id))
             self.restart_requested.add(job_id)
             self.notify()
             return
@@ -262,7 +273,7 @@ class NovelService:
     async def drive(self, job_id):
         job, worker, provider = self.data.job(job_id), None, None
         try:
-            if job["status"] == "destroyed":
+            if job["status"] != "running":
                 return
             if exhausted(job):
                 raise ValueError("调查者额度已耗尽；跨轮、追问和恢复不会重置额度")
@@ -298,9 +309,9 @@ class NovelService:
             else:
                 job["error"] = str(error) or type(error).__name__
             advice = (
-                "额度已耗尽，不能恢复；可销毁后按需新建，或不依赖原著继续。"
+                "额度已耗尽，不能恢复；可销毁后按需新建，或按本局已有信息继续。"
                 if exhausted(job)
-                else "仍有剩余额度，可用 resume_novel_research 恢复，或销毁后不依赖原著继续。"
+                else "仍有剩余额度，可用 resume_novel_research 恢复，或销毁后按本局已有信息继续。"
             )
             self.data.save(
                 job,
@@ -336,6 +347,19 @@ class NovelService:
                 job["status"] = "paused"
                 self.data.save(job)
         self.notify()
+
+    async def cancel_paused(self, identities):
+        # Authorization and paused states are already committed. Cancel before
+        # yielding so a rapid re-enable cannot let the old invocation continue.
+        tasks = []
+        for identity in identities:
+            self.restart_requested.discard(identity)
+            if (task := self.tasks.get(identity)) and not task.done():
+                task.cancel()
+                tasks.append(task)
+        self.notify()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def destroy(self, job_id):
         self.restart_requested.discard(job_id)
@@ -378,6 +402,8 @@ class NovelService:
 
     async def execute(self, owner, name, args):
         sid = owner.session["id"]
+        if not self.data.enabled(sid):
+            raise ValueError(DISABLED)
         if name == "start_novel_research":
             return self.start(owner, args)
         if name == "list_novel_research":
@@ -413,7 +439,7 @@ class NovelService:
             self.launch(job["id"])
         elif name == "wait_novel_research":
             deadline = asyncio.get_running_loop().time() + args.timeout_seconds
-            while True:
+            while self.data.enabled(sid):
                 state = self.data.dispatch_state(job["id"])
                 if not state or state["status"] == "destroyed":
                     break
@@ -434,38 +460,50 @@ class NovelService:
         current = self.data.job(job["id"])
         return {"ref": args.ref, "status": current["status"], "notice": DELIVERY_NOTICE}
 
-    async def deliver(self, owner):
+    async def deliver(self, owner, sources: tuple[str | None, bool], *, script_mirror) -> bool:
+        sid = owner.session["id"]
         window = owner.state["window"]["id"]
-        needs_status = not any(
-            item["window_id"] == window and item["message"].get("_novel_status") for item in owner.new_trace
+        file, web = sources
+        enabled = bool(file or web)
+        status_key = (window, file, web)
+        previous_status = owner.novel_status
+        needs_status = previous_status != status_key and (
+            enabled
+            or (
+                any(previous_status[1:])
+                if previous_status
+                else any(item["message"].get("_novel_status") for item in owner.new_trace)
+            )
         )
-        if not needs_status and not self.data.inbox(owner.session["id"]):
-            return
-        # Snapshot scripts before selecting mail. From the selection through the
-        # SQLite progress/receipt commit there is no await where UI revocation could intervene.
-        mirror = await owner.script.call("snapshot")
+        owner.novel_status = status_key
+        packets = self.data.inbox(sid) if enabled else []
+        if not needs_status and not packets:
+            return False
         if needs_status:
-            binding = self.data.binding(owner.session["id"])
-            source = self.data.source(binding["source"])
             status = {
-                "file": source["name"],
-                "imported_at": datetime.fromtimestamp(source["created"], timezone.utc).isoformat(),
-                "investigators": [
-                    {k: row[k] for k in ("ref", "status", "origin")}
-                    for row in self.summaries(owner.session["id"])
-                ],
-                "notice": "只授权当前文件版本；其他版本文件的旧报告只作历史参考，不能当作当前文件的证据。",
+                "enabled": enabled,
+                "web_enabled": web,
             }
+            if enabled:
+                status["investigators"] = [
+                    {k: row[k] for k in ("ref", "status", "origin")} for row in self.summaries(sid)
+                ]
+            if file:
+                source = self.data.source(file)
+                status.update(
+                    file=source["name"],
+                    imported_at=datetime.fromtimestamp(source["created"], timezone.utc).isoformat(),
+                    notice="其他版本文件的旧报告只作历史参考，不能当作当前文件的证据。",
+                )
             owner.append(
                 {
                     "role": "system",
                     "message_type": "novel_status",
-                    "content": "原著参考运行状态：\n" + dump(owner.model_view.expose(status)),
+                    "content": "资料调查运行状态：\n" + dump(owner.model_view.expose(status)),
                     "_novel_status": True,
                 },
                 window,
             )
-        packets = self.data.inbox(owner.session["id"])
         for packet in packets:
             body = {
                 "investigator": f"R{packet['ref']}",
@@ -474,33 +512,35 @@ class NovelService:
                 # report, question and error would cost up to 16k characters each time.
                 "initial_question": packet["task"],
                 "kind": packet["kind"],
-                "source": {
+                "web_enabled": bool(packet["web_enabled"]),
+                "content": packet["content"],
+                "notice": "资料供写作参考。请以用户设定和本局已发生的剧情为准，并结合当前进度判断资料的适用范围。",
+            }
+            if packet["source_created"] is not None:
+                body["source"] = {
                     "name": packet["source_name"],
                     "imported_at": datetime.fromtimestamp(packet["source_created"], timezone.utc).isoformat(),
-                },
-                "content": packet["content"],
-                "notice": "原著参考，不是本局已发生的事实；请结合当前进度判断是否仍适用。",
-            }
+                }
             if packet["auto_destroy"] and packet["kind"] == "report":
                 body["notice"] += "本报告送达后调查者自动销毁，报告和历史保留；如需继续调查请新建。"
             owner.append(
                 {
                     "role": "system",
                     "message_type": "novel_research",
-                    "content": "原著调查消息：\n" + dump(owner.model_view.expose(body)),
+                    "content": "资料调查消息：\n" + dump(owner.model_view.expose(body)),
                     "_novel_mail": packet["seq"],
                 },
                 owner.state["window"]["id"],
             )
-        if packets or needs_status:
-            # Saving the appended messages and claiming mail share a SQLite transaction.
-            destroyed = await owner.save_progress(script_mirror=mirror)
-            # The receipt transaction revokes first. Stop any follow-up already in
-            # flight too, so it cannot keep spending quota after automatic destruction.
-            for job_id in destroyed:
-                self.restart_requested.discard(job_id)
-                task = self.tasks.get(job_id)
-                if task and not task.done():
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
-            self.notify()
+        # The caller already has the script snapshot. There is no suspension between
+        # selecting mail and claiming it in the transaction that saves progress.
+        destroyed = await owner.save_progress(script_mirror=script_mirror)
+        # Revoke in SQLite before cancelling any follow-up still using this job.
+        for job_id in destroyed:
+            self.restart_requested.discard(job_id)
+            task = self.tasks.get(job_id)
+            if task and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        self.notify()
+        return True

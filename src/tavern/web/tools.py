@@ -1,4 +1,4 @@
-"""The same small web-tool contract for the two explicitly enabled agents."""
+"""A bounded web-tool contract shared by explicitly authorized agents."""
 
 from typing import Literal
 

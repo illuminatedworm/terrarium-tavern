@@ -61,9 +61,9 @@ const groups: Array<{ label: string; tools: Record<string, string> }> = [
   },
   { label: '检索', tools: { set_retrieval_query: '设置检索线索' } },
   {
-    label: '原著',
+    label: '资料调查',
     tools: {
-      start_novel_research: '委派原著调查',
+      start_novel_research: '委派资料调查',
       list_novel_research: '查看调查列表',
       message_novel_research: '追问调查者',
       wait_novel_research: '等待调查结果',
@@ -98,7 +98,7 @@ const unauthorized = computed(() => tools.value.filter((tool) => tool.enabled &&
 const controlSource: Record<string, { label: string; page?: string }> = {
   media: { label: '由右侧“配音与生图”控制', page: 'media' },
   plot_enabled: { label: '由场景页“剧情规划”控制', page: 'scene' },
-  novel_enabled: { label: '由原著页授权控制', page: 'novel' },
+  novel_enabled: { label: '由调查页的总开关控制', page: 'novel' },
   story_protocol: { label: '始终启用' },
 };
 const open = ref(new Set<string>());
@@ -324,7 +324,9 @@ async function toggleUnicodeStory(event: Event) {
               全局已关闭 · <button type="button" @click="emit('settings')">前往实验性功能</button>
             </p>
           </template>
-          <p v-if="tool.controlled_by === 'novel_enabled'">剧情模型不能直接读取原文，只接收调查者的报告。</p>
+          <p v-if="tool.controlled_by === 'novel_enabled'">
+            调查者按「调查」页的授权查阅文件或网页，向剧情模型提交报告。
+          </p>
           <p v-if="tool.name === 'patch_state' && tool.enabled && !tool.available">
             工具定义保持稳定；勾选本轮“更新变量”后才允许执行，收尾前须至少成功调用一次。
           </p>

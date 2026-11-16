@@ -156,7 +156,7 @@ async def main(single_viewport=False, report_activity_only=False):
                     await page.get_by_role("textbox", name="用户输入", exact=True).fill("继续故事")
                     await send.click()
                     runtime = page.locator(".agent-runtime-activity")
-                    await expect(runtime).to_contain_text("R1 · 原著调查报告已送达")
+                    await expect(runtime).to_contain_text("R1 · 资料调查报告已送达")
                     await expect(runtime).to_contain_text("主模型请求已发出")
                     assert await runtime.locator("summary, code").count() == 0
                     await expect(page.locator(".draft")).to_have_count(0)

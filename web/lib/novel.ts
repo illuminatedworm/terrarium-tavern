@@ -2,6 +2,7 @@ import { ref } from 'vue';
 import { rawApi } from './api';
 import { notify } from './notifications';
 import type { ModelProfile } from './settingsDocument';
+import type { WebSource } from './webSearch';
 
 export interface NovelConfig {
   model: ModelProfile | null;
@@ -24,7 +25,9 @@ export type NovelStatus = 'running' | 'waiting' | 'completed' | 'paused' | 'fail
 export interface NovelJob {
   id: string;
   ref: string;
-  source: string;
+  source: string | null;
+  web_enabled: boolean;
+  web_guidance: string;
   task: string;
   background: string;
   status: NovelStatus;
@@ -43,12 +46,17 @@ export interface NovelJob {
   elapsed: number;
   usage: Record<string, number>;
   error: string | null;
+  access_error?: string | null;
   created: number;
 }
 export interface NovelState {
   event_seq: number;
   revision: number;
   enabled: boolean;
+  authorized: boolean;
+  can_enable: boolean;
+  web_enabled: boolean;
+  web_guidance: string;
   advisor_enabled: boolean;
   advisor_model_selection: Pick<ModelProfile, 'provider_id' | 'model'> | null;
   source: NovelSource | null;
@@ -61,7 +69,13 @@ export interface NovelState {
 export interface NovelTrace {
   seq: number;
   created: number;
-  message: { role: string; content: string; tool_calls?: unknown[]; _novel_compaction?: boolean };
+  message: {
+    role: string;
+    content: string;
+    tool_calls?: unknown[];
+    _novel_compaction?: boolean;
+    web_sources?: WebSource[];
+  };
 }
 export const novelStatus: Record<NovelStatus, string> = {
   running: '调查中',
@@ -107,7 +121,7 @@ export function observeNovels() {
         );
         if (initialized && failures.length)
           notify(
-            `原著调查失败：${failures.map((job) => `${job.title || '对话'} · R${job.ref}`).join('、')}。请在原著面板查看原因及恢复或销毁。`,
+            `资料调查失败：${failures.map((job) => `${job.title || '对话'} · R${job.ref}`).join('、')}。请在「调查」页查看原因，可恢复或销毁任务。`,
           );
         novelActivity.value = result.jobs;
         initialized = true;

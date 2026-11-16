@@ -563,7 +563,7 @@ const inspectorPages = computed(() => [
   { id: 'advisor', label: '参谋', icon: 'compass' },
   { id: 'cache', label: '缓存', icon: 'bolt' },
   { id: 'tools', label: '工具', icon: 'wrench' },
-  { id: 'novel', label: '原著', icon: 'book' },
+  { id: 'novel', label: '调查', icon: 'book' },
   { id: 'mvu', label: 'MVU 变量', icon: 'braces' },
   { id: 'scene', label: '场景', icon: 'map' },
   { id: 'media', label: '配音与生图', icon: 'media' },
@@ -2984,7 +2984,9 @@ useTimedError(error);
                     v-if="busy"
                     class="send stop"
                     @click="stop"
-                    :title="session.novel_enabled ? '仅停止主生成；原著调查在原著面板单独停止' : '停止生成'"
+                    :title="
+                      session.novel_enabled ? '停止剧情生成。资料调查可在「调查」页单独停止' : '停止生成'
+                    "
                   >
                     <Icon name="stop" :size="15" />{{ session.novel_enabled ? '停止主生成' : '停止' }}</button
                   ><button
@@ -3185,6 +3187,10 @@ useTimedError(error);
             @settings="
               settingsInitialPage = 'story.novel';
               settingsChannel = session.channel_origin ?? undefined;
+              panel = 'settings';
+            "
+            @services="
+              settingsInitialPage = 'shared.web';
               panel = 'settings';
             "
             @stopped="guarded(async () => applyFullSession(await viewApi('/sessions/' + openStory().id)))"

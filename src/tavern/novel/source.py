@@ -13,13 +13,17 @@ ENCODINGS = {"utf-8", "utf-16", "gb18030", "big5"}
 
 def directory(root: Path, source_id: str) -> Path:
     if not re.fullmatch(r"[a-f0-9]{32}", source_id):
-        raise ValueError("原著文件标识无效")
+        raise ValueError("参考文件标识无效")
     return root / "blobs" / "novels" / source_id
+
+
+def available(folder: Path) -> bool:
+    return all((folder / name).is_file() for name in FILES)
 
 
 def import_file(root, source_id, stream, filename, encoding="utf-8"):
     if Path(filename).suffix.lower() not in {".txt", ".md", ".markdown"}:
-        raise ValueError("原著仅支持 txt、md、markdown 纯文本文件")
+        raise ValueError("参考文件仅支持 txt、md、markdown 纯文本文件")
     if encoding not in ENCODINGS:
         raise ValueError("请选择 UTF-8、UTF-16、GB18030 或 Big5 编码")
     first = stream.read(4)
@@ -36,7 +40,7 @@ def import_file(root, source_id, stream, filename, encoding="utf-8"):
         while True:
             total_bytes += len(chunk)
             if total_bytes > MAX_BYTES:
-                raise ValueError("原著文件不能超过 64 MiB")
+                raise ValueError("参考文件不能超过 64 MiB")
             original.write(chunk)
             try:
                 decoded = decoder.decode(chunk, final=not chunk)
@@ -54,7 +58,7 @@ def import_file(root, source_id, stream, filename, encoding="utf-8"):
                 break
             chunk = stream.read(65536)
     if not characters:
-        raise ValueError("原著文件不能为空")
+        raise ValueError("参考文件不能为空")
     (folder / "index.json").write_text(json.dumps(offsets), encoding="utf-8")
     return {"name": Path(filename).name, "encoding": actual, "bytes": total_bytes, "characters": characters}
 
@@ -63,13 +67,13 @@ class NovelText:
     def __init__(self, root, source):
         self.source = source
         self.folder = directory(root, source["id"])
-        if not all((self.folder / name).is_file() for name in FILES):
-            raise ValueError("原著参考文件缺失，请重新导入；不会改用同名文件")
+        if not available(self.folder):
+            raise ValueError("参考文件缺失，请重新导入；不会改用同名文件")
         self.offsets = json.loads((self.folder / "index.json").read_text(encoding="utf-8"))
 
     def open_at(self, start):
         if not 0 <= start <= self.source["characters"]:
-            raise ValueError("字符位置超出原著范围")
+            raise ValueError("字符位置超出参考文件范围")
         handle = (self.folder / "text.utf8").open("r", encoding="utf-8", newline="")
         block = min(start // BLOCK_CHARS, len(self.offsets) - 1)
         handle.seek(self.offsets[block])

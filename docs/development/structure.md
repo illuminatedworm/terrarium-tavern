@@ -13,7 +13,7 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 | `character/` | 角色卡格式、资源、编辑 Agent、工作区及其 API |
 | `conversation/` | 世界书注入、云端 compact、重生成、回合审核和缓存断点 |
 | `story/` | 剧情模型循环、窗口、笔记、工具、检索仲裁与失败恢复 |
-| `novel/` | 已授权原著文件的导入、索引、独立调查者、消息送达及生命周期 |
+| `novel/` | 参考文件导入与索引、资料调查者、联网调查、消息送达与任务生命周期 |
 | `advisor/` | 参谋 agent 聊天、独立上下文、只读工具、联网与偏好提交 |
 | `chatgpt/` | SIWC 账号授权、凭据存储、模型目录与 OpenAI 官方 Responses 传输 |
 | `web/` | 参谋 agent 与制卡 agent 共用的联网服务、分页和来源记录 |

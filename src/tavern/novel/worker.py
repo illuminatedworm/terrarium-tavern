@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import re
 import time
 
 from pydantic import ValidationError
@@ -11,43 +12,59 @@ from tavern.core.context_usage import context_overflow, context_usage, exceeds
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_view import HANDLE, ModelView
 from tavern.core.usage import observed_usage
-from tavern.novel.config import COMPACT_INSTRUCTION, SYSTEM
+from tavern.novel.config import COMPACT_INSTRUCTION, FILE_INSTRUCTIONS, SYSTEM, WEB_INSTRUCTIONS
 from tavern.novel.source import NovelText
-from tavern.novel.tools import WORKER_SPECS, definitions, read_book
+from tavern.novel.tools import READ_SPECS, WORKER_SPECS, definitions, read_book
 from tavern.scripting.native_response import completion_message, message_digest
 from tavern.scripting.request_context import configure_operation, response_origin
 from tavern.storage.store import dump
+from tavern.web.client import WebTools
+from tavern.web.tools import SPECS as WEB_SPECS
 
 SUMMARY_PREFIX = "此前调查过程的摘要：\n"
+GUIDANCE_URL = re.compile(
+    r"""https?://(?:[^\s<>"'`()，。；！？（）《》【】]|\([^()\s<>]*\))+""", re.IGNORECASE
+)
 
 
 class NovelWorker:
     def __init__(self, service, job, cfg, request_context):
         self.service, self.data, self.job, self.cfg = service, service.data, job, cfg
         self.request_context = request_context
-        self.source = self.data.source(job["source"])
-        self.book = NovelText(service.store.root, self.source)
         self.trace = [r["message"] for r in self.data.trace(job["id"])]
-        self.definitions = definitions(WORKER_SPECS)
         self.tick = time.monotonic()
-        self.header = [
-            {"role": "system", "content": SYSTEM},
-            {
-                "role": "user",
-                "content": dump(
-                    {
-                        "source": "N1",
-                        "name": self.source["name"],
-                        "total_characters": self.source["characters"],
-                        "question": job["task"],
-                        "background": job["background"],
-                        "budget": {
-                            "requests": job["config"]["max_requests"],
-                            "seconds": job["config"]["timeout_seconds"],
-                        },
-                    }
-                ),
+        instructions = [SYSTEM]
+        task = {
+            "question": job["task"],
+            "background": job["background"],
+            "budget": {
+                "requests": job["config"]["max_requests"],
+                "seconds": job["config"]["timeout_seconds"],
             },
+        }
+        self.specs = {}
+        self.book, self.web = None, None
+        self.web_sources = []
+        if job["source"]:
+            source = self.data.source(job["source"])
+            self.book = NovelText(service.store.root, source)
+            task.update(source="N1", name=source["name"], total_characters=source["characters"])
+            self.specs.update(READ_SPECS)
+            instructions.append(FILE_INSTRUCTIONS)
+        if job["web_enabled"]:
+            self.web = WebTools(
+                cfg.web, cfg.network, service.web_transport, mode="local", event=self.web_event
+            )
+            task["web_guidance"] = job["web_guidance"]
+            self.web_urls = {link["url"] for message in self.trace for link in message.get("web_sources", [])}
+            self.web_urls.update(GUIDANCE_URL.findall(job["web_guidance"]))
+            self.specs.update(WEB_SPECS)
+            instructions.append(WEB_INSTRUCTIONS)
+        self.specs.update(WORKER_SPECS)
+        self.definitions = definitions(self.specs)
+        self.header = [
+            {"role": "system", "content": "\n\n".join(instructions)},
+            {"role": "user", "content": dump(task)},
         ]
 
         self.view = ModelView()
@@ -58,6 +75,18 @@ class NovelWorker:
         )
         self.view.reserved.difference_update(self.view.reverse)
         self.header = self.view.messages(self.header)
+
+    def web_event(self, kind, payload):
+        if kind == "web_sources":
+            self.web_sources = payload["sources"]
+            self.web_urls.update(link["url"] for link in self.web_sources)
+
+    def resolve_web_url(self, url: str) -> str:
+        resolved = self.view.restore(url)
+        # Only complete source URLs can carry a mapped value outside the investigation.
+        if resolved != url and resolved not in self.web_urls:
+            raise ValueError("含短编号的网址须完整引用调查指引或联网工具返回的来源网址")
+        return resolved
 
     def live_elapsed(self):
         """Elapsed including the still-unsaved stretch of an in-flight request, for display only."""
@@ -113,7 +142,7 @@ class NovelWorker:
             **(
                 {
                     "_compact_threshold": 1024,
-                    "_maintenance_instructions": "只压缩已完成的原著调查交流，不执行工具，不写故事，返回 OK。",
+                    "_maintenance_instructions": "只压缩已完成的资料调查交流，不执行工具，不写故事，返回 OK。",
                 }
                 if cloud
                 else {}
@@ -123,9 +152,9 @@ class NovelWorker:
         self.record_usage(usage)
         completion = getattr(provider, "last_completion", None)
         if completion and completion.action == "incomplete":
-            raise ValueError(completion_message("原著调查响应未完整结束，进度保留", completion))
+            raise ValueError(completion_message("资料调查响应未完整结束，进度保留", completion))
         if getattr(response, "finish_reason", None) in {"length", "content_filter"}:
-            raise ValueError("原著调查响应被截断或过滤，未保存为报告")
+            raise ValueError("资料调查响应被截断或过滤，未保存为报告")
         return response
 
     def record_usage(self, usage, *, failed=False):
@@ -178,12 +207,12 @@ class NovelWorker:
                 (getattr(provider, "last_native_response", None) or {}).get("items", [])
             )
             if not checkpoint:
-                raise ValueError("服务端未返回原著调查云端压缩状态；原文保留")
+                raise ValueError("服务端未返回资料调查云端压缩状态；原文保留")
             checkpoint = [item for item in checkpoint if item.get("type") != "message"]
         else:
             summary = getattr(response, "text", None) or getattr(response, "content", "")
             if not isinstance(summary, str) or not summary.strip():
-                raise ValueError("原著调查压缩没有返回有效摘要；原文保留")
+                raise ValueError("资料调查压缩没有返回有效摘要；原文保留")
         self.job["progress"]["context"] = {
             "through": end,
             "summary": summary,
@@ -210,10 +239,11 @@ class NovelWorker:
                 continue
             name, arguments = call["function"]["name"], call["function"]["arguments"]
             mail = None
+            self.web_sources = []
             try:
-                if name not in WORKER_SPECS:
-                    raise ValueError("没有此工具；只能使用当前提供的原著读取或询问工具")
-                args = WORKER_SPECS[name][0].model_validate_json(arguments)
+                if name not in self.specs:
+                    raise ValueError("当前调查未获授权使用此工具")
+                args = self.specs[name][0].model_validate_json(arguments)
                 if name == "ask_delegator":
                     if len(pending["tool_calls"]) != 1:
                         raise ValueError("ask_delegator 必须单独调用")
@@ -225,6 +255,12 @@ class NovelWorker:
                     result = {"status": "waiting_for_delegator"}
                     self.job["status"] = "waiting"
                     self.job["progress"]["waiting_for_answer"] = True
+                elif name == "web_search":
+                    result = await self.web.search(args.query, args.limit, args.objective)
+                elif name == "read_webpage":
+                    result = await self.web.read(
+                        self.resolve_web_url(args.url), args.offset, args.limit, service=args.service
+                    )
                 else:
                     result = await read_book(self.book, name, args, self.view)
             except ValidationError as error:
@@ -242,9 +278,10 @@ class NovelWorker:
             }
             self.view.reserved.update(set(HANDLE.findall(str(result))) - self.view.reverse.keys())
             result = self.view.expose(result)
-            self.save(
-                message={"role": "tool", "tool_call_id": call["id"], "content": dump(result)}, mail=mail
-            )
+            message = {"role": "tool", "tool_call_id": call["id"], "content": dump(result)}
+            if self.web_sources:
+                message["web_sources"] = self.web_sources
+            self.save(message=message, mail=mail)
         self.job["progress"].pop("pending", None)
         self.job["progress"].pop("returned", None)
         self.save()

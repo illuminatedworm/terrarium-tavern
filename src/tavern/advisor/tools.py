@@ -161,14 +161,14 @@ class AdvisorTools:
         with o.store.connection() as db:
             current = o.service.novel.advisor_access(db, o.sid)
         if not o.novel_access or current != o.novel_access:
-            raise ValueError("本次咨询的原著授权已关闭或文件已更换")
+            raise ValueError("本次咨询的参考文件授权已关闭或文件已更换")
 
     async def read_novel(self, name, args):
         o = self.owner
         self.check_novel_access()
         remaining = NOVEL_CHAR_LIMIT - o.novel_chars
         if not remaining:
-            raise ValueError("本次咨询已用完 40,000 字符的原著读取额度")
+            raise ValueError("本次咨询已用完 40,000 字符的参考文件读取额度")
         if self.book is None:
             self.book = NovelText(o.store.root, o.service.novel.source(o.novel_access["source"]))
         result = await read_book(self.book, name, args, o.view)
@@ -181,7 +181,7 @@ class AdvisorTools:
         else:
             characters = sum(len(heading["title"]) for heading in result["headings"])
         if characters > remaining:
-            raise ValueError(f"本次咨询剩余 {remaining:,} 个原著字符，请缩小读取范围或减少返回条数")
+            raise ValueError(f"本次咨询剩余 {remaining:,} 个字符的参考文件读取额度，请缩小读取范围或减少返回条数")
         o.novel_chars += characters
         result["name"] = self.book.source["name"]
         o.view.reserved.update(set(HANDLE.findall(str(result))) - o.view.reverse.keys())

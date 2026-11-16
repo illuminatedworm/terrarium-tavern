@@ -1457,7 +1457,7 @@
   font: inherit;
 }
 
-/* 原著 inspector page: an archive layout — the bound file as a book cover, then
+/* 资料调查 inspector page: an archive layout — the bound file as a book cover, then
    the investigators as task cards with request and time meters. */
 .novel-panel {
   display: grid;
@@ -1626,6 +1626,21 @@
   color: var(--text-primary);
   font-size: var(--fs-md);
   font-weight: 550;
+}
+.novel-guidance {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.novel-guidance textarea {
+  margin: 0;
+  resize: vertical;
+}
+.novel-guidance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .novel-model {
   display: flex;

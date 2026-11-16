@@ -136,7 +136,7 @@ def register_story_routes(app, store, context_operations=None):
         if "submit_story" in edit.disabled_tools:
             raise ValueError("submit_story 是本轮正文交付工具，不能关闭")
         if set(edit.disabled_tools) & MAIN_SPECS.keys():
-            raise ValueError("原著调查工具由原著面板的授权开关统一控制")
+            raise ValueError("资料调查工具由「调查」页的总开关统一控制")
         if set(edit.disabled_tools) & MEDIA_SPECS.keys():
             raise ValueError("媒体工具由会话设置的配音与生图开关统一控制")
         options = (

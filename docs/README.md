@@ -27,7 +27,7 @@
 
 | 机制 | 设计文档 |
 |---|---|
-| 原著文件、异步调查与报告送达 | [原著参考](design/novel-research.md) |
+| 参考文件、联网调查与报告送达 | [资料调查](design/novel-research.md) |
 | 剧情窗口、笔记与恢复 | [剧情架构](design/story.md) |
 | 独立参谋 agent 上下文、工具与偏好提交 | [参谋 agent 设计](design/advisor.md) |
 | 编辑草稿、连续上下文与保存 | [制卡 agent 设计](design/card-author.md) |

@@ -1,6 +1,6 @@
 # 剧情工具速查
 
-当前共 **28 个工具**，其中六个原著调查工具仅在用户绑定文件并开启参考后提供给模型，三个媒体工具由右侧“配音与生图”页控制。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
+当前共 **28 个工具**，其中六个资料调查工具在用户开启调查者且具备可用来源时提供给模型，三个媒体工具由右侧“配音与生图”页控制。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
 
 ## 如何工作
 
@@ -15,7 +15,7 @@
 | `view_image` | 主动查看图片 | `ref: string`（一个I引用） | 只可查看授权参考图或当前剧情中的完成图片；在完整工具批次之后向当前模型提供原图。 |
 | `submit_story` | 交付本轮故事正文 | `content: string` | 必须非空白且结构完整，始终启用。每轮最多追加三段。普通文本仅作备注。 |
 | `present_ui` | 展示冻结的交互图形 | `spec: object`（json-render 规格） | 新建故事默认关闭；Kemini 实验对话不提供。每轮至多接收三份，失败不计数；与 `submit_story` 按调用顺序穿插显示；不接受 HTML、SVG、脚本或 URL，界面操作只改变本地显示或填写输入框。 |
-| `start_novel_research` | 异步委派原著调查者 | `question: string`；`background: string=""`；`auto_destroy: boolean=false` | 调查者看不到主上下文，问题需能独立理解；每分支同时最多三个，每轮最多启动五次，销毁或重生成不退回次数。`auto_destroy=true` 在首份最终报告可靠送达后自动销毁，保留报告和历史；报告后仍需复用上下文追问时保持 `false`；提问、失败和暂停不触发。 |
+| `start_novel_research` | 异步委派资料调查者 | `question: string`；`background: string=""`；`auto_destroy: boolean=false` | 调查者看不到主上下文，问题需能独立理解；每分支同时最多三个，每轮最多启动五次，销毁或重生成不退回次数。`auto_destroy=true` 在首份最终报告可靠送达后自动销毁，保留报告和历史；报告后仍需复用上下文追问时保持 `false`；提问、失败和暂停不触发。 |
 | `list_novel_research` | 查看未销毁的调查者 | 无 | 返回 R 编号、状态、剩余额度、是否有待送达消息、失败原因，以及剩余名额和本轮剩余启动次数；不返回原文过程。 |
 | `message_novel_research` | 发送追问或回答 | `ref: string`；`message: string` | 在调查者下一请求前送达，复用原上下文与剩余额度，已暂停或失败的会重新运行；额度耗尽时拒绝。 |
 | `wait_novel_research` | 可选等待调查 | `ref: string`；`timeout_seconds: integer=30` | 允许 1–60 秒，只返回状态，超时不取消；报告和提问在本次工具结果之后单独送达。 |
@@ -68,7 +68,7 @@
 <details>
 <summary>查看工具描述原文与 JSON 示例</summary>
 
-工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。原著调查示例要求绑定文件并开启参考；媒体示例要求开启对应功能、配置 API Key 连接，并已选择人物参考图 I1。异步状态以实际任务为准。参数与错误恢复见[完整协议](story-tools.md)。
+工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。资料调查示例要求开启调查者并配置可用来源；媒体示例要求开启对应功能、配置 API Key 连接，并已选择人物参考图 I1。异步状态以实际任务为准。参数与错误恢复见[完整协议](story-tools.md)。
 
 ### `find_lore_for_edit`
 
@@ -403,7 +403,7 @@ Set clues for next turn's automatic worldbook lookup: the scenes, people, places
 ### `start_novel_research`
 
 ```text
-Delegate a question about the user's novel to a new read-only investigator. Returns an R reference immediately; the investigator runs in the background and can continue across turns. It cannot see your context, so write a self-contained question and pass only the background it needs. Limits: 3 investigators per branch until destroyed, 5 starts per story turn; destroying or regenerating does not return a start.
+Delegate a question about reference material to a new read-only investigator. Returns an R reference immediately; the investigator runs in the background and can continue across turns. It cannot see your context, so write a self-contained question and pass only the background it needs. Limits: 3 investigators per branch until destroyed, 5 starts per story turn; destroying or regenerating does not return a start.
 ```
 
 请求：
@@ -445,7 +445,7 @@ Send a follow-up question, or an answer to an investigator's question. It contin
 请求：
 
 ```json
-{"ref":"R1","message":"请注明原著时期"}
+{"ref":"R1","message":"请注明资料适用的年代"}
 ```
 
 成功返回：

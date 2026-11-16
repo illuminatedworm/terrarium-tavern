@@ -107,7 +107,7 @@ def novel_report_item(seq, message):
         "order": seq * 10,
         "kind": "runtime",
         "name": "novel_report_delivery",
-        "summary": f"{body['investigator']} · 原著调查报告已送达",
+        "summary": f"{body['investigator']} · 资料调查报告已送达",
         "status": "running",
         "details": {},
     }

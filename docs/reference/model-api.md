@@ -43,7 +43,7 @@ Chat Completions 的非流式响应同样必须提供有效的 `finish_reason`�
 - 模型目录使用相同账号的 OAuth 凭据请求 `/v1/models`，读取 `models` 中 `visibility=list` 的 `slug/display_name`，保留服务端顺序。缓存按账号和授权代次隔离。
 - 目录附带 `supported_reasoning_levels`、`default_reasoning_level` 和接口不支持的 `unavailable_reasoning_levels`。SIWC 的档位按模型能力过滤，`xhigh` 与 `max` 各自原样发送；当前直连接口不接受的 `ultra` 标为不可用。已载入目录时，“模型默认”发送目录声明的默认档位；未知能力时省略字段，由接口决定。
 
-实现位于 `chatgpt/`，通过 `core/provider.py` 返回兼容 Terrarium 的 `ModelTransport` 子类。剧情模型、参谋 agent、制卡 agent、原著调查者和探测共用同一入口。SIWC 的协议与缓存行为遵循 [SIWC 订阅共享限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
+实现位于 `chatgpt/`，通过 `core/provider.py` 返回兼容 Terrarium 的 `ModelTransport` 子类。剧情模型、参谋 agent、制卡 agent、资料调查者和探测共用同一入口。SIWC 的协议与缓存行为遵循 [SIWC 订阅共享限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
 
 ## OpenAI 官方 API 模式
 

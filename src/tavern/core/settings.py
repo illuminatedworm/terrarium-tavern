@@ -228,9 +228,9 @@ class SettingsDocument(StrictSettings):
                 continue
             provider = next((p for p in self.shared.providers if p.id == profile.provider_id), None)
             if provider is None:
-                raise ValueError("提供商仍被原著调查模型引用，请先切换调查模型的提供商")
+                raise ValueError("提供商仍被资料调查模型引用，请先切换调查模型的提供商")
             if provider_channel(provider) != ("chatgpt" if key == "official_model" else "standard"):
-                raise ValueError("原著调查模型与渠道不一致")
+                raise ValueError("资料调查模型与渠道不一致")
         profiles = [profile for _, _, profile in self.profiles()]
         profiles.extend(
             (

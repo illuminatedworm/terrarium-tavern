@@ -585,7 +585,7 @@ class Store(MessageAdapters):
                     "SELECT 1 FROM novel_jobs WHERE session=? AND status!='destroyed'", (sid,)
                 ).fetchone()
             ):
-                raise Conflict("存在活跃原著调查者；确认后才能分支。调查仍留在原分支，不会复制到新分支")
+                raise Conflict("存在活跃资料调查者；确认后才能分支。调查仍留在原分支，不会复制到新分支")
             if db.execute(
                 "SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')",
                 (sid,),
@@ -690,8 +690,10 @@ class Store(MessageAdapters):
             result["unicode_story"] = bool(result["unicode_story"])
             result["card_data"] = json.loads(result["card_data"]) if result["card_data"] else None
             result["turns"] = turns
-            novel = db.execute("SELECT enabled FROM novel_bindings WHERE session=?", (sid,)).fetchone()
-            result["novel_enabled"] = bool(novel and novel[0])
+            from tavern.novel.storage import research_enabled
+
+            novel = db.execute("SELECT * FROM novel_bindings WHERE session=?", (sid,)).fetchone()
+            result["novel_enabled"] = research_enabled(self.root, novel)
             result["novel_active"] = db.execute(
                 "SELECT count(*) FROM novel_jobs WHERE session=? AND status!='destroyed'", (sid,)
             ).fetchone()[0]

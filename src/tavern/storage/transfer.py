@@ -33,7 +33,7 @@ from tavern.storage.worldbooks import read_defaults, write_defaults
 MAX_UPLOAD = 256 * 1024 * 1024
 MAX_UNPACKED = 512 * 1024 * 1024
 FORMAT = "terrarium-tavern-personal-data"
-PACKAGE_VERSION = 17
+PACKAGE_VERSION = 18
 JSON_FIELDS = {
     "worldbooks": {"book"},
     "cards": {"resources", "document", "report"},
@@ -437,7 +437,7 @@ def validate_package(store, package, blobs):
             from tavern.novel.transfer import validate_bundle as validate_novel
 
             if bundle.get("novel") is not None and package["version"] < 7:
-                raise ValueError("原著调查需要个人数据包格式 7")
+                raise ValueError("资料调查需要个人数据包格式 7 或以上")
             validate_novel(bundle.get("novel"), blobs, session.get("channel_origin"), novel_sources)
             validate_row(
                 schema,

@@ -576,7 +576,7 @@ class AgentTools:
             }
         if name in MAIN_SPECS:
             if owner.novel is None:
-                raise ToolError("PERMISSION_DENIED", "原著调查服务不可用")
+                raise ToolError("PERMISSION_DENIED", "资料调查服务不可用")
             return await owner.novel.execute(owner, name, args)
         if name == "find_lore_for_edit":
             rows = [

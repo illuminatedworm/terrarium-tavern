@@ -68,6 +68,7 @@ class StoryAgent:
     ):
         self.store, self.tid, self.document = store, tid, document
         self.novel, self.novel_operation = novel, ""
+        self.novel_status: tuple[str, str | None, bool] | None = None
         self.session = {**session, "messages": history}
         self.history, self.snapshot, self.request, self.script = history, snapshot, request, script
         self.regenerate_reply = reply_for_regeneration(request, session)
@@ -443,6 +444,73 @@ class StoryAgent:
         self.continuation.append(copy.deepcopy(message))
         self.new_trace.append({"window_id": window_id, "message": copy.deepcopy(message)})
 
+    def novel_sources(self) -> tuple[str | None, bool]:
+        return self.novel.data.active_sources(self.session["id"]) if self.novel else (None, False)
+
+    async def prepare_request(self, provider, step: int):
+        compact = self.settings.context_strategy == "openai_compact" and self.settings.compact_auto
+        compacted = False
+        while True:
+            mirror = await self.script.call("snapshot")
+            sources = self.novel_sources()
+            enabled = any(sources)
+            if self.novel and enabled != self.session.get("novel_enabled", False):
+                self.session["novel_enabled"] = enabled
+                self.definitions = tool_definitions(
+                    self.session,
+                    self.settings.story_config,
+                    settings=self.settings,
+                    story_format=self.story_format,
+                )
+
+            # Maintenance may await the provider. Claim mail after it, using the
+            # same live authorization as the tool catalog and the narrative request.
+            compiled = self.compile() if compact else None
+            if compiled is not None and (
+                compiled["_compact_stale"]
+                or step == 0
+                and not compacted
+                and exceeds(compiled["context_usage"], self.settings.context_tokens)
+            ):
+                await self.rebuild_compaction(provider, compiled)
+                compacted = True
+                mirror = await self.script.call("snapshot")
+                await self.save_progress(script_mirror=mirror)
+                sources = self.novel_sources()
+                if any(sources) != enabled:
+                    continue
+                compiled = None
+
+            if self.novel and await self.novel.deliver(self, sources, script_mirror=mirror):
+                if self.novel_sources() != sources:
+                    continue
+                compiled = None
+            if compiled is None:
+                compiled = self.compile()
+            if self.must_rollover and not any(
+                t["function"]["name"] == "new_context" for t in self.definitions
+            ):
+                raise ValueError(
+                    "上下文已满，但 new_context 已关闭。请在工具页启用它；已有交接覆盖退出范围时，也可在场景页手动换新窗口。"
+                )
+            # Preserve the final runtime frames even if the first model request fails.
+            await self.save_progress(script_mirror=mirror)
+            return compiled
+
+    async def rebuild_compaction(self, provider, compiled):
+        from tavern.conversation.compaction import prepare_turn
+
+        async def save_replay(value):
+            self.state["compact_replay"] = value
+            self.event("context_replay", {key: value[key] for key in ("batches", "processed", "total")})
+            self.event("usage", {"usage": value["usage"][-1], "calls": 1, "context_maintenance": True})
+            await self.save_progress()
+
+        self.state["compaction"] = await prepare_turn(
+            compiled, self.settings, provider, progress=self.state.get("compact_replay"), save=save_replay
+        )
+        self.state.pop("compact_replay", None)
+
     async def run(self, provider=None, *, provider_factory=None, request_observer=None):
         try:
             if self.settings.story_config.auto_retrieval and not self.resumed:
@@ -492,9 +560,7 @@ class StoryAgent:
                 if dispatching_reports:
                     observe_report_dispatch(request, dispatching_reports, self.event)
 
-            provider.request_observer = (
-                observe_request if self.session.get("novel_enabled") else request_observer
-            )
+            provider.request_observer = observe_request if self.novel else request_observer
             provider.operation_purpose = "narrative"
             provider.failed_usage_capture = lambda payload: self.event("usage", payload)
             if hasattr(provider, "request_context"):
@@ -512,8 +578,7 @@ class StoryAgent:
                     self.append(
                         {**self.media.context_frame(), "_media_catalog": True}, self.state["window"]["id"]
                     )
-                if self.novel and self.session.get("novel_enabled"):
-                    await self.novel.deliver(self)
+                compiled = await self.prepare_request(provider, step)
                 reports = []
                 for seq in range(len(self.new_trace), 0, -1):
                     message = self.new_trace[seq - 1]["message"]
@@ -524,48 +589,6 @@ class StoryAgent:
                 reports.reverse()
                 for item in reports:
                     self.event("story_runtime", item)
-                compiled = self.compile()
-                if (
-                    self.settings.context_strategy == "openai_compact"
-                    and self.settings.compact_auto
-                    and (
-                        compiled["_compact_stale"]
-                        or step == 0
-                        and exceeds(compiled["context_usage"], self.settings.context_tokens)
-                    )
-                ):
-                    # Tools may change fixed sources mid-turn. Repair stale
-                    # checkpoints before the next actual request, while keeping
-                    # pressure-based compaction at the existing turn boundary.
-                    from tavern.conversation.compaction import prepare_turn
-
-                    async def save_replay(value):
-                        self.state["compact_replay"] = value
-                        self.event(
-                            "context_replay", {key: value[key] for key in ("batches", "processed", "total")}
-                        )
-                        self.event(
-                            "usage", {"usage": value["usage"][-1], "calls": 1, "context_maintenance": True}
-                        )
-                        await self.save_progress()
-
-                    checkpoint = await prepare_turn(
-                        compiled,
-                        self.settings,
-                        provider,
-                        progress=self.state.get("compact_replay"),
-                        save=save_replay,
-                    )
-                    self.state["compaction"] = checkpoint
-                    self.state.pop("compact_replay", None)
-                    await self.save_progress()
-                    compiled = self.compile()
-                if self.must_rollover and not any(
-                    t["function"]["name"] == "new_context" for t in self.definitions
-                ):
-                    raise ValueError(
-                        "上下文已满，但 new_context 已关闭。请在工具页启用它；已有交接覆盖退出范围时，也可在场景页手动换新窗口。"
-                    )
                 started = time.perf_counter()
                 tool_options = (
                     {
@@ -579,9 +602,6 @@ class StoryAgent:
                     if self.definitions
                     else {}
                 )
-                # Persist the actual runtime frames even when the very first
-                # model request fails. Resume then reuses them instead of guessing.
-                await self.save_progress()
                 self.restore_preview()
                 self.preview.begin_segment()
                 plain_story = self.story_format == "plain"

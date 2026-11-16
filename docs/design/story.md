@@ -1,6 +1,6 @@
 # 剧情架构与一致性
 
-同一模型负责叙事、检索、笔记维护和授权变量更新。用户开启[原著参考](novel-research.md)后，模型还可委派只读调查，接收调查报告。
+同一模型负责叙事、检索、笔记维护和授权变量更新。用户开启[资料调查](novel-research.md)后，模型还可委派只读调查，接收调查报告。
 
 运行入口为 [story/runtime.py](../../src/tavern/story/runtime.py)。[StoryService](../../src/tavern/application/service.py) 管理检索、隔离脚本依赖与应用操作。游玩使用按渠道配置的模型，制卡与咨询分别使用自己的模型和记录。操作步骤见 [游玩指南](../guides/story.md)，参数与示例见 [工具协议](../reference/story-tools.md)。
 

@@ -1035,6 +1035,95 @@ async def test_fixed_source_edit_rebuilds_before_tool_continuation_without_repla
         await service.close()
 
 
+async def test_novel_authorization_refreshes_before_compact_story_requests(tmp_path, monkeypatch):
+    import io
+
+    from tavern.novel.source import import_file
+    from tavern.storage.store import uid
+    from tests.backend.test_story import Script
+
+    store, _, _ = connected_store(tmp_path)
+    _, session = story(store)
+    sid, source = session["id"], uid()
+    service = runtime(store)
+    research = service.story.novel
+    report = "调查确认了参考文件中的钟声。"
+    calls = []
+
+    def seed(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return sse(completed("", [("submit_story", {"content": "钟楼下的灯亮了。"})]))
+        return sse(compact_response(""))
+
+    try:
+        store.chatgpt.http_transport = httpx.MockTransport(seed)
+        _, session = await operate(service, session, "enable_compact")
+        assert not calls
+        result, session = await turn(service, session, None)
+        assert result["status"] == "committed", result["error"]
+        assert session["snapshot"]["story"]["compaction"]["items"]
+
+        metadata = import_file(store.root, source, io.BytesIO(b"Reference text."), "reference.txt")
+        research.data.bind(sid, 0, source, metadata)
+        research.data.configure(sid, 1, enabled=True, web_enabled=True)
+        identity, _ = research.data.create(sid, "report", 2, "", "查钟声", "", research.snapshot_config(sid))
+        job = research.data.job(identity)
+        job["status"] = "completed"
+        research.data.save(job, mail={"kind": "report", "content": report, "operation": "report"})
+        await research.cancel_paused(research.data.configure(sid, 2, enabled=False))
+
+        script_call = Script.call
+        reopened = False
+
+        async def snapshot_with_authorization(script, method, *args):
+            nonlocal reopened
+            mirror = await script_call(script, method, *args)
+            if (
+                method == "snapshot"
+                and not reopened
+                and len(mirror["messages"]) == len(session["messages"]) + 2
+            ):
+                # The first checkpoint after the turn reserved its input and output.
+                research.data.configure(sid, 3, enabled=True)
+                reopened = True
+            return mirror
+
+        monkeypatch.setattr(Script, "call", snapshot_with_authorization)
+        stages, web_states = [], []
+
+        async def route(request):
+            body = json.loads(request.content)
+            if body.get("instructions"):
+                stages.append("maintenance")
+                assert report not in json.dumps(body["input"], ensure_ascii=False)
+                return sse(compact_response())
+            stages.append("story")
+            assert report in json.dumps(body["input"], ensure_ascii=False)
+            states = [
+                json.loads(item["content"].split("\n", 1)[1])
+                for item in body["input"]
+                if isinstance(item.get("content"), str) and item["content"].startswith("资料调查运行状态：")
+            ]
+            web_states.append(states[-1]["web_enabled"])
+            if len(web_states) == 1:
+                assert any(item.get("type") == "compaction" for item in body["input"])
+                await research.cancel_paused(research.data.configure(sid, 4, web_enabled=False))
+                return sse(completed("", [("list_novel_research", {})]))
+            if len(web_states) == 2:
+                return sse(completed("", [("submit_story", {"content": "钟声响起。"})]))
+            return sse(completed(""))
+
+        store.chatgpt.http_transport = httpx.MockTransport(route)
+        result, _ = await turn(service, session, None)
+        assert result["status"] == "committed", result["error"]
+        assert stages == ["maintenance", "story", "story", "story"]
+        assert web_states == [True, False, False]
+        assert research.data.inbox(sid) == []
+    finally:
+        await service.close()
+
+
 async def test_pre_turn_recompaction_keeps_the_pending_exchange_outside_the_checkpoint():
     from tavern.conversation.compaction import hashes, prepare_turn, project_compact
     from tavern.core.models import Settings
