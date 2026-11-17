@@ -369,7 +369,8 @@ SPECS["submit_story"] = (
     "1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. "
     "Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. "
     "Ordinary assistant text is commentary. Tools may run before, between or after segments, including after "
-    "the third. Check variables and notes against the entire story, then end normally; delivery does not commit the turn.",
+    "the third. If variable updates are required this turn or you wrote notes, check the relevant content "
+    "against the entire story before ending. Delivery does not commit the turn.",
 )
 SPECS["present_ui"] = (PresentUI, VISUAL_DESCRIPTION)
 
@@ -570,9 +571,9 @@ class AgentTools:
             return {
                 "saved_to_draft": True,
                 "ref": message_ref(len(owner.source_history)),
-                "message": f"已接收第 {count}/{MAX_SEGMENTS} 段；可继续追加或结束。"
+                "message": f"已接收第 {count}/{MAX_SEGMENTS} 段。可按需追加。正文和本轮必做事项完成后结束回复。"
                 if count < MAX_SEGMENTS
-                else f"已接收第 {MAX_SEGMENTS}/{MAX_SEGMENTS} 段；请完成收尾后结束。",
+                else f"已接收第 {MAX_SEGMENTS}/{MAX_SEGMENTS} 段。完成本轮必做事项后结束回复。",
             }
         if name in MAIN_SPECS:
             if owner.novel is None:

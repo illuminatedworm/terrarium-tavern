@@ -565,7 +565,7 @@ View an authorized reference or a completed story image with your current model.
 ### `submit_story`
 
 ```text
-Append a new story segment to this turn's draft. At most 3 successful submissions per turn; 1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. Ordinary assistant text is commentary. Tools may run before, between or after segments, including after the third. Check variables and notes against the entire story, then end normally; delivery does not commit the turn.
+Append a new story segment to this turn's draft. At most 3 successful submissions per turn; 1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. Ordinary assistant text is commentary. Tools may run before, between or after segments, including after the third. If variable updates are required this turn or you wrote notes, check the relevant content against the entire story before ending. Delivery does not commit the turn.
 ```
 
 请求：

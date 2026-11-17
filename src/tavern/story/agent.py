@@ -28,6 +28,7 @@ from tavern.scripting.lore import merge_script_lore, sync_runtime_lore
 from tavern.scripting.native_response import completion_message, message_digest
 from tavern.scripting.request_context import ProviderRequestContext, response_origin
 from tavern.story.activity import novel_report_item, observe_report_dispatch
+from tavern.story.config import MAX_BATCH_CALLS
 from tavern.story.content import lore_references
 from tavern.story.content_history import CONTENT_TOOLS_VERSION, content_history, retired_content_call
 from tavern.story.context import compile_window, load_trace
@@ -39,10 +40,6 @@ from tavern.story.recovery import PROGRESS_VERSION, saved_story_format
 from tavern.story.state import story_state
 from tavern.story.tools import AgentTools, encoded, tool_definitions
 from tavern.story.visibility import context_messages
-
-# Each executed call checkpoints the whole draft, so a runaway relay batch costs
-# quadratic I/O. Legitimate story maintenance fits comfortably within this bound.
-MAX_BATCH_CALLS = 32
 
 
 class StoryAgent:

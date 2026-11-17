@@ -392,13 +392,9 @@ def compile_window(
                 if segment_count < MAX_SEGMENTS
                 else "已达上限，不再调用 submit_story；"
             )
-            + "所有段落共用此 H 引用，read_history 返回已接收的累计全文。普通文本仅作备注；"
+            + "所有段落共用此 H 引用，read_history 返回已接收的累计全文。普通文本仅作备注。"
         )
-        + (
-            "如需追加段落或有未完成的工具调用就继续，否则直接结束本次回复。"
-            if segment_count < MAX_SEGMENTS
-            else "如有未完成的工具调用就继续，否则直接结束本次回复。"
-        )
+        + "正文写完或已达段数上限，且本轮必做事项均已完成时，结束回复。"
         + ("" if story_in_context else "\n<roleplay_draft>\n" + story["content"] + "\n</roleplay_draft>")
         if story is not None
         else "",
