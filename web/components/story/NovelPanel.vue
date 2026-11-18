@@ -72,6 +72,20 @@ const excerpt = ref<{ text: string; start: number; end: number; has_more: boolea
 const viewing = ref<NovelSource | null>(null),
   history = ref(false),
   choosingFile = ref(false);
+const excerptDialog = ref<HTMLElement>();
+watch(
+  excerptDialog,
+  (dialog, _, onCleanup) => {
+    if (!dialog) return;
+    // Escape should close the file preview before it reaches the mobile drawer.
+    const trigger = document.activeElement;
+    dialog.querySelector<HTMLButtonElement>('button.close')?.focus();
+    onCleanup(() => {
+      if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus({ preventScroll: true });
+    });
+  },
+  { flush: 'post' },
+);
 const statusTone: Record<NovelJob['status'], string> = {
   running: 'live',
   waiting: 'live',
@@ -306,198 +320,213 @@ onBeforeUnmount(() => {
     </p>
     <p v-if="!state" role="status" class="state-empty">正在读取资料调查设置…</p>
     <template v-else>
-      <article class="novel-book">
-        <div class="novel-spine" aria-hidden="true"><span>资料</span></div>
-        <div class="novel-book-main">
-          <template v-if="state.source">
-            <h3>{{ state.source.name }}</h3>
-            <p class="novel-meta">
-              {{ state.source.characters.toLocaleString() }} 字符 · {{ state.source.encoding }} ·
-              {{ when(state.source.created) }}
-              <FieldHelp
-                :tooltip="`副本位置：${state.source.location}。外部原文件修改不会自动生效，需要替换文件。`"
-              />
-            </p>
-            <p v-if="state.source.missing" role="alert" class="novel-alert">
-              参考文件缺失。{{ fileUsers ? '请先销毁使用此文件的调查者，再重新导入。' : '可重新导入文件。' }}
-            </p>
-            <div class="novel-book-actions">
-              <button
-                class="icon-button"
-                title="查看副本"
-                aria-label="查看副本"
-                :disabled="state.source.missing"
-                @click="preview(state.source)"
-              >
-                <Icon name="eye" :size="16" />
-              </button>
-              <a
-                v-if="!state.source.missing"
-                class="icon-button"
-                title="下载原文件"
-                aria-label="下载原文件"
-                :href="`/api${root}/sources/${state.source.id}/download`"
-                download
-                ><Icon name="download" :size="16"
-              /></a>
-              <button
-                class="icon-button"
-                title="解绑"
-                aria-label="解绑"
-                :disabled="fileLocked"
-                @click="configure({ unbind: true })"
-              >
-                <Icon name="unlink" :size="16" />
-              </button>
-            </div>
-          </template>
-          <template v-else>
-            <h3>尚未导入参考文件</h3>
-            <p class="novel-meta">导入纯文本文件即可供资料调查者使用。</p>
-          </template>
-          <div v-if="state.source && !choosingFile" class="novel-book-foot">
+      <section class="novel-research" aria-label="资料调查者设置">
+        <header class="novel-master">
+          <h3 class="novel-setting-heading">
+            <label class="novel-switch-row"
+              ><span>启用资料调查者</span>
+              <input
+                type="checkbox"
+                class="switch"
+                role="switch"
+                :checked="state.authorized"
+                :disabled="!!busy || (!state.authorized && !state.can_enable)"
+                @change="toggle($event, 'enabled')"
+            /></label>
+          </h3>
+          <p v-if="!state.can_enable" role="status" class="novel-alert">
+            {{ state.authorized ? '缺少可用来源。可关闭总开关撤销授权。' : '缺少可用来源。' }}
+            请导入参考文件，或填写调查指引并开启联网查询。
+          </p>
+          <p class="novel-model">
+            <span id="novel-model-name" class="novel-model-name">
+              调查模型：{{ providerName(state.effective.profile.provider_id) }} /
+              {{ state.effective.profile.model || '尚未配置' }}
+            </span>
             <button
-              v-if="state.history.length > 1"
-              class="quiet"
-              :aria-expanded="history"
-              @click="history = !history"
+              id="novel-model-channel"
+              type="button"
+              aria-labelledby="novel-model-name novel-model-channel"
+              @click="emit('settings')"
             >
-              历史版本（{{ state.history.length }}）<Icon
-                :name="history ? 'chevron-up' : 'chevron-down'"
-                :size="14"
-              />
-            </button>
-            <span v-else></span>
-            <button :disabled="fileLocked" @click="choosingFile = true">
-              <Icon name="import" :size="16" />替换文件
-            </button>
-          </div>
-          <div v-else class="novel-import">
-            <label
-              >编码<select v-model="encoding" :disabled="fileLocked">
-                <option value="utf-8">UTF-8（默认，识别 BOM）</option>
-                <option value="utf-16">UTF-16</option>
-                <option value="gb18030">GB18030</option>
-                <option value="big5">Big5</option>
-              </select></label
-            >
-            <button :disabled="fileLocked" @click="fileInput?.click()">
-              <Icon name="import" :size="16" />{{ busy === 'import' ? '正在导入…' : '选择文件' }}
-            </button>
-            <button
-              v-if="state.source"
-              class="quiet"
-              :disabled="busy === 'import'"
-              @click="choosingFile = false"
-            >
-              取消
+              {{ channelLabels[state.effective.channel] }} ·
+              {{ state.effective.follows_main ? '跟随主模型' : '用户指定'
+              }}<Icon name="arrow-right" :size="12" />
             </button>
             <FieldHelp
-              tooltip="支持 txt、md、markdown，最大 64 MiB。应用保存固定副本。调查时，查阅的片段将发送给调查模型。"
+              :tooltip="
+                (state.effective.channel === 'chatgpt'
+                  ? 'OpenAI 官方渠道使用云端压缩。'
+                  : '普通 API 使用摘要压缩。') +
+                (state.effective.follows_main
+                  ? '实际创建时跟随当前剧情回合的模型配置，包括本轮临时思考档位；已启动剧情生成的配置不受中途全局修改影响。'
+                  : '')
+              "
             />
+          </p>
+          <p class="novel-privacy">剧情模型按需委派，查阅的资料片段会发送给调查模型。</p>
+        </header>
+        <section class="novel-source" aria-labelledby="novel-file-heading">
+          <h4 id="novel-file-heading" class="novel-spine">资料</h4>
+          <div class="novel-source-body">
+            <div class="novel-source-row">
+              <p v-if="state.source" class="novel-file-name">{{ state.source.name }}</p>
+              <p v-else class="novel-file-empty">尚未导入参考文件</p>
+              <div v-if="state.source" class="novel-file-actions">
+                <button
+                  class="icon-button"
+                  title="查看副本"
+                  aria-label="查看副本"
+                  :disabled="state.source.missing"
+                  @click="preview(state.source)"
+                >
+                  <Icon name="eye" :size="16" />
+                </button>
+                <a
+                  v-if="!state.source.missing"
+                  class="icon-button"
+                  title="下载原文件"
+                  aria-label="下载原文件"
+                  :href="`/api${root}/sources/${state.source.id}/download`"
+                  download
+                  ><Icon name="download" :size="16"
+                /></a>
+                <button
+                  class="icon-button"
+                  title="解绑"
+                  aria-label="解绑"
+                  :disabled="fileLocked"
+                  @click="configure({ unbind: true })"
+                >
+                  <Icon name="unlink" :size="16" />
+                </button>
+              </div>
+            </div>
+            <template v-if="state.source">
+              <p class="novel-meta">
+                {{ state.source.characters.toLocaleString() }} 字符 · {{ state.source.encoding }} ·
+                {{ when(state.source.created) }}
+                <FieldHelp
+                  :tooltip="`副本位置：${state.source.location}。外部原文件修改不会自动生效，需要替换文件。`"
+                />
+              </p>
+              <p v-if="state.source.missing" role="alert" class="novel-alert">
+                参考文件缺失。{{
+                  fileUsers ? '请先销毁使用此文件的调查者，再重新导入。' : '可重新导入文件。'
+                }}
+              </p>
+            </template>
+            <div v-if="state.source && !choosingFile" class="novel-file-tools">
+              <button
+                v-if="state.history.length > 1"
+                class="quiet"
+                :aria-expanded="history"
+                @click="history = !history"
+              >
+                历史版本（{{ state.history.length }}）<Icon
+                  :name="history ? 'chevron-up' : 'chevron-down'"
+                  :size="14"
+                />
+              </button>
+              <button :disabled="fileLocked" @click="choosingFile = true">
+                <Icon name="import" :size="16" />替换文件
+              </button>
+            </div>
+            <div v-else class="novel-import">
+              <label
+                >编码<select v-model="encoding" :disabled="fileLocked">
+                  <option value="utf-8">UTF-8（默认，识别 BOM）</option>
+                  <option value="utf-16">UTF-16</option>
+                  <option value="gb18030">GB18030</option>
+                  <option value="big5">Big5</option>
+                </select></label
+              >
+              <button :disabled="fileLocked" @click="fileInput?.click()">
+                <Icon name="import" :size="16" />{{ busy === 'import' ? '正在导入…' : '选择文件' }}
+              </button>
+              <button
+                v-if="state.source"
+                class="quiet"
+                :disabled="busy === 'import'"
+                @click="choosingFile = false"
+              >
+                取消
+              </button>
+              <FieldHelp
+                tooltip="支持 txt、md、markdown，最大 64 MiB。应用保存固定副本。调查时，查阅的片段将发送给调查模型。"
+              />
+            </div>
+            <div v-if="history || (!state.source && state.history.length)" class="novel-history">
+              <button
+                v-for="source in state.history"
+                :key="source.id"
+                class="quiet"
+                :disabled="source.missing"
+                @click="preview(source)"
+              >
+                {{ source.name }} · {{ when(source.created) }} ·
+                {{ source.current ? '当前版本' : '历史版本，仅供回查' }}{{ source.missing ? ' · 缺失' : '' }}
+              </button>
+            </div>
+            <input ref="fileInput" type="file" accept=".txt,.md,.markdown" hidden @change="importSource" />
+            <p v-if="fileUsers" role="status" class="novel-alert">
+              {{ fileUsers }} 个调查者使用当前文件。替换或解绑前请先销毁这些调查者。
+            </p>
           </div>
-          <div v-if="history || (!state.source && state.history.length)" class="novel-history">
-            <button
-              v-for="source in state.history"
-              :key="source.id"
-              class="quiet"
-              :disabled="source.missing"
-              @click="preview(source)"
-            >
-              {{ source.name }} · {{ when(source.created) }} ·
-              {{ source.current ? '当前版本' : '历史版本，仅供回查' }}{{ source.missing ? ' · 缺失' : '' }}
-            </button>
+        </section>
+        <section class="novel-source" aria-labelledby="novel-web-heading">
+          <h4 id="novel-web-heading" class="novel-spine"><label for="novel-web-enabled">联网查询</label></h4>
+          <div class="novel-source-body">
+            <div class="novel-guidance">
+              <div class="novel-source-row">
+                <label for="novel-web-guidance">调查指引</label>
+                <input
+                  id="novel-web-enabled"
+                  type="checkbox"
+                  class="switch"
+                  role="switch"
+                  :checked="state.web_enabled"
+                  :disabled="!!busy"
+                  @change="toggle($event, 'web_enabled')"
+                />
+              </div>
+              <textarea
+                id="novel-web-guidance"
+                v-model="guidance"
+                rows="2"
+                :disabled="!!busy"
+                placeholder="填写主题、作品名、网址或优先查阅的来源"
+              />
+            </div>
+            <div v-if="guidanceDirty" class="novel-guidance-actions">
+              <button :disabled="!!busy" @click="configure({ web_guidance: guidance })">保存指引</button>
+              <button class="quiet" :disabled="!!busy" @click="guidance = savedGuidance">撤销修改</button>
+            </div>
+            <p class="novel-privacy">
+              指引供新任务参考。没有可读文件时，启用调查者需要填写指引。<br />查询词和目标网址会发送给联网服务。
+            </p>
+            <p class="novel-services">
+              <button type="button" @click="emit('services')">
+                联网服务与代理<Icon name="arrow-right" :size="12" />
+              </button>
+            </p>
           </div>
-        </div>
-        <input ref="fileInput" type="file" accept=".txt,.md,.markdown" hidden @change="importSource" />
-      </article>
-      <p v-if="fileUsers" role="status" class="novel-alert">
-        {{ fileUsers }} 个调查者使用当前文件。替换或解绑前请先销毁这些调查者。
-      </p>
-
-      <div class="novel-auth">
-        <label class="novel-auth-row">
-          <span>联网查询</span>
-          <input
-            type="checkbox"
-            class="switch"
-            role="switch"
-            :checked="state.web_enabled"
-            :disabled="!!busy"
-            @change="toggle($event, 'web_enabled')"
-          />
-        </label>
-        <label class="novel-guidance">
-          <span>调查指引</span>
-          <textarea
-            v-model="guidance"
-            rows="3"
-            :disabled="!!busy"
-            placeholder="填写主题、作品名、网址或优先查阅的来源"
-          />
-        </label>
-        <div v-if="guidanceDirty" class="novel-guidance-actions">
-          <button :disabled="!!busy" @click="configure({ web_guidance: guidance })">保存指引</button>
-          <button class="quiet" :disabled="!!busy" @click="guidance = savedGuidance">撤销修改</button>
-        </div>
-        <p class="novel-privacy">
-          指引供新任务参考。没有可读文件时，启用调查者需要填写指引。查询词和目标网址会发送给联网服务。
-        </p>
-        <p class="novel-model">
-          <button type="button" @click="emit('services')">
-            联网服务与代理<Icon name="arrow-right" :size="12" />
-          </button>
-        </p>
-      </div>
-
-      <div class="novel-auth">
-        <label class="novel-auth-row"
-          ><span>启用资料调查者</span
-          ><input
-            type="checkbox"
-            class="switch"
-            role="switch"
-            :checked="state.authorized"
-            :disabled="!!busy || (!state.authorized && !state.can_enable)"
-            @change="toggle($event, 'enabled')"
-        /></label>
-        <p v-if="!state.can_enable" role="status" class="novel-alert">
-          {{ state.authorized ? '缺少可用来源。可关闭总开关撤销授权。' : '缺少可用来源。' }}
-          请导入参考文件，或填写调查指引并开启联网查询。
-        </p>
-        <p class="novel-model">
-          <button type="button" @click="emit('settings')">
-            调查模型：{{ providerName(state.effective.profile.provider_id) }} /
-            {{ state.effective.profile.model || '尚未配置' }} · {{ channelLabels[state.effective.channel] }} ·
-            {{ state.effective.follows_main ? '跟随主模型' : '用户指定'
-            }}<Icon name="arrow-right" :size="12" />
-          </button>
-          <FieldHelp
-            :tooltip="
-              (state.effective.channel === 'chatgpt'
-                ? 'OpenAI 官方渠道使用云端压缩。'
-                : '普通 API 使用摘要压缩。') +
-              (state.effective.follows_main
-                ? '实际创建时跟随当前剧情回合的模型配置，包括本轮临时思考档位；已启动剧情生成的配置不受中途全局修改影响。'
-                : '')
-            "
-          />
-        </p>
-        <p class="novel-privacy">剧情模型按需委派，调查者将查阅的资料片段发送给调查模型。</p>
-      </div>
-
-      <div class="novel-auth">
-        <label class="novel-auth-row">
-          <span>允许参谋 agent 查阅参考文件</span>
-          <input
-            type="checkbox"
-            class="switch"
-            role="switch"
-            :checked="state.advisor_enabled"
-            :disabled="!!busy || (!state.advisor_enabled && (!state.source || state.source.missing))"
-            @change="authorizeAdvisor"
-          />
-        </label>
+        </section>
+      </section>
+      <section class="novel-advisor" aria-label="参谋 agent 查阅设置">
+        <h3 class="novel-setting-heading">
+          <label class="novel-switch-row">
+            <span>允许参谋 agent 查阅参考文件</span>
+            <input
+              type="checkbox"
+              class="switch"
+              role="switch"
+              :checked="state.advisor_enabled"
+              :disabled="!!busy || (!state.advisor_enabled && (!state.source || state.source.missing))"
+              @change="authorizeAdvisor"
+            />
+          </label>
+        </h3>
         <p class="novel-model">
           <button type="button" @click="emit('advisor')">
             参谋模型：{{ advisorModel ? providerName(advisorModel.provider_id) + ' / ' : ''
@@ -509,7 +538,7 @@ onBeforeUnmount(() => {
         <p class="novel-privacy">
           查阅时原文片段会发送给参谋模型。换模型沿用授权，替换或解绑文件会关闭授权。关闭后，旧片段仍可能随咨询历史发送，可在参谋栏清空咨询。
         </p>
-      </div>
+      </section>
 
       <div class="novel-section-head">
         <h3>
@@ -655,7 +684,12 @@ onBeforeUnmount(() => {
       <button v-if="archiveBefore" class="quiet" @click="loadOlder">加载更早的调查记录</button>
     </template>
     <Teleport to="body">
-      <div v-if="viewing" class="modal-backdrop" @keydown.esc.prevent.stop="viewing = null">
+      <div
+        v-if="viewing"
+        ref="excerptDialog"
+        class="modal-backdrop"
+        @keydown.esc.prevent.stop="viewing = null"
+      >
         <AppModal label="参考文件副本" size="large" class="novel-excerpt-modal" @close="viewing = null">
           <span class="eyebrow">参考文件副本</span>
           <h2>{{ viewing.name }}</h2>
