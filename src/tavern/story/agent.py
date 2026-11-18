@@ -27,6 +27,7 @@ from tavern.scripting.kemini import AuxiliaryParser
 from tavern.scripting.lore import merge_script_lore, sync_runtime_lore
 from tavern.scripting.native_response import completion_message, message_digest
 from tavern.scripting.request_context import ProviderRequestContext, response_origin
+from tavern.storage.story_cache import story_cache_window
 from tavern.story.activity import novel_report_item, observe_report_dispatch
 from tavern.story.config import MAX_BATCH_CALLS
 from tavern.story.content import lore_references
@@ -258,7 +259,12 @@ class StoryAgent:
         )
 
     def event(self, kind, payload):
-        self.store.event(self.tid, kind, {"purpose": "story", **payload})
+        cache = (
+            (self.session["id"], story_cache_window(self.snapshot, self.settings.context_strategy))
+            if kind == "usage"
+            else None
+        )
+        self.store.event(self.tid, kind, {"purpose": "story", **payload}, cache=cache)
 
     def apply_script_lore(self, initial_lore, processed, *, include_existing=False):
         if not self.request.allow_content_edit:

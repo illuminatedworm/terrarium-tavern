@@ -207,4 +207,5 @@ export type StoryContextPreview = JsonObject & {
   cache?: { scope: string; revision: number; message_id: string | null };
   usage: JsonObject | null;
   cache_usage: ConversationCacheUsage | null;
+  cache_usage_expires_at: number | null;
 };

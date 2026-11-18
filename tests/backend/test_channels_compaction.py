@@ -918,7 +918,12 @@ async def test_user_turn_compacts_before_story_only_when_enabled_and_never_durin
         saved = store.turn(started["id"])
         assert saved["status"] == "committed", saved.get("error")
         assert stages == (["maintenance"] if automatic else []) + ["story", "story", "story"]
-        assert store.session(session["id"])["messages"][-2]["raw"] == text
+        updated = store.session(session["id"])
+        assert updated["messages"][-2]["raw"] == text
+        usage, _ = store.story_cache.read(
+            updated["id"], store.session_settings(updated).for_role("story"), updated["snapshot"]
+        )
+        assert usage == {"prompt_tokens": 60, "cached_tokens": 36}
     finally:
         await service.close()
 
@@ -961,6 +966,12 @@ async def test_failed_pre_turn_compaction_does_not_generate_or_commit_story(tmp_
         assert len(requests) == 1
         current = store.session(session["id"])
         assert current["head"] == session["head"] and current["snapshot"] == before
+        operation, current = await operate(service, current, "compact")
+        assert not operation["compacted"]
+        stats, _ = store.story_cache.read(
+            current["id"], store.session_settings(current).for_role("story"), current["snapshot"]
+        )
+        assert stats == {"prompt_tokens": 40, "cached_tokens": 24}
     finally:
         await service.close()
 

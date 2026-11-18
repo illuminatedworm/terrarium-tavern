@@ -42,14 +42,16 @@ def register_model_selection_routes(app, store, editor):
             ).fetchone():
                 raise Conflict("请先完成或取消上下文整理")
             settings = store.settings(row["channel_origin"])
-            selection = edit.selection.remember(json.loads(row["model_selection"]), settings.story)
-            select_runtime(settings, "story", selection.model_dump(), row["channel_origin"])
+            previous = json.loads(row["model_selection"])
+            selection = edit.selection.remember(previous, settings.story)
+            after = select_runtime(settings, "story", selection.model_dump(), row["channel_origin"])
             # Connection preferences do not change story revision: resumable work
             # still references the same story, with its complete original context.
             db.execute(
                 "UPDATE sessions SET model_selection=? WHERE id=?",
                 (selection.model_dump_json(exclude_defaults=True), sid),
             )
+            store.story_cache.change_origin(db, sid, after)
         return store.session(sid)
 
     @app.put("/api/card-author/conversations/{wid}/model")

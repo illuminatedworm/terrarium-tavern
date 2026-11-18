@@ -7,7 +7,7 @@ import {
   type ConversationCacheUsage,
 } from '../../lib/editorContextStats';
 
-const props = defineProps<{ usage?: ConversationCacheUsage | null }>();
+const props = defineProps<{ usage?: ConversationCacheUsage | null; segmented?: boolean }>();
 const { anchor, bubble, open, position, listeners } = useAnchoredTip();
 const tipId = useId();
 const rate = computed(() => conversationCacheRate(props.usage));
@@ -54,7 +54,9 @@ const rows = computed(() => {
         </div>
       </dl>
       <p>
-        单位 tokens，按本会话全部请求的接口实际用量累计。运行期间保留上次完整统计，结束后刷新{{
+        单位 tokens，按{{
+          segmented ? '当前游玩统计区间内' : '本会话全部请求'
+        }}的接口实际用量累计。运行期间保留上次完整统计，结束后刷新{{
           ratio == null ? '；尚无完整计数时显示“暂无”' : ''
         }}。
       </p>

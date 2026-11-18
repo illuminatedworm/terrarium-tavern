@@ -94,7 +94,7 @@ Linux 使用 `./start.sh --data restored-data` 启动恢复的数据。
 
 **从 v0.8.0 之前升级**：v0.8.0 把 Python 基准升到 3.13，此前的 Windows 和 Linux 安装都需要先停止旧服务，再重新运行 `setup.ps1` 或 `setup.sh`，不能直接沿用旧环境启动。uv 会按 `.python-version` 准备 Python 3.13，并重建不兼容的 `.venv` 和锁定依赖，可能需要下载较大的依赖。使用本地向量检索或重排的用户仍须加 `-LocalRetrieval` 或 `--local-retrieval`，以重新安装 torch 等可选依赖；已下载的模型权重在数据目录中，不需要重新下载。
 
-**数据格式**：当前数据库为 **schema 30**，设置文档为 **version 22**，个人数据包为 **version 18**。程序先只读核对格式，需要升级时先生成 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 数据库备份。各版本变化见[格式规则](../reference/settings-api.md#数据库与设置迁移)。
+**数据格式**：当前数据库为 **schema 32**，设置文档为 **version 22**，个人数据包为 **version 18**。程序先只读核对格式，需要升级时先生成 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 数据库备份。各版本变化见[格式规则](../reference/settings-api.md#数据库与设置迁移)。
 
 角色配音与插图属于正式故事数据，完整数据包默认携带媒体文件；缓存清理不会删除。分支共享不可变文件，最后一个所属故事删除后才回收。导入的未完成媒体任务转为中断，不会自动产生新的外部请求。WAV 音频会增加备份体积，数据包容量限制超出时明确报错，不省略媒体。
 

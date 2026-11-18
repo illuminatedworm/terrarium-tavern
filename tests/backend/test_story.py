@@ -1025,6 +1025,7 @@ async def test_empty_provider_error_keeps_diagnostic_type(story):
 
 
 async def test_story_api_preview_and_recovery(story):
+    from tavern.storage.story_cache import story_cache_window
     from tavern.story.handoff import HandoffWrite, apply_write
 
     store, session = story
@@ -1091,13 +1092,24 @@ async def test_story_api_preview_and_recovery(story):
             assert (
                 await client.post(endpoint, json={"expected_revision": current["revision"]})
             ).status_code == 409
+            sid = session["id"]
+            settings = store.session_settings(current).for_role("story")
+            window = story_cache_window(current["snapshot"], settings.context_strategy)
+            store.story_cache.begin(sid, tid, settings, current["snapshot"])
+            usage = {"prompt_tokens": 100, "cached_tokens": 60}
+            store.event(tid, "usage", {"usage": usage}, cache=(sid, window))
             store.set_turn(tid, status="cancelled")
+            before = (await client.post(f"/api/sessions/{sid}/preview", json={})).json()
+            assert before["cache_usage"] == usage
+            assert before["cache_usage_expires_at"] is not None
             result = await client.post(
                 endpoint, json={"keep_recent": 0, "expected_revision": current["revision"]}
             )
             assert result.status_code == 200
             assert result.json()["snapshot"]["story"]["window"]["start"] == 1
             assert result.json()["snapshot"]["story"]["handoff"] == original
+            after = (await client.post(f"/api/sessions/{sid}/preview", json={})).json()
+            assert after["cache_usage"] is None and after["cache_usage_expires_at"] is None
             view = (await client.get(f"/api/sessions/{session['id']}/story")).json()
             assert view["handoff"] == {"text": render_text(original, current["messages"])}
             assert (

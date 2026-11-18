@@ -338,7 +338,7 @@ def register_settings_routes(app, store):
             for name in new.revisions:
                 if getattr(new, name) != getattr(old, name):
                     new.revisions[name] += 1
-            db.execute("UPDATE meta SET value=? WHERE key='settings'", (new.model_dump_json(),))
+            store.write_settings(db, old, new)
         if editor:
             for path in payload.changes:
                 put_path(editor["latest"][scope], path, get_path(new.model_dump()[scope], path))
@@ -373,7 +373,7 @@ def register_settings_routes(app, store):
             for name in new.revisions:
                 if getattr(new, name) != getattr(old, name):
                     new.revisions[name] += 1
-            db.execute("UPDATE meta SET value=? WHERE key='settings'", (new.model_dump_json(),))
+            store.write_settings(db, old, new)
         for path in page["paths"]:
             put_path(editor["latest"][scope], path, get_path(new.model_dump()[scope], path))
         return public_settings(new)

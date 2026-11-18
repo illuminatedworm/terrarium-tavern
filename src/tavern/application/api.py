@@ -902,7 +902,9 @@ def create_app(data_dir=None):
 
                 attach_local_estimate(result, settings)
         result["usage"] = store.latest_usage(sid)
-        result["cache_usage"] = store.session_cache_usage(sid)
+        result["cache_usage"], result["cache_usage_expires_at"] = store.story_cache.read(
+            sid, settings, s["snapshot"]
+        )
         return result
 
     @app.post("/api/sessions/{sid}/messages-preview")

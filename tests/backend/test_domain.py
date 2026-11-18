@@ -1,5 +1,5 @@
-import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -255,9 +255,7 @@ async def test_meter_write_lock_and_repeated_cancellation_settle_before_return(
             await provider.close()
 
 
-def test_conversation_cache_usage_sums_requests_without_filling_missing_counters(store, session):
-    from tavern.storage.maintenance import cleanup
-
+def test_conversation_cache_usage_sums_requests_without_filling_missing_counters():
     samples = [
         normalize_usage(
             {"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 75}}, "chat_completions"
@@ -280,52 +278,72 @@ def test_conversation_cache_usage_sums_requests_without_filling_missing_counters
         aggregate_cache_usage([{"input_tokens": 100, "cache_read_input_tokens": 800}])["prompt_tokens"]
         is None
     )
-    assert store.session_cache_usage(session["id"]) is None
-    req = TurnRequest(text="你好", operation_id="usage", expected_revision=0)
-    tid, _ = store.create_turn(session["id"], req)
-    narrative = {
-        "prompt_tokens": 1000,
-        "cached_tokens": 300,
-        "raw_usage": [usage["raw_usage"] for usage in samples[:2]],
-    }
-    store.event(tid, "usage", {"purpose": "narrative", "usage": narrative})
-    store.event(tid, "usage", {"purpose": "maintenance", "usage": samples[2]})
-    assert store.latest_usage(session["id"]) == narrative
-    store.set_turn(tid, status="committed")
-    next_tid, _ = store.create_turn(session["id"], req.model_copy(update={"operation_id": "next"}))
-    store.event(next_tid, "usage", {"purpose": "narrative", "usage": samples[3]})
-    store.set_turn(next_tid, status="committed")
-    with store.connection() as db:
-        db.execute(
-            """INSERT INTO context_operations(id,session,operation,kind,status,expected_revision,payload,created)
-            VALUES ('compact',?,'compact','compact','completed',0,?,0)""",
-            (
-                session["id"],
-                json.dumps(
-                    {
-                        "usage": [{"prompt_tokens": 500, "cached_tokens": 200}],
-                        "replay": {"private": "expired"},
-                    }
-                ),
-            ),
-        )
-    total = {"prompt_tokens": 4500, "cached_tokens": 2300}
-    assert store.session_cache_usage(session["id"]) == total
-    other = store.new_session(SessionCreate(card_id=session["card"]))
-    other_tid, _ = store.create_turn(other["id"], req)
-    store.event(other_tid, "usage", {"usage": {}})
-    store.set_turn(other_tid, status="committed")
+    assert aggregate_cache_usage(samples[2:]) == {"prompt_tokens": 3000, "cached_tokens": 1800}
+
+
+def test_story_cache_restores_previous_segment_on_rejection_and_expires_across_restart(
+    store, session, monkeypatch
+):
+    from tavern.storage.maintenance import cleanup
+    from tavern.storage.store import new_snapshot
+    from tavern.storage.story_cache import story_cache_window
+
+    now = 10_000
+    monkeypatch.setattr("tavern.storage.story_cache.time", SimpleNamespace(time=lambda: now))
+    session = store.update_session(session["id"], session["revision"], head=None)
+    sid, snapshot = session["id"], session["snapshot"]
+    settings = Settings(model="story-fixture")
+    old_window = story_cache_window(snapshot, settings.context_strategy)
+    draft_snapshot = new_snapshot()
+    new_window = story_cache_window(draft_snapshot, settings.context_strategy)
+
+    request = TurnRequest(text="继续", operation_id="initial", expected_revision=session["revision"])
+    legacy, _ = store.create_turn(sid, request)
+    store.event(legacy, "usage", {"usage": {"prompt_tokens": 40, "cached_tokens": 40}})
+    store.set_turn(legacy, status="cancelled")
+    assert store.story_cache.read(sid, settings, snapshot) == (None, None)
+
+    tid, _ = store.create_turn(sid, request.model_copy(update={"operation_id": "review"}))
+    store.set_turn(tid, status="running")
+    store.story_cache.begin(sid, tid, settings, snapshot)
+    prior = {"prompt_tokens": 100, "cached_tokens": 70}
+    store.event(tid, "usage", {"usage": prior}, cache=(sid, old_window))
+    now += 2000  # Model and tool work within a round cannot expire the segment.
+    provisional = {"prompt_tokens": 50, "cached_tokens": 10}
+    store.event(tid, "usage", {"usage": provisional}, cache=(sid, new_window))
+    store.set_turn(tid, status="awaiting_review", cache_snapshot=draft_snapshot)
+    assert store.story_cache.read(sid, settings, snapshot)[0] == provisional
+    store.reject_review(tid)
+    snapshot = store.session(sid)["snapshot"]
+    assert store.story_cache.read(sid, settings, snapshot)[0] == prior
     cleanup(store)
-    assert store.session_cache_usage(session["id"]) == total
-    with store.connection() as db:
-        compacted = json.loads(
-            db.execute("SELECT payload FROM context_operations WHERE id='compact'").fetchone()[0]
-        )
-        assert set(compacted) == {"usage"}
-    store.event(next_tid, "usage", {"usage": {"prompt_tokens": 100, "cached_tokens": 0}})
-    assert store.session_cache_usage(session["id"]) == {"prompt_tokens": 4600, "cached_tokens": 2300}
-    store.event(next_tid, "usage", {"usage": {"prompt_tokens": 100}})
-    assert store.session_cache_usage(session["id"]) == {"prompt_tokens": 4700, "cached_tokens": None}
+    assert store.latest_usage(sid) == provisional
+
+    continued, _ = store.create_turn(sid, request.model_copy(update={"operation_id": "old-window"}))
+    store.story_cache.begin(sid, continued, settings, snapshot)
+    store.event(
+        continued, "usage", {"usage": {"prompt_tokens": 25, "cached_tokens": 0}}, cache=(sid, old_window)
+    )
+    assert store.story_cache.read(sid, settings, snapshot) == (prior, None)
+    store.set_turn(continued, status="cancelled")
+    total = {"prompt_tokens": 125, "cached_tokens": 70}
+
+    store = Store(store.root)
+    store.recover()
+    snapshot = store.session(sid)["snapshot"]
+    now += 1799
+    assert store.story_cache.read(sid, settings, snapshot) == (total, now + 1)
+    assert store.story_cache.read(sid, Settings(model="other"), snapshot) == (None, None)
+    now += 1
+    assert store.story_cache.read(sid, settings, snapshot) == (None, None)
+    last, _ = store.create_turn(sid, request.model_copy(update={"operation_id": "after-idle"}))
+    store.story_cache.begin(sid, last, settings, snapshot)
+    zero = {"prompt_tokens": 70, "cached_tokens": 0}
+    store.event(last, "usage", {"usage": zero}, cache=(sid, old_window))
+    assert store.story_cache.read(sid, settings, snapshot) == (None, None)
+    store.event(last, "usage", {"usage": {"prompt_tokens": 30}}, cache=(sid, old_window))
+    store.set_turn(last, status="error")
+    assert store.story_cache.read(sid, settings, snapshot)[0] == {"prompt_tokens": 100, "cached_tokens": None}
 
 
 def test_user_system_prompt_is_used_by_context(store, session):

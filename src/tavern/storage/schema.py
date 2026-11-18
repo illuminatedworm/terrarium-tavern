@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 30
+SCHEMA_VERSION = 32
 SETTINGS_VERSIONS = range(2, 23)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
@@ -46,6 +46,7 @@ SESSION_COLUMNS = {
     "unicode_story": "INTEGER NOT NULL DEFAULT 0",
     "media_config": "TEXT NOT NULL DEFAULT '" + MediaConfig().model_dump_json().replace("'", "''") + "'",
     "media_sequence": "INTEGER NOT NULL DEFAULT 0",
+    "empty_window_id": "TEXT",
 }
 MESSAGE_COLUMNS = {
     "auxiliary": "TEXT NOT NULL DEFAULT '[]'",
@@ -187,6 +188,9 @@ def _initialize_core_tables(store: "Store") -> None:
             owner TEXT NOT NULL, scope TEXT NOT NULL, identity TEXT NOT NULL,
             prefix TEXT NOT NULL, value TEXT NOT NULL,
             PRIMARY KEY(owner, scope, identity, prefix))""")
+        db.execute("""CREATE TABLE IF NOT EXISTS story_cache_stats (
+            session TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+            payload TEXT NOT NULL)""")
 
 
 def _initialize_story_tables(db: sqlite3.Connection) -> None:
@@ -237,6 +241,15 @@ def _initialize_feature_tables(store: "Store") -> None:
 
 
 def _migrate_data(db: sqlite3.Connection, previous_schema: int) -> None:
+    if previous_schema == 31:
+        # A failed first turn may still resume with its original empty window.
+        # Its saved user snapshot predates any rollover during the attempt.
+        db.execute("""UPDATE sessions SET empty_window_id=(
+            SELECT json_extract(p.payload,'$.user.snapshot.story.window.id')
+            FROM story_cache_stats c JOIN story_progress p ON p.turn=json_extract(c.payload,'$.job')
+            JOIN turns t ON t.id=p.turn
+            WHERE c.session=sessions.id AND json_extract(t.request,'$.expected_revision')=sessions.revision
+        ) WHERE head IS NULL""")
     if previous_schema < 26:
         discard_unsupported_stories(db, previous_schema)
     if previous_schema < 27:

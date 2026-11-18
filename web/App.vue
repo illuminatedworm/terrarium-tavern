@@ -170,7 +170,8 @@ const advisorSeen = ref('');
 function applyFullSession(updated: Session) {
   if (session.value?.id === updated.id && updated.revision >= openStory().revision) {
     session.value = updated;
-    void refreshContextStats();
+    // Context maintenance refreshes once its updated session is installed and unlocked.
+    if (!contextBusy.value) void refreshContextStats();
   }
 }
 const contextOps = useContextOperations(() => session.value, applyFullSession);
@@ -296,6 +297,39 @@ const modelWarmup = useModelWarmup(() => panel.value === 'warmup');
 provide(japaneseDictionaryKey, useJapaneseDictionary());
 const contextStats = ref<StoryContextPreview | null>(null);
 const cacheUsage = ref<ConversationCacheUsage | null>(null);
+const cacheUsageExpiresAt = ref<number | null>(null);
+let cacheUsageTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleCacheUsageExpiry() {
+  clearTimeout(cacheUsageTimer);
+  if (busy.value || contextBusy.value) {
+    cacheUsageExpiresAt.value = null;
+    return;
+  }
+  if (cacheUsageExpiresAt.value == null) return;
+  const remaining = cacheUsageExpiresAt.value * 1000 - Date.now();
+  if (remaining <= 0) cacheUsage.value = null;
+  else cacheUsageTimer = setTimeout(scheduleCacheUsageExpiry, remaining);
+}
+
+function setCacheUsage(stats: StoryContextPreview | null) {
+  cacheUsage.value = stats?.cache_usage ?? null;
+  cacheUsageExpiresAt.value = stats?.cache_usage_expires_at ?? null;
+  scheduleCacheUsageExpiry();
+}
+
+function applyPreviewCacheUsage(stats: StoryContextPreview, startedWhileBusy: boolean) {
+  const working = busy.value || contextBusy.value;
+  // A reopened running story can load the server's frozen total. Ignore previews
+  // crossing a local task boundary or already showing the terminal statistics.
+  if (startedWhileBusy === working && (!working || stats.cache_usage_expires_at == null))
+    setCacheUsage(stats);
+}
+
+watch([busy, contextBusy], scheduleCacheUsageExpiry);
+watch(contextBusy, (working) => {
+  if (!working && !busy.value) void refreshContextStats();
+});
 const contextEstimateError = ref('');
 let contextStatsRequest = 0;
 let contextRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1031,7 +1065,7 @@ async function refreshContextStats() {
   const request = ++contextStatsRequest;
   const sid = openStory().id,
     token = viewScope.current();
-  const running = busy.value;
+  const running = busy.value || contextBusy.value;
   try {
     const [stats, records] = await Promise.allSettled([
       api(`/sessions/${sid}/preview`, {
@@ -1045,7 +1079,7 @@ async function refreshContextStats() {
     if (!viewScope.owns(token) || request !== contextStatsRequest) return;
     if (stats.status === 'fulfilled') {
       contextStats.value = stats.value;
-      if (!running && !busy.value) cacheUsage.value = stats.value.cache_usage ?? null;
+      applyPreviewCacheUsage(stats.value, running);
       contextEstimateError.value = '';
     } else contextEstimateError.value = String(stats.reason?.message || stats.reason);
     if (records.status === 'fulfilled') workCount.value = records.value.total;
@@ -1069,7 +1103,7 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
   sessionCard.value = null;
   activeTurn.value = null;
   contextStats.value = null;
-  cacheUsage.value = null;
+  setCacheUsage(null);
   contextEstimateError.value = '';
   clearTimeout(contextRefreshTimer);
   workCount.value = 0;
@@ -1208,7 +1242,7 @@ async function deleteSession(item: SessionSummary) {
       draft.value = '';
       trace.value = [];
       contextStats.value = null;
-      cacheUsage.value = null;
+      setCacheUsage(null);
     }
     await load();
   });
@@ -1722,6 +1756,7 @@ async function submitStoryTurn(request: TurnRequest, continueWithInput = false):
     if (viewScope.owns(token)) {
       error.value = e.message;
       busy.value = false;
+      void refreshContextStats();
     }
     return false;
   }
@@ -1982,6 +2017,7 @@ async function submitInputEdit(request: TurnRequest) {
 }
 async function inspectContext() {
   await guarded(async () => {
+    const running = busy.value || contextBusy.value;
     preview.value = await viewApi(`/sessions/${openStory().id}/preview`, {
       text: input.value,
       ooc: ooc.value,
@@ -1990,7 +2026,7 @@ async function inspectContext() {
       local_estimate: true,
     });
     contextStats.value = preview.value;
-    if (!busy.value) cacheUsage.value = preview.value!.cache_usage;
+    applyPreviewCacheUsage(preview.value!, running);
     contextEstimateError.value = '';
     panel.value = 'context';
   });
@@ -2185,6 +2221,7 @@ onMounted(() => {
   document.addEventListener('pointerdown', closeDeleteOnOutside);
   document.addEventListener('pointerdown', closeStoryToolsOnOutside);
   document.addEventListener('scroll', closeDeleteOnViewportChange, true);
+  document.addEventListener('visibilitychange', scheduleCacheUsageExpiry);
   window.addEventListener('resize', closeDeleteOnViewportChange);
   guarded(async () => {
     await load();
@@ -2214,9 +2251,11 @@ onBeforeUnmount(() => {
   rightOverlayQuery.removeEventListener('change', syncRightOverlay);
   clearOptionsNotice();
   clearTimeout(contextRefreshTimer);
+  clearTimeout(cacheUsageTimer);
   document.removeEventListener('pointerdown', closeDeleteOnOutside);
   document.removeEventListener('pointerdown', closeStoryToolsOnOutside);
   document.removeEventListener('scroll', closeDeleteOnViewportChange, true);
+  document.removeEventListener('visibilitychange', scheduleCacheUsageExpiry);
   window.removeEventListener('resize', closeDeleteOnViewportChange);
   events?.close();
   stopRightResize?.();
@@ -3018,7 +3057,7 @@ useTimedError(error);
                   :class="{ 'composer-stats-error': contextEstimateError }"
                   >{{ composerContextLabel }}</span
                 >
-                <CacheRateStat :usage="cacheUsage" />
+                <CacheRateStat :usage="cacheUsage" segmented />
               </p>
             </div>
           </div>
@@ -3329,7 +3368,10 @@ useTimedError(error);
             :initial-page="settingsInitialPage"
             :warmup="modelWarmup"
             :effort-options="effortOptions"
-            @updated="settings = $event"
+            @updated="
+              settings = $event;
+              void refreshContextStats();
+            "
             @imported="afterDataImport"
             @open-session="
               panel = '';

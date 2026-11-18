@@ -124,6 +124,9 @@ class StoryRuntime:
                     else (snapshot.get("content") or {}).get("document", card["document"])
                 )
                 self.store.set_turn(tid, status="running")
+                self.store.story_cache.begin(
+                    session["id"], tid, settings, session["snapshot"], resume=request.resume_turn_id
+                )
                 self.store.event(tid, "started", {"purpose": "story"})
                 if card["permission"]:
                     await self.dependencies.resolve({**card, "document": document})

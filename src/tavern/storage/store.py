@@ -16,12 +16,12 @@ from tavern.core.errors import NotFound
 from tavern.core.history_refs import message_ref
 from tavern.core.models import TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime
-from tavern.core.usage import aggregate_cache_usage
 from tavern.storage.message_adapters import MessageAdapters
 from tavern.storage.schema import SCHEMA_VERSION as SCHEMA_VERSION
 from tavern.storage.schema import SETTINGS_VERSIONS as SETTINGS_VERSIONS
 from tavern.storage.schema import initialize_database
 from tavern.storage.session_deletion import delete_session_rows
+from tavern.storage.story_cache import StoryCache
 from tavern.storage.turn_retry import retry_head
 from tavern.story.recovery import load_progress, resume_progress
 
@@ -64,6 +64,7 @@ class Store(MessageAdapters):
     def __init__(self, root: Path):
         self.root = root
         self.path = root / "tavern.sqlite3"
+        self.story_cache = StoryCache(self)
         initialize_database(self)
 
     def notify_media(self, sid):
@@ -122,6 +123,7 @@ class Store(MessageAdapters):
 
         with self.connection() as db:
             recover_samples(db)
+            self.story_cache.recover(db)
             db.execute(
                 "UPDATE novel_jobs SET status='paused',error='应用已重启，调查暂停；已用额度保留' "
                 "WHERE status='running'"
@@ -416,8 +418,8 @@ class Store(MessageAdapters):
                 db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
             )
 
-    def settings(self, channel=None):
-        settings = self.settings_document().runtime(channel)
+    def settings(self, channel=None, *, document=None):
+        settings = (document or self.settings_document()).runtime(channel)
         generations = {
             provider.chatgpt_account_id: self.chatgpt.generation(provider.chatgpt_account_id)
             for provider in settings.providers
@@ -485,7 +487,16 @@ class Store(MessageAdapters):
             for scope in document.revisions:
                 if getattr(current, scope) != getattr(document, scope):
                     document.revisions[scope] = current.revisions[scope] + 1
-            db.execute("UPDATE meta SET value=? WHERE key='settings'", (document.model_dump_json(),))
+            self.write_settings(db, current, document)
+
+    def write_settings(self, db, previous: SettingsDocument, document: SettingsDocument) -> None:
+        db.execute("UPDATE meta SET value=? WHERE key='settings'", (document.model_dump_json(),))
+        if (
+            previous.story.model != document.story.model
+            or previous.story.official_model != document.story.official_model
+            or previous.shared.providers != document.shared.providers
+        ):
+            self.story_cache.settings_changed(db, document)
 
     def new_session(self, options):
         document = self.settings_document()
@@ -698,9 +709,14 @@ class Store(MessageAdapters):
                 "SELECT count(*) FROM novel_jobs WHERE session=? AND status!='destroyed'", (sid,)
             ).fetchone()[0]
         result["messages"] = self.history(sid, result["head"])
-        result["snapshot"] = (
-            copy.deepcopy(result["messages"][-1]["snapshot"]) if result["messages"] else new_snapshot()
-        )
+        empty_window = result.pop("empty_window_id")
+        if result["messages"]:
+            result["snapshot"] = copy.deepcopy(result["messages"][-1]["snapshot"])
+        else:
+            # No message owns this snapshot yet. Repeated reads, retries and the
+            # first committed user message must agree on the initial window.
+            result["snapshot"] = new_snapshot()
+            result["snapshot"]["story"]["window"]["id"] = empty_window or sid
         result["opening_editable"] = (
             not result["opening_locked"]
             and len(result["messages"]) == 1
@@ -950,6 +966,8 @@ class Store(MessageAdapters):
             raise ValueError("渠道归属不可修改；上下文模式必须通过整理操作切换")
         if fields.get("head"):
             self.history(sid, fields["head"])
+        elif "head" in fields:
+            fields["empty_window_id"] = uid()
         with self.connection() as db:
             active = db.execute(
                 "SELECT 1 FROM turns WHERE session=? AND status IN ('running','queued','awaiting_review')",
@@ -1246,13 +1264,14 @@ class Store(MessageAdapters):
         """Explicit rejection retires executable work but preserves its audit trail."""
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            result = db.execute(
+            row = db.execute(
                 "UPDATE turns SET status='cancelled',pending=NULL,draft='',preview=NULL "
-                "WHERE id=? AND status='awaiting_review'",
+                "WHERE id=? AND status='awaiting_review' RETURNING session",
                 (tid,),
-            )
-            if result.rowcount != 1:
+            ).fetchone()
+            if row is None:
                 raise Conflict("此回合没有待审核变更")
+            self.story_cache.finish(db, row["session"], tid, "cancelled")
             db.execute("DELETE FROM story_progress WHERE turn=?", (tid,))
             db.execute(
                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
@@ -1342,20 +1361,27 @@ class Store(MessageAdapters):
             )
         return result
 
-    def set_turn(self, tid, **fields):
+    def set_turn(self, tid, *, cache_snapshot=None, **fields):
         if not set(fields).issubset({"status", "draft", "error", "preview", "pending"}):
             raise ValueError("无效回合字段")
         with self.connection() as db:
-            db.execute(
+            result = db.execute(
                 f"UPDATE turns SET {','.join(f'{k}=?' for k in fields)} WHERE id=?", (*fields.values(), tid)
             )
+            status = fields.get("status")
+            if result.rowcount and status in ("awaiting_review", "cancelled", "error"):
+                sid = db.execute("SELECT session FROM turns WHERE id=?", (tid,)).fetchone()[0]
+                self.story_cache.finish(db, sid, tid, status, snapshot=cache_snapshot)
 
-    def event(self, tid, kind, payload):
+    def event(self, tid, kind, payload, *, cache=None):
         with self.connection() as db:
             cur = db.execute(
                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
                 (tid, kind, dump(payload), time.time()),
             )
+            if cache is not None:
+                sid, window = cache
+                self.story_cache.record(db, sid, tid, window, payload.get("usage"))
             return cur.lastrowid
 
     def write_turn_draft(self, tid: str, text: str, *, replace: bool = False, breaks=None) -> None:
@@ -1467,22 +1493,6 @@ class Store(MessageAdapters):
                 return payload.get("usage") or {}
         return fallback
 
-    def session_cache_usage(self, sid):
-        """All requests owned by this session, including tools and maintenance."""
-        with self.connection() as db:
-            usages = [
-                json.loads(row[0]).get("usage") if row[0] is not None else None
-                for row in db.execute(
-                    """SELECT e.payload FROM turns t
-                          LEFT JOIN events e ON e.turn=t.id AND e.kind='usage'
-                          WHERE t.session=? ORDER BY e.seq""",
-                    (sid,),
-                )
-            ]
-            for row in db.execute("SELECT payload FROM context_operations WHERE session=?", (sid,)):
-                usages.extend(json.loads(row[0]).get("usage", []))
-        return aggregate_cache_usage(usages)
-
     def commit_turn(self, tid, pending):
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -1556,6 +1566,7 @@ class Store(MessageAdapters):
                 ),
             )
             db.execute("UPDATE turns SET status='committed',pending=NULL WHERE id=?", (tid,))
+            self.story_cache.finish(db, turn["session"], tid, "committed", snapshot=after)
             db.execute("DELETE FROM story_progress WHERE turn=?", (tid,))
             # The terminal event and authoritative state share one transaction.
             # An observer must never see committed state without its final event.

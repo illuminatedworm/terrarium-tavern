@@ -16,6 +16,7 @@ from tavern.core.message_adapter import adapter_snapshot, bind_adapter
 from tavern.core.provider import make_provider
 from tavern.scripting.request_context import response_origin
 from tavern.storage.store import Conflict, dump, uid
+from tavern.storage.story_cache import story_cache_window
 from tavern.story.compaction import rebuild_local
 from tavern.story.context import compile_window, load_trace
 from tavern.story.state import story_state
@@ -123,17 +124,21 @@ class ContextOperations:
         self.tasks[oid] = asyncio.create_task(self.run(oid))
         return self.get(oid)
 
-    def save(self, oid, payload, *, status="running", error=None):
+    def save(self, sid, oid, payload, *, status="running", error=None, cache=None):
         with self.store.connection() as db:
             db.execute(
                 "UPDATE context_operations SET payload=?,status=?,error=? WHERE id=?",
                 (dump(payload), status, error, oid),
             )
+            if cache is not None:
+                window, usage = cache
+                self.store.story_cache.record(db, sid, oid, window, usage)
+            if status != "running":
+                self.store.story_cache.finish(db, sid, oid, status)
 
     async def run(self, oid):
         op = self.get(oid, private=True)
         payload = op["payload"]
-        prior_usage = copy.deepcopy(payload.get("usage", []))
         provider = None
         sid = op["session"]
         try:
@@ -148,10 +153,12 @@ class ContextOperations:
                 raise Conflict("整理设置或官方连接与原记录不匹配，请重新发起整理")
             strategy = "new_context" if op["kind"] == "enable_local" else "openai_compact"
             if op["kind"] != "compact" and session["context_strategy"] == strategy:
-                self.save(oid, payload, status="completed")
+                self.save(sid, oid, payload, status="completed")
                 return
             snapshot = copy.deepcopy(session["snapshot"])
             state = story_state(snapshot)
+            window = story_cache_window(snapshot, settings.context_strategy)
+            self.store.story_cache.begin(sid, oid, settings, snapshot, resume=oid)
             settings.context_strategy = strategy
             source = {**session, "context_strategy": strategy}
             if op["kind"] != "compact":
@@ -180,7 +187,12 @@ class ContextOperations:
             )
             if strategy == "openai_compact":
                 compiled = completed_context(compiled)
-            self.save(oid, payload)
+            self.save(sid, oid, payload)
+
+            def capture_usage(usage):
+                usages = [*payload.get("usage", []), usage]
+                self.save(sid, oid, {**payload, "usage": usages}, cache=(window, usage))
+                payload["usage"] = usages
 
             class LazyProvider:
                 async def chat_complete(_, *args, **kwargs):
@@ -191,7 +203,10 @@ class ContextOperations:
                             if self.provider_factory
                             else await make_provider(settings)
                         )
-                    return await provider.chat_complete(*args, **kwargs)
+                        provider.failed_usage_capture = lambda event: capture_usage(event["usage"])
+                    response = await provider.chat_complete(*args, **kwargs)
+                    capture_usage(response.usage or {})
+                    return response
 
                 def __getattr__(_, name):
                     if provider is None:
@@ -203,10 +218,7 @@ class ContextOperations:
             async def save_progress(value):
                 payload["replay"] = value
                 payload["progress"] = {key: value[key] for key in ("batches", "processed", "total")}
-                payload["usage"] = prior_usage + copy.deepcopy(
-                    getattr(provider, "usage_history", value["usage"])
-                )
-                self.save(oid, payload)
+                self.save(sid, oid, payload)
 
             if op["kind"] == "enable_local":
                 replay = await rebuild_local(
@@ -225,7 +237,6 @@ class ContextOperations:
                     "start": replay["history_start"],
                     "replay_history": True,
                 }
-                payload["usage"] = replay["usage"]
                 payload["converted"] = bool(replay["batches"])
             elif (
                 compiled["compact_requires_rebuild"]
@@ -244,31 +255,25 @@ class ContextOperations:
                 )
                 state["compaction"] = checkpoint
                 payload["compacted"] = any(i.get("type") == "compaction" for i in checkpoint["items"])
-                payload["usage"] = replay["usage"]
                 payload["converted"] = bool(replay["batches"])
             elif op["kind"] == "compact":
                 try:
-                    checkpoint, usage = await compact_once(compiled, settings, lazy_provider)
+                    checkpoint, _ = await compact_once(compiled, settings, lazy_provider)
                 except Exception as error:
                     if not context_overflow(error):
                         raise
                     # The old checkpoint plus plaintext tail may itself be too
                     # large. Replay originals at whole-exchange boundaries,
                     # keeping successful batches resumable just like rebuilds.
-                    checkpoint, replay = await rebuild(
+                    checkpoint, _ = await rebuild(
                         compiled, settings, lazy_provider, save=save_progress, force=True
                     )
-                    payload["usage"] = replay["usage"]
-                else:
-                    payload["usage"] = [usage]
                 if checkpoint:
                     state["compaction"] = checkpoint
                 payload["compacted"] = bool(
                     checkpoint and any(item.get("type") == "compaction" for item in checkpoint["items"])
                 )
                 payload["converted"] = True
-            if hasattr(provider, "usage_history"):
-                payload["usage"] = prior_usage + copy.deepcopy(provider.usage_history)
             with self.store.connection() as db:
                 db.execute("BEGIN IMMEDIATE")
                 current_settings = self._settings(sid)
@@ -289,14 +294,19 @@ class ContextOperations:
                     "UPDATE context_operations SET status='completed',payload=?,error=NULL WHERE id=?",
                     (dump(payload), oid),
                 )
+                self.store.story_cache.finish(
+                    db,
+                    sid,
+                    oid,
+                    "committed",
+                    snapshot=snapshot,
+                    strategy=strategy,
+                    keep_segment=op["kind"] == "compact" and not payload["compacted"],
+                )
         except asyncio.CancelledError:
-            if provider is not None and hasattr(provider, "usage_history"):
-                payload["usage"] = prior_usage + copy.deepcopy(provider.usage_history)
-            self.save(oid, payload, status="cancelled", error="整理已取消，原上下文保持不变")
+            self.save(sid, oid, payload, status="cancelled", error="整理已取消，原上下文保持不变")
         except Exception as error:
-            if provider is not None and hasattr(provider, "usage_history"):
-                payload["usage"] = prior_usage + copy.deepcopy(provider.usage_history)
-            self.save(oid, payload, status="error", error=str(error))
+            self.save(sid, oid, payload, status="error", error=str(error))
         finally:
             if provider is not None:
                 await provider.close()

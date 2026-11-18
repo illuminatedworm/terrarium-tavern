@@ -304,4 +304,5 @@ def register_story_routes(app, store, context_operations=None):
                 "UPDATE messages SET snapshot=? WHERE id=? AND session=?",
                 (dump(snapshot), session["head"], sid),
             )
+            store.story_cache.reset(db, sid)
         return store.session(sid)

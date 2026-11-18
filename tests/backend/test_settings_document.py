@@ -14,6 +14,55 @@ from tavern.storage.legacy_story import OLD_STORY_KEY
 from tavern.storage.store import Store
 
 
+async def test_story_model_undo_only_retires_cache_for_changed_connections(tmp_path):
+    from tavern.storage.story_cache import story_cache_window
+
+    app = create_app(tmp_path)
+    store = app.state.store
+    doc = store.settings_document()
+    doc.story.model.provider_id, doc.story.model.model = "default", "A"
+    store.save_settings(doc)
+    card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}')
+    options = SessionCreate(card_id=card["id"])
+    inherited, pinned = store.new_session(options), store.new_session(options)
+    usage = {"prompt_tokens": 100, "cached_tokens": 70}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        (
+            await client.put(
+                f"/api/sessions/{pinned['id']}/model",
+                json={"selection": {"provider_id": "default", "model": "A"}, "expected_revision": 0},
+            )
+        ).raise_for_status()
+        for session in (inherited, pinned):
+            sid = session["id"]
+            cfg = store.session_settings(sid).for_role("story")
+            window = story_cache_window(session["snapshot"], cfg.context_strategy)
+            store.story_cache.begin(sid, "turn", cfg, session["snapshot"])
+            with store.connection() as db:
+                store.story_cache.record(db, sid, "turn", window, usage)
+                store.story_cache.finish(db, sid, "turn", "committed", snapshot=session["snapshot"])
+        opened = (await client.post("/api/settings/edit-sessions")).json()
+        updated = await client.patch(
+            "/api/settings/story",
+            json={
+                "edit_session": opened["id"],
+                "expected_revision": opened["settings"]["revisions"]["story"],
+                "changes": {"model.model": "B"},
+            },
+        )
+        updated.raise_for_status()
+        (
+            await client.post(
+                f"/api/settings/edit-sessions/{opened['id']}/undo",
+                json={"page": "story.model", "expected_revision": updated.json()["revisions"]["story"]},
+            )
+        ).raise_for_status()
+        for session, expected in ((inherited, None), (pinned, usage)):
+            preview = await client.post(f"/api/sessions/{session['id']}/preview", json={})
+            preview.raise_for_status()
+            assert preview.json()["cache_usage"] == expected
+
+
 async def test_composer_shortcut_persistence_validation_and_page_undo(tmp_path):
     app = create_app(tmp_path)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:

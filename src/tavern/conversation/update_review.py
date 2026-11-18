@@ -59,7 +59,7 @@ def finish_turn(store, tid, session, pending, snapshot, *, draft=None):
         fields = {"status": "awaiting_review", "pending": json.dumps(pending, ensure_ascii=False)}
         if draft is not None:
             fields["draft"] = draft
-        store.set_turn(tid, **fields)
+        store.set_turn(tid, cache_snapshot=snapshot, **fields)
         store.event(
             tid, "awaiting_review", {"before": pending["before"], "after": snapshot, "changes": changes}
         )

@@ -210,6 +210,7 @@ def export_package(store, selection):
                     ).fetchone():
                         raise Conflict("请先完成或取消所选对话的当前回合，再导出")
                     session = decoded(table, row)
+                    session.pop("empty_window_id")
                     session["card_data"] = pin(session["card_data"])
                     bundle = {"session": session}
                     from tavern.media.transfer import export_bundle as export_media
@@ -346,6 +347,7 @@ def validate_package(store, package, blobs):
             table: {column["name"]: dict(column) for column in db.execute(f"PRAGMA table_info({table})")}
             for table in ("personas", *JSON_FIELDS)
         }
+        schema["sessions"].pop("empty_window_id")
 
     def identity(value):
         if not isinstance(value, str) or not 1 <= len(value) <= 128 or value in identities:
@@ -787,7 +789,7 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                     incoming.shared.card_author,
                 ):
                     profile.capability, profile.capability_key = "unknown", ""
-                db.execute("UPDATE meta SET value=? WHERE key='settings'", (incoming.model_dump_json(),))
+                store.write_settings(db, current, incoming)
                 result.update(
                     settings_restored=True,
                     browser_preferences=browser_preferences(package["settings"].get("browser", {})),
