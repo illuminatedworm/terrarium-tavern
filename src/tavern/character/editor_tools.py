@@ -441,6 +441,19 @@ def argument_error(name, error):
     return "\n".join(lines)
 
 
+def overview_metadata(value: Any, *, worldbook: bool = False) -> dict[str, str | int]:
+    metadata: dict[str, str | int] = {"type": type(value).__name__}
+    if worldbook:
+        metadata["entry_count"] = len(value.get("entries", ())) if value is not None else 0
+    elif isinstance(value, str):
+        metadata["character_count"] = len(value)
+    elif isinstance(value, list):
+        metadata["item_count"] = len(value)
+    elif isinstance(value, dict):
+        metadata["field_count"] = sum(not hidden_field(key) for key in value)
+    return metadata
+
+
 def report(document):
     validation = validation_report(document)
     data = normalize(document)
@@ -495,10 +508,9 @@ class EditorTools(PersonaTools):
                 "root": prefix,
                 "fields": [
                     {
-                        "path": self.view.pointer(prefix + "/" + key.replace("~", "~0").replace("/", "~1")),
-                        "type": type(value).__name__,
+                        "path": self.view.pointer(prefix + "/" + jsonpointer.escape(key)),
                         "purpose": FIELD_PURPOSES.get(key, "保留的扩展字段"),
-                        "chars": len(value) if isinstance(value, str) else len(dump(self.view.expose(value))),
+                        **overview_metadata(value, worldbook=(key == "character_book")),
                     }
                     for key, value in data.items()
                     if not hidden_field(key)
@@ -556,23 +568,24 @@ class EditorTools(PersonaTools):
         if any(hidden_field(part) for part in jsonpointer.JsonPointer(pointer).parts):
             raise ValueError("该字段由程序维护，无需读取或回写")
         result = {"card_ref": args.card_ref, "path": args.path, "metadata_only": True}
+        document = self.card(args.card_ref)["document"]
+        book_path = "/data/character_book" if document.get("spec") else "/character_book"
         try:
-            value = jsonpointer.resolve_pointer(self.card(args.card_ref)["document"], pointer)
+            value = jsonpointer.resolve_pointer(document, pointer)
         except jsonpointer.JsonPointerException:
             return {**result, "exists": False}
         children = (
             value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else ()
         )
-        result.update(exists=True, type=type(value).__name__, fields=[])
+        result.update(exists=True, fields=[], **overview_metadata(value, worldbook=(pointer == book_path)))
         for key, child in children:
             if hidden_field(str(key)):
                 continue
+            child_path = pointer + "/" + jsonpointer.escape(str(key))
             field = {
-                "path": self.view.pointer(pointer + "/" + jsonpointer.escape(str(key))),
-                "type": type(child).__name__,
+                "path": self.view.pointer(child_path),
+                **overview_metadata(child, worldbook=(child_path == book_path)),
             }
-            if isinstance(child, str):
-                field["chars"] = len(child)
             if isinstance(child, dict) and isinstance(child.get("scriptName"), str):
                 field["name"] = child["scriptName"]
             result["fields"].append(field)

@@ -21,7 +21,7 @@
 | `read_document` | `path`、可选 `offset=0`（转换后 Markdown 的 Unicode 字符位置，0-based）、`limit=12000`（1–30000 字符）；DOCX/XLSX 离线转换，返回 `format/markdown/offset/returned_chars/total_chars/has_more/next_offset/limitations` |
 | `web_search` | `query`、可选 `limit`（1–10，默认 5）及 `objective`；本地限制来源数量，每条摘要最多 2,000 字符，URL／标题／摘要合计最多 20,000 字符，并标记省略。官方自动模式改为服务端原生搜索，详见[联网协议](web-tools.md) |
 | `read_webpage` | `url`、可选 `offset=0`（Unicode 字符）、`limit=12000`（1–30000）、`service`；返回提取文本片段和续读位置。续读沿用实际服务，上游截断明确标记，不把片段当作全文，详见[联网协议](web-tools.md) |
-| `overview` | 可选 `card_ref`；查看当前目录或指定卡的根路径、格式、字段用途、类型和大小。提供卡片编号和 `path` 时，返回该路径是否存在、字段类型和直接子路径，正则规则另附名称 |
+| `overview` | 可选 `card_ref`；查看卡片目录、根路径、格式、字段用途和类型。提供卡片编号和 `path` 时，查看该路径及直接子路径，正则规则另附名称。文本用 `character_count` 表示字符数，数组（如替代开场、正则规则）用 `item_count` 表示项数，一般对象（如卡片扩展）用 `field_count` 表示可见字段数，世界书用 `entry_count` 表示条目数。空集合计为 0，缺失路径返回 `exists: false` |
 | `read_field` | `card_ref`、JSON Pointer `path`，优先选择任务所需字段或条目。空路径读整卡。`version=current/round_start/saved` 分别读取当前、任务开始前或书架基准，始终返回所选原文全文 |
 | `search_entries` | `card_ref`、`query`，空查询列出全部。提供标题、定位路径、正文字数（Unicode 字符）及明确标识的摘要，可按路径读取相关原文 |
 | `create_draft` | `name`、可选 `fields`、`source_ref`、`proposal_ref`、`confirmation_ref`；明确直接制作或机械复制使用 `direct_instruction=true`。`fields` 可一次写入 description、personality、scenario、first_mes、alternate_greetings、mes_example、system_prompt、post_history_instructions、creator_notes、tags 的完整正文，省略项留空或沿用来源卡；世界书条目随后用 `patch_draft` 追加。返回新引用与校验结果；复制来源卡或未传 `fields` 时附完整初始文档，避免回传模型刚写入的正文 |

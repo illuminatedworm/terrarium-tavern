@@ -110,7 +110,7 @@ FIELD_PURPOSES = {
     "system_prompt": "游玩系统要求",
     "post_history_instructions": "游玩后置要求",
     "character_book": "世界书与注入条件",
-    "extensions": "脚本、正则及未知扩展",
+    "extensions": "卡片扩展（可包含正则规则和脚本）",
     "creator_notes": "作者备注（不是运行设定）",
     "creator": "作者",
     "tags": "分类标签",

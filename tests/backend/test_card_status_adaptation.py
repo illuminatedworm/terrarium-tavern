@@ -287,9 +287,13 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
         assert json.loads(selected["text"])["content"] == source_entry["content"]
         before, after = (result for result in outputs if result.get("metadata_only"))
         assert not before["exists"]
-        assert after["fields"] == [
-            {"path": "/extensions/regex_scripts/0", "type": "dict", "name": "隐藏初始化"}
-        ]
+        assert after["item_count"] == 1
+        (script,) = after["fields"]
+        assert (script["path"], script["type"], script["name"]) == (
+            "/extensions/regex_scripts/0",
+            "dict",
+            "隐藏初始化",
+        )
         item = editor.edits.conversation(wid)["cards"][0]
         document = item["document"]
         assert item["validation"]["warnings"] == []
