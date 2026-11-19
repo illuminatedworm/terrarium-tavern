@@ -18,7 +18,7 @@ import { type ConversationCacheUsage, type EditorContextStats } from '../../lib/
 import { contextTokens, contextUsageDetails, contextUsageLabel } from '../../lib/contextUsage';
 import { useCardReferencePicker } from '../../composables/useCardReferencePicker';
 import { mergeEditorEvents, type EditorEvent } from '../../lib/cardAgentActivity';
-import { appendSkillRequest, type EditorSkillPreset } from '../../lib/cardAuthorSkills';
+import { editorSkillPresets, type EditorSkillId, type EditorSkillPreset } from '../../lib/cardAuthorSkills';
 import { eventCursor } from '../../lib/turnStream';
 import StoryProse from '../story/StoryProse.vue';
 import JsonDataTree from '../common/JsonDataTree.vue';
@@ -34,6 +34,7 @@ import CardSkills from './CardSkills.vue';
 import CardFileReference from './CardFileReference.vue';
 import CardReferencePicker from './CardReferencePicker.vue';
 import ReferenceTag from './ReferenceTag.vue';
+import CardTaskScope from './CardTaskScope.vue';
 import ConversationModelControls from '../settings/ConversationModelControls.vue';
 import { channelLabels, providerChannel, type Channel } from '../../lib/channels';
 import ConversationMessageAdapter from '../settings/ConversationMessageAdapter.vue';
@@ -60,6 +61,18 @@ const portraitFiles = computed(() =>
   ),
 );
 const input = ref(sessionStorage.getItem(`tavern-editor-input-${props.conversationId}`) || '');
+const scopeKey = `tavern-editor-scope-${props.conversationId}`;
+const savedScope = JSON.parse(sessionStorage.getItem(scopeKey) || '{}');
+const targetRefs = ref<string[]>(savedScope.targets || []);
+const chosenSkill = ref<EditorSkillId | null>(savedScope.skill || null);
+const scopeCards = computed(() => workspace.value?.pending?.cards || workspace.value?.cards || []);
+const taskTargets = computed(() => scopeCards.value.filter((c) => targetRefs.value.includes(c.ref)));
+const continuingRequest = computed(() =>
+  !input.value.trim() && !chosenSkill.value && workspace.value?.pending
+    ? workspace.value.runs.find((r) => r.id === workspace.value?.pending?.run)?.request
+    : undefined,
+);
+const skillTitle = (id?: string | null) => editorSkillPresets.find((s) => s.id === id)?.title;
 const quickEffort = ref(localStorage.getItem(`tavern-editor-effort-${props.conversationId}`) || 'inherit');
 const selectedProfile = computed(() =>
   conversationModelProfile(props.modelProfile, workspace.value?.model_selection, props.providers),
@@ -160,9 +173,14 @@ const conversationTitle = computed(
 const draftStatus = computed(() => review.value.status);
 const worldbook = computed(() => !!current.value && isWorldbook(current.value));
 const saveTarget = computed(() => !!(current.value?.card || current.value?.worldbook));
-// Built-in skills adapt cards only; a selected worldbook falls back to the first card.
-const skillCards = computed(() => items.value.filter((card) => !isWorldbook(card)));
-const skillTarget = computed(() => (worldbook.value ? skillCards.value[0] : current.value));
+const skillCards = computed(() => scopeCards.value.filter((card) => !isWorldbook(card)));
+const skillCardRef = ref('');
+const skillTarget = computed(
+  () =>
+    skillCards.value.find((c) => c.ref === skillCardRef.value) ||
+    taskTargets.value.find((c) => !isWorldbook(c)) ||
+    skillCards.value[0],
+);
 const referencePicker = reactive(
   useCardReferencePicker({
     input,
@@ -196,7 +214,16 @@ watch(
   { flush: 'sync' },
 );
 watch(quickEffort, (value) => localStorage.setItem(`tavern-editor-effort-${props.conversationId}`, value));
-watch([input, quickEffort, () => props.modelProfile], () => scheduleStats());
+watch([input, quickEffort, targetRefs, chosenSkill, () => props.modelProfile], () => scheduleStats());
+watch([targetRefs, chosenSkill], () =>
+  sessionStorage.setItem(scopeKey, JSON.stringify({ targets: targetRefs.value, skill: chosenSkill.value })),
+);
+watch(scopeCards, (cards) => {
+  const valid = targetRefs.value.filter((ref) => cards.some((c) => c.ref === ref));
+  if (cards.length === 1 && !sessionStorage.getItem(scopeKey)) targetRefs.value = [cards[0].ref];
+  else if (valid.length !== targetRefs.value.length) targetRefs.value = valid;
+  if (!valid.length && chosenSkill.value && cards.length !== 1) chosenSkill.value = null;
+});
 watch([busy, active], ([busy, active]) => {
   if (!busy && !active) scheduleStats();
 });
@@ -248,6 +275,8 @@ async function refresh() {
 function modelOptions() {
   return {
     reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
+    target_refs: targetRefs.value,
+    skill: chosenSkill.value,
   };
 }
 function scheduleStats() {
@@ -314,6 +343,8 @@ function observe(id: string) {
       [
         'patch_draft',
         'set_text_field',
+        'edit_document_text',
+        'transfer_document',
         'set_opening',
         'set_portrait',
         'create_draft',
@@ -342,7 +373,7 @@ async function send(resume = false) {
     busy.value ||
     active.value ||
     referencePicker.open ||
-    (!resume && !input.value.trim())
+    (!resume && !input.value.trim() && !chosenSkill.value)
   )
     return;
   ++statsVersion;
@@ -357,6 +388,7 @@ async function send(resume = false) {
     });
     if (!alive) return;
     input.value = '';
+    chosenSkill.value = null;
     for (const file of workspace.value!.files || []) {
       if (run.request._file_refs?.includes(file.ref)) file.message_ref = run.request._input_ref;
     }
@@ -447,6 +479,7 @@ async function chooseReference(option: CardReferenceOption) {
   const original = input.value;
   const range = referencePicker.query;
   let attached = false;
+  let mention = '';
   await guard(async () => {
     if (option.persona) {
       if (!option.personaRef) {
@@ -459,6 +492,10 @@ async function chooseReference(option: CardReferenceOption) {
         workspace.value = value;
         emit('changed');
       }
+      const personaRef =
+        option.personaRef ||
+        Object.entries(personaAttachments.value).find(([, p]) => p.id === option.persona!.id)?.[0];
+      if (personaRef) mention = `「${option.name}」(${personaRef})`;
       attached = true;
       scheduleStats();
       return;
@@ -488,10 +525,11 @@ async function chooseReference(option: CardReferenceOption) {
     if (!alive) return;
     if (!item) throw new Error('引用未完成，请重试。');
     selected.value = item.ref;
+    mention = `「${cardName(item)}」(${item.ref})`;
     attached = true;
     scheduleStats();
   });
-  if (alive && attached) await referencePicker.complete(original, range);
+  if (alive && attached) await referencePicker.complete(original, range, mention);
   else if (alive) {
     await nextTick();
     composer.value?.focus({ preventScroll: true });
@@ -545,9 +583,13 @@ async function referenceFromSkills() {
 }
 function useSkill(preset: EditorSkillPreset) {
   if (!skillTarget.value || busy.value || active.value) return;
-  selected.value = skillTarget.value.ref;
-  input.value = appendSkillRequest(input.value, cardName(skillTarget.value), preset);
+  targetRefs.value = [skillTarget.value.ref];
+  chosenSkill.value = preset.id;
   closeModal();
+  void nextTick(() => composer.value?.focus({ preventScroll: true }));
+}
+function clearSkill() {
+  chosenSkill.value = null;
   void nextTick(() => composer.value?.focus({ preventScroll: true }));
 }
 async function action(kind: string) {
@@ -617,6 +659,7 @@ async function deleteConversation() {
   await guard(async () => {
     await api(base, { expected_revision: workspace.value!.revision }, 'DELETE');
     sessionStorage.removeItem(`tavern-editor-input-${props.conversationId}`);
+    sessionStorage.removeItem(scopeKey);
     if (alive) {
       closeModal();
       emit('deleted', props.conversationId);
@@ -703,6 +746,8 @@ onBeforeUnmount(() => {
                   :role="entry.message.role"
                   :text="entry.message.content"
                   :attachments="entry.message.attachments"
+                  :targets="entry.message.target_labels"
+                  :skill="skillTitle(entry.message.skill)"
                   :data-message-ref="entry.message.ref"
                   :data-message-run="entry.message.run"
                 />
@@ -732,42 +777,67 @@ onBeforeUnmount(() => {
               @highlight="referencePicker.activeIndex = $event"
               @choose="chooseReference"
             />
-            <div class="cw-references" role="group" aria-label="本对话引用">
-              <button
-                class="cw-reference-add cw-quiet"
-                type="button"
-                :disabled="locked"
-                :aria-expanded="referencePicker.open"
-                :aria-controls="referencePicker.open ? referencePicker.id : undefined"
-                @click="referencePicker.show()"
-              >
-                <CardWorkspaceIcon name="plus" />引用角色
-              </button>
-              <CardFileReference :disabled="locked" :uploading="uploadingFiles" @choose="addFileReferences" />
-              <ReferenceTag
-                v-for="file in pendingFiles"
-                :key="file.ref"
-                :name="file.name"
-                kind="file"
-                :disabled="locked"
-                @remove="removeFileReference(file.ref)"
-              />
-              <ReferenceTag
-                v-for="item in workspace?.cards"
-                :key="item.ref"
-                :name="cardName(item)"
-                :kind="isWorldbook(item) ? 'worldbook' : 'card'"
-                :disabled="locked"
-                @inspect="inspectReference(item)"
-                @remove="removeReference('card', item.ref)"
-              />
-              <ReferenceTag
-                v-for="(persona, ref) in personaAttachments"
-                :key="ref"
-                :name="persona.name"
-                kind="persona"
-                :disabled="locked"
-                @remove="removeReference('persona', ref)"
+            <div class="cw-composer-context">
+              <div class="cw-references" role="group" aria-label="本对话引用">
+                <div class="cw-reference-actions">
+                  <button
+                    class="cw-reference-add cw-quiet"
+                    type="button"
+                    :disabled="locked"
+                    :aria-expanded="referencePicker.open"
+                    :aria-controls="referencePicker.open ? referencePicker.id : undefined"
+                    @click="referencePicker.show()"
+                  >
+                    <CardWorkspaceIcon name="plus" />引用角色
+                  </button>
+                  <CardFileReference
+                    :disabled="locked"
+                    :uploading="uploadingFiles"
+                    @choose="addFileReferences"
+                  />
+                </div>
+                <div
+                  v-if="
+                    pendingFiles.length || workspace?.cards.length || Object.keys(personaAttachments).length
+                  "
+                  class="cw-reference-list"
+                >
+                  <ReferenceTag
+                    v-for="file in pendingFiles"
+                    :key="file.ref"
+                    :name="file.name"
+                    kind="file"
+                    :disabled="locked"
+                    @remove="removeFileReference(file.ref)"
+                  />
+                  <ReferenceTag
+                    v-for="item in workspace?.cards"
+                    :key="item.ref"
+                    :name="cardName(item)"
+                    :kind="isWorldbook(item) ? 'worldbook' : 'card'"
+                    :disabled="locked"
+                    @inspect="inspectReference(item)"
+                    @remove="removeReference('card', item.ref)"
+                  />
+                  <ReferenceTag
+                    v-for="(persona, ref) in personaAttachments"
+                    :key="ref"
+                    :name="persona.name"
+                    kind="persona"
+                    :disabled="locked"
+                    @remove="removeReference('persona', ref)"
+                  />
+                </div>
+              </div>
+              <CardTaskScope
+                v-if="scopeCards.length || continuingRequest"
+                :cards="scopeCards"
+                :model-value="continuingRequest ? continuingRequest.target_refs || [] : targetRefs"
+                :skill="skillTitle(continuingRequest ? continuingRequest.skill : chosenSkill)"
+                :continuing="!!continuingRequest"
+                :disabled="busy || !!active"
+                @update:model-value="targetRefs = $event"
+                @remove-skill="clearSkill"
               />
             </div>
             <textarea
@@ -830,7 +900,8 @@ onBeforeUnmount(() => {
                   !workspace?.channel_origin ||
                   !selectedProfile.model ||
                   referencePicker.open ||
-                  (!input.trim() && !workspace?.pending)
+                  (!input.trim() && !chosenSkill && !workspace?.pending) ||
+                  (!!chosenSkill && !taskTargets.length)
                 "
               >
                 {{ workspace?.pending ? (input.trim() ? '补充要求并继续' : '继续本轮') : '发送' }}
@@ -1080,7 +1151,7 @@ onBeforeUnmount(() => {
           :cards="skillCards"
           :selected="skillTarget?.ref || ''"
           :disabled="busy || !!active"
-          @select="selected = $event"
+          @select="skillCardRef = $event"
           @use="useSkill"
           @reference="referenceFromSkills"
         />

@@ -9,10 +9,11 @@ Free-form source code is kept intact except for reversible opaque-token handles.
 
 import copy
 import re
-import uuid
 
 import jsonpatch
 import jsonpointer
+
+from tavern.character.editor_lore import LoreIdentities, append_path, entry_destination, fresh_entry
 
 OPAQUE = re.compile(
     r"(?<![\w])(?:[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24,})(?![\w])"
@@ -47,6 +48,7 @@ def hidden_field(key):
 class ModelView:
     def __init__(self, value=None):
         self.forward, self.reverse = {}, {}
+        self._pattern = self._compiled_for = None
         self.reserved = set(HANDLE.findall(str(value)))
         self.seed(value)
 
@@ -58,6 +60,7 @@ class ModelView:
             handle = f"@D{number}"
             self.forward[value] = handle
             self.reverse[handle] = value
+            self._pattern = None
         return self.forward[value]
 
     def seed(self, value):
@@ -67,7 +70,7 @@ class ModelView:
                     continue  # Never allocate handles for omitted bookkeeping.
                 if isinstance(item, str) and key in IDENTITY_FIELDS and len(item) > 12:
                     self.bind(item)
-                if len(str(key)) > 24:
+                if len(str(key)) > 24 and key != "post_history_instructions":
                     self.bind(str(key))
                 self.seed(item)
         elif isinstance(value, list):
@@ -83,8 +86,16 @@ class ModelView:
         self.seed(text)
         if not self.forward:
             return text
-        pattern = "|".join(re.escape(raw) for raw in sorted(self.forward, key=len, reverse=True))
-        return re.sub(pattern, lambda m: self.forward[m[0]], text)
+        if self._pattern is None or self._compiled_for is not self.forward:
+            self._pattern = re.compile(
+                "|".join(re.escape(raw) for raw in sorted(self.forward, key=len, reverse=True))
+            )
+            self._compiled_for = self.forward
+        return self._pattern.sub(lambda m: self.forward[m[0]], text)
+
+    def protocol_text(self, text):
+        """Bundled instructions own their field/tool names; only intrinsic opaque tokens need handles."""
+        return OPAQUE.sub(lambda match: self.bind(match[0]), text)
 
     def expose(self, value):
         self.seed(value)
@@ -147,7 +158,11 @@ class ModelView:
             for raw in operations
         ]
 
-    def patch(self, document, operations, *, check=None):
+    def patch(self, document, operations, *, check=None, applied=None):
+        return self.patch_original(document, self.operations(operations), check=check, applied=applied)
+
+    @staticmethod
+    def patch_original(document, operations, *, check=None, applied=None):
         """Apply to the original, preserving fields the model was never shown.
 
         JSON Pointers may contain dictionary keys exposed as handles; translate
@@ -155,8 +170,10 @@ class ModelView:
         A failed patch leaves the caller's original document and hashes untouched.
         """
         result = copy.deepcopy(document)
-        for operation in self.operations(operations):
-            path = operation.get("path", "")
+        identities = LoreIdentities(result)
+        for raw in operations:
+            path = append_path(result, raw)
+            operation = {**raw, "path": path}
             if any(hidden_field(part) for part in jsonpointer.JsonPointer(path).parts):
                 raise ValueError("指纹和哈希由程序维护，不接受模型修改；开场请使用 set_opening")
             if "from" in operation and any(
@@ -166,25 +183,39 @@ class ModelView:
             if check is not None:
                 check(result, operation)
             op = copy.deepcopy(operation)
+            parent = jsonpointer.resolve_pointer(result, path.rpartition("/")[0], default=None)
+            new_entry = entry_destination(result, path) and (
+                isinstance(parent, list) or jsonpointer.JsonPointer(path).parts[-1] not in (parent or {})
+            )
             if op.get("op") in ("add", "replace") and "value" in op:
                 old = jsonpointer.resolve_pointer(result, path, default=None)
-                parent = jsonpointer.resolve_pointer(result, path.rpartition("/")[0], default=None)
                 if op["op"] == "add" and path and isinstance(parent, list):
                     old = None  # Array insertion must not inherit the next item's ID/hash.
                 op["value"] = preserve_hidden(op["value"], old)
-            result = jsonpatch.apply_patch(result, [op])
-        # New lore IDs are assigned by Runtime. Existing implicit-index entries
-        # are left alone unless they were actually changed or newly introduced.
-        old_data = document.get("data", document) if document.get("spec") else document
-        old_entries = (old_data.get("character_book") or {}).get("entries", [])
-        old_entries = list(old_entries.values()) if isinstance(old_entries, dict) else old_entries
-        new_data = result.get("data", result) if result.get("spec") else result
-        new_entries = (new_data.get("character_book") or {}).get("entries", [])
-        new_entries = list(new_entries.values()) if isinstance(new_entries, dict) else new_entries
-        for entry in new_entries:
-            if "id" not in entry and not any(entry == old for old in old_entries):
-                entry["id"] = uuid.uuid4().hex
+                if (
+                    new_entry
+                    and op["op"] == "add"
+                    and isinstance(op["value"], dict)
+                    and "id" not in op["value"]
+                ):
+                    fresh_entry(op["value"])
+            if op["op"] == "copy" and entry_destination(result, path):
+                value = copy.deepcopy(jsonpointer.resolve_pointer(result, op["from"]))
+                fresh_entry(value)
+                op = {"op": "add", "path": path, "value": value}
+            result = jsonpatch.apply_patch(result, [op], in_place=True)
+            if applied is not None:
+                applied.append(operation)
+        identities.finish(result)
         return result
+
+
+def _identity(value):
+    if isinstance(value, dict):
+        for key in ("id", "uid"):
+            if isinstance(value.get(key), (str, int)):
+                return key, value[key]
+    return None
 
 
 def preserve_hidden(new, old):
@@ -193,22 +224,23 @@ def preserve_hidden(new, old):
         if any(hidden_field(str(k)) for k in new):
             raise ValueError("指纹和哈希由程序维护，请勿在模型编辑内容中提供")
         old = old if isinstance(old, dict) else {}
-        if new.get("id") is not None and old.get("id") != new["id"]:
+        if _identity(new) is not None and _identity(old) != _identity(new):
             old = {}
         result = {k: preserve_hidden(v, old.get(k)) for k, v in new.items()}
-        if "id" in old and "id" not in new:
-            result["id"] = copy.deepcopy(old["id"])
+        for key in ("id", "uid"):
+            if key in old and key not in new:
+                result[key] = copy.deepcopy(old[key])
         result.update({k: copy.deepcopy(v) for k, v in old.items() if hidden_field(str(k))})
         return result
     if isinstance(new, list):
         old = old if isinstance(old, list) else []
-        by_id = {v["id"]: v for v in old if isinstance(v, dict) and isinstance(v.get("id"), (str, int))}
+        by_id = {ident: v for v in old if (ident := _identity(v)) is not None}
 
         def previous(value, index):
-            if isinstance(value, dict) and "id" in value:
-                return by_id.get(value["id"])
+            if (ident := _identity(value)) is not None:
+                return by_id.get(ident)
             candidate = old[index] if index < len(old) else None
-            return None if isinstance(candidate, dict) and "id" in candidate else candidate
+            return None if _identity(candidate) is not None else candidate
 
         return [preserve_hidden(v, previous(v, i)) for i, v in enumerate(new)]
     return new

@@ -404,7 +404,7 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
             assert "last_call_notice" not in json.dumps(editor.wire(editor.requests[-1]))
             assert "本轮最后一次调用" not in json.dumps(editor.wire(editor.requests[-1]), ensure_ascii=False)
             saved = editor.service.edits.context(editor.workspace["id"])
-            assert saved["version"] == 4 and "last_call_notice" not in str(saved["messages"])
+            assert saved["version"] == 5 and "last_call_notice" not in str(saved["messages"])
     finally:
         await editor.service.close()
 

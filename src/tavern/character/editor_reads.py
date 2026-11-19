@@ -40,6 +40,31 @@ def known(reads, ref, document, path):
         return False
 
 
+def relocate(reads, ref, old, current):
+    """Move evidence with identified documents. Drop evidence for retired/ambiguous handles."""
+    records = reads.get(ref)
+    if not records:
+        return
+    paths = {
+        row[1]: current[handle][1] if handle in current else None
+        for handle, row in old.items()
+        if handle not in current or current[handle][1] != row[1]
+    }
+    if not paths:
+        return
+    moved = {}
+    for path in list(records):
+        ancestor = path
+        while ancestor:
+            if ancestor in paths:
+                digest = records.pop(path)
+                if paths[ancestor] is not None:
+                    moved[paths[ancestor] + path[len(ancestor) :]] = digest
+                break
+            ancestor = ancestor.rpartition("/")[0]
+    records.update(moved)
+
+
 def reconcile(reads, cards):
     """External edits invalidate only evidence whose actual current value differs."""
     documents = {card["ref"]: card["document"] for card in cards}

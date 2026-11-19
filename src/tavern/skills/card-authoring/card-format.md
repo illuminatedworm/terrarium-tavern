@@ -6,7 +6,7 @@
 
 - 包装卡路径为 `/data/<字段>`，未包装旧卡为 `/<字段>`。JSON Pointer 中 `~` 写作 `~0`，`/` 写作 `~1`；数组下标从 0 开始，`/-` 表示追加。读取结果中的 `@D` 短编号直接用在路径里，由程序恢复为原键。
 - `add` 要求父节点存在，可在同一批补丁先创建父对象。新增缺失键和用 `/-` 追加数组项可以直接操作。修改已有字段时，完整读取目标后使用 `replace`。
-- 世界书 `entries` 可能是数组，也可能是以键索引的对象，编辑时保持原形态。新条目省略 `id`，由程序生成。
+- 世界书 `entries` 可能是数组，也可能是以键索引的对象。制卡工具在 `entries/-` 追加时保留原容器形态，为对象分配独立新键。新条目省略 `id`。原样搬运用 `transfer_document`，正文微调用 `edit_document_text`。
 
 ## 顶层字段
 
@@ -20,8 +20,8 @@
 | `scenario` | 文本 | `<card_scenario>`，性格之后 |
 | `mes_example` | 文本 | `<card_mes_example>`，用户角色资料之后、剧情之前 |
 | `post_history_instructions` | 文本 | `<card_post_history_instructions>`，历史和当前输入之后 |
-| `first_mes` | 文本 | 开场 0 |
-| `alternate_greetings` | 文本数组 | 开场 1..N。用户只选一个开场作为第一条 assistant 剧情，其余开场不发送 |
+| `first_mes` | 文本 | 界面和文档目录中的开场 1（默认），`set_opening.index=0` |
+| `alternate_greetings` | 文本数组 | 界面的开场 2 对应数组下标 0、`set_opening.index=1`，其后依次递增。用户只选一个开场作为第一条 assistant 剧情 |
 | `character_book` | 对象 | 世界书，条目按下文规则准入 |
 | `extensions` | 对象 | 只解释已支持的扩展：`regex_scripts`、Tavern Helper 脚本、世界书条目的 `terrarium.purpose` 等 |
 | `creator_notes`、`creator`、`tags`、`character_version` | 文本／数组 | 卡片信息，不进入游玩请求 |

@@ -23,6 +23,7 @@ def tools_for(document=None):
     item = {"ref": "C1", "kind": "draft", "document": document or fixture()}
     owner = SimpleNamespace(
         working={"cards": [item]},
+        request={},
         reads={},
         legacy=False,
         context=SimpleNamespace(view=ModelView(item["document"])),
@@ -34,6 +35,85 @@ def tools_for(document=None):
 
 async def read(tools, path=""):
     return await tools.execute("read_field", {"card_ref": "C1", "path": path})
+
+
+async def test_worldbook_append_edit_copy_and_cross_card_move_preserve_identity():
+    book = {
+        "name": "同名",
+        "character_book": {"entries": {"17": {"uid": 17, "comment": "旧港", "content": "原句"}}},
+    }
+    tools, card = tools_for(book)
+    dest = {"ref": "C2", "kind": "reference", "worldbook": "internal", "document": copy.deepcopy(book)}
+    tools.owner.working["cards"].append(dest)
+    c = {"card_ref": "C1"}
+    path = "/character_book/entries"
+    await read(tools, path)
+    for title in ("东港", "西港"):
+        await tools.execute(
+            "patch_draft",
+            {
+                **c,
+                "comment": "追加",
+                "operations": [
+                    {"op": "add", "path": path + "/-", "value": {"comment": title, "content": title}}
+                ],
+            },
+        )
+    entries = card["document"]["character_book"]["entries"]
+    assert [v["comment"] for v in entries.values()] == ["旧港", "东港", "西港"] and "-" not in entries
+    node = (await tools.execute("list_documents", {**c, "branch": "entries"}))["documents"][0]["ref"]
+    await tools.execute(
+        "edit_document_text", {**c, "ref": node, "old_text": "原句", "text": "新句", "comment": "校对"}
+    )
+    assert card["document"]["character_book"]["entries"]["17"] == {
+        "uid": 17,
+        "comment": "旧港",
+        "content": "新句",
+    }
+    args = {**c, "ref": node, "destination_card_ref": "C2", "comment": "搬运"}
+    before = copy.deepcopy(tools.owner.working)
+    with pytest.raises(ValueError, match="相同身份"):
+        await tools.execute("transfer_document", {**args, "action": "move"})
+    assert tools.owner.working == before
+    copied = await tools.execute("transfer_document", {**args, "action": "copy"})
+    assert len(dest["document"]["character_book"]["entries"]) == 2
+    await tools.execute(
+        "transfer_document",
+        {
+            "card_ref": "C2",
+            "ref": copied["ref"],
+            "destination_card_ref": "C1",
+            "action": "move",
+            "comment": "移回",
+        },
+    )
+    assert len(dest["document"]["character_book"]["entries"]) == 1
+    assert len(card["document"]["character_book"]["entries"]) == 4
+
+
+async def test_document_handles_follow_openings_and_only_full_target_read_allows_local_edit():
+    document = fixture()
+    document["alternate_greetings"] = ["留灯。只改这句。", "另一个开场"]
+    text = "潮水。" * 3000 + "第七枚铜铃"
+    document["character_book"]["entries"][0]["content"] = text
+    tools, card = tools_for(document)
+    c = {"card_ref": "C1"}
+    found = await tools.execute("search_documents", {"query": "铜铃"})
+    assert found["total"] == 1 and "铜铃" in found["matches"][0]["preview"]
+    result = await tools.execute("read_documents", {**c, "all_constants": True, "part": "body"})
+    assert [d["body"] for d in result["documents"]] == [text]
+    nodes = (await tools.execute("list_documents", {**c, "branch": "openings", "limit": None}))["documents"]
+    second = nodes[1]["ref"]
+    await tools.execute("read_documents", {**c, "refs": [second], "part": "properties"})
+    args = {**c, "ref": second, "old_text": "只改这句", "text": "等潮来", "comment": "改最后一句"}
+    with pytest.raises(ValueError, match="完整读取"):
+        await tools.execute("edit_document_text", args)
+    await tools.execute("read_documents", {**c, "refs": [second], "part": "body"})
+    await tools.execute("set_opening", {**c, "index": 0, "action": "add", "narrative": "新开场"})
+    read_back = await tools.execute("read_documents", {**c, "refs": [second]})
+    assert read_back["documents"][0]["title"] == "开场 3"
+    await tools.execute("edit_document_text", args)
+    assert card["document"]["alternate_greetings"] == ["开场一", "留灯。等潮来。", "另一个开场"]
 
 
 @pytest.mark.parametrize("wrapped", [False, True])

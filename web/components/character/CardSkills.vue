@@ -21,7 +21,7 @@ defineEmits<{ select: [ref: string]; use: [preset: EditorSkillPreset]; reference
         @change="$emit('select', ($event.target as HTMLSelectElement).value)"
       >
         <option v-for="card in cards" :key="card.ref" :value="card.ref">
-          {{ cardName(card) }}
+          {{ cardName(card) }} ({{ card.ref }})
         </option>
       </select></label
     >
@@ -36,12 +36,10 @@ defineEmits<{ select: [ref: string]; use: [preset: EditorSkillPreset]; reference
       <p class="skill-scope">{{ preset.scope }}</p>
       <p class="skill-outcome">{{ preset.outcome }}</p>
       <button :disabled="disabled || !cards.length" @click="$emit('use', preset)">
-        填入请求 <CardWorkspaceIcon name="up" />
+        选用流程 <CardWorkspaceIcon name="up" />
       </button>
     </article>
-    <footer>
-      这两种流程来自内置的角色卡适配技能。选择后会填入输入框，你可以补充要求再发送。修改仅进入草稿，审阅后由你保存到书架。
-    </footer>
+    <footer>目标卡与所选流程会显示在输入框旁。你可以补充要求、移除流程，再发送本轮请求。</footer>
   </section>
 </template>
 

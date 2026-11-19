@@ -131,3 +131,5 @@ Windows/Linux 便携包用 `tools/package_portable.py` 在各自的目标平台�
 `tools/evaluate_card_author.py` 使用现有模型配置并消耗模型额度，运行前需明确授权。默认在 `.cache/card-author-evaluation/` 建立隔离数据；`--cases core` 和 `--cases remaining` 分别选择核心及其余场景。
 
 同一输出目录的运行共用 `budget.json`，累计最多 60 次实际 HTTP 请求，达到上限后停止。记录包含调用、用量、耗时和产物；创作结果按已确认方案人工审阅。
+
+同名卡导航盲测使用 `--cases navigation`。在独立输出目录中用 `--request-limit 12` 限制累计请求，按需用 `--proxy` 指定代理。它给出目标卡和自然语言要求，由模型自行定位常驻线索与开场。结果核对尾部事实、参考卡原样保留和目标开场的精确差异。工作台的目标与流程界面可单独运行 `python -m tests.browser.browser_card_authoring --scope-only` 验证。

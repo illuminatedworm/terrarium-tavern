@@ -5,8 +5,10 @@ import json
 
 from tavern.character.editor_attachments import message_content
 from tavern.character.editor_cache import FINAL_REF_PREFIX, follows_replies, reply_breakpoint
+from tavern.character.editor_documents import DocumentDirectory
 from tavern.character.editor_draft_state import draft_changes, draft_versions
 from tavern.character.editor_environment import environment_message
+from tavern.character.editor_guides import SKILL_ENTRIES, guide_text, scoped_text
 from tavern.character.editor_images import IMAGE_REFS, image_refs, image_stats
 from tavern.character.editor_reads import reconcile
 from tavern.core.cache_policy import fingerprint, shares_editor_cloud_prefix
@@ -60,6 +62,8 @@ class EditorContext:
 
     def __init__(self, saved, owner):
         self.owner = owner
+        self.directory = DocumentDirectory(owner, saved.get("directory") if saved else None)
+        self.version_cache = {}
         self.origin = response_origin(owner.cfg)
         self.refresh_tool_policy()
         history = owner.edits.messages(owner.wid)
@@ -69,7 +73,7 @@ class EditorContext:
             "history": [m["content"] for m in history],
         }
         self.reason = None
-        if not saved or saved.get("version") != 4:
+        if not saved or saved.get("version") != 5:
             self.reason = "initial_context" if not saved else "context_version_changed"
         elif saved["origin"] != self.origin:
             self.reason = "provider_or_model_changed"
@@ -82,8 +86,9 @@ class EditorContext:
         ):
             self.reason = "literal_handle_collision"
         self.view = ModelView(seed if self.reason else None)
-        if saved and saved.get("version") in (2, 3, 4) and self.reason != "literal_handle_collision":
+        if saved and saved.get("version") in (2, 3, 4, 5) and self.reason != "literal_handle_collision":
             self.view.forward = copy.deepcopy(saved["view"]["forward"])
+            self.view.forward.pop("post_history_instructions", None)
             self.view.reverse = copy.deepcopy(saved["view"]["reverse"])
             self.view.reserved = set(saved["view"]["reserved"])
             self.view.seed(seed)
@@ -108,7 +113,7 @@ class EditorContext:
             ):
                 self.frames["overview"] = {
                     "overview": overview,
-                    "documents": draft_versions(owner.working["cards"]),
+                    "documents": self.versions(owner.working["cards"]),
                 }
             self.epoch = saved["epoch"]
         else:
@@ -165,9 +170,8 @@ class EditorContext:
         self.must_rollover = False
 
     def add_history(self, message):
-        self.add_message(
-            message["role"], f"[{message['ref']}]\n{message['content']}", message.get("attachments", [])
-        )
+        content = scoped_text(message["content"], message.get("target_labels", []), message.get("skill"))
+        self.add_message(message["role"], f"[{message['ref']}]\n{content}", message.get("attachments", []))
         if message["ref"] not in self.seen:
             self.seen.append(message["ref"])
         if (
@@ -212,37 +216,64 @@ class EditorContext:
     def image_stats(self):
         return image_stats(self.messages)
 
-    def update(self, key, value, prefix, *, content=None):
+    def update(self, key, value, prefix, *, content=None, trusted=False):
         if self.frames.get(key) != value:
             body = value if content is None else content
+            text = prefix + (body if isinstance(body, str) else json.dumps(body, ensure_ascii=False))
             self.messages.append(
                 {
                     "role": "system",
                     "message_type": "editor_" + key,
                     "runtime_phase": "body",
                     "_cache_static": False,
-                    "content": self.view.text(
-                        prefix + (body if isinstance(body, str) else json.dumps(body, ensure_ascii=False))
-                    ),
+                    "content": self.view.protocol_text(text) if trusted else self.view.text(text),
                 }
             )
             self.frames[key] = copy.deepcopy(value)
 
+    def versions(self, cards):
+        refs = {c["ref"] for c in cards}
+        self.directory.prune(refs)
+        for ref in self.version_cache.keys() - refs:
+            del self.version_cache[ref]
+        versions = {}
+        for card in cards:
+            ref = card["ref"]
+            cached = self.version_cache.get(ref)
+            if not cached or cached[0] is not card["document"]:
+                self.directory.index(card)
+                record = draft_versions([card])[ref]
+                record["nodes"] = {k: [v[1], v[3]] for k, v in self.directory.state["cards"][ref].items()}
+                cached = self.version_cache[ref] = card["document"], record
+            versions[ref] = cached[1]
+        return versions
+
     def prepare(self):
         owner = self.owner
         overview = owner.tools.overview()
-        value = {"overview": overview, "documents": draft_versions(owner.working["cards"])}
+        cards = owner.working["cards"]
+        versions = self.versions(cards)
+        value = {"overview": overview, "documents": versions}
         previous = self.frames.get("overview")
         if previous != value:
             reconcile(owner.reads, owner.working["cards"])
             content = copy.deepcopy(overview)
             if previous is not None:
-                content["changes"] = draft_changes(previous.get("documents"), value["documents"])
+                changes = draft_changes(previous.get("documents"), versions)
+                prior_rows = {c["ref"]: c for c in previous.get("overview", {}).get("cards", [])}
+                edited = {row["card_ref"] for row in changes["updated"]}
+                content = {
+                    "cards": [
+                        c for c in overview["cards"] if c["ref"] in edited or c != prior_rows.get(c["ref"])
+                    ],
+                    "changes": changes,
+                    "active_refs": list(versions),
+                }
             self.update(
                 "overview",
                 value,
-                "当前草稿概览（取代此前概览；removed 引用已移除；updated 字段的旧读取可能失效。"
-                "先用 overview 或 search_entries 定位，再用 read_field 完整读取相关字段或条目）：",
+                "当前草稿概览（首次列出全部卡片，后续只追加变化的卡；active_refs 为当前引用。removed 已移除，updated 可能需要重读。"
+                "目录与摘录只供定位；用 list_documents、search_documents 找文档，read_documents 读取原文）：",
                 content=content,
             )
         # UI selection grants use of this exact snapshot, not write permission
@@ -269,7 +300,17 @@ class EditorContext:
                 [{"persona_ref": ref, **change["data"]} for ref, change in changes.items()],
                 "本任务待保存的用户角色（正常完成时保存；新要求撤销操作时用 update_persona(revert=true)）：",
             )
-        if owner.request.get("adapt"):
+        skill = owner.request.get("skill")
+        if skill:
+            title, resource = SKILL_ENTRIES[skill]
+            self.update(
+                "adapt",
+                skill,
+                f"本条消息选用{title}。内置指引 {resource} 全文：\n",
+                content=guide_text(resource),
+                trusted=True,
+            )
+        elif owner.request.get("adapt"):
             self.update("adapt", True, "本轮用户要求适配工作流：先读取 SKILL.md，按其中的顺序读取后续资料。")
         else:
             self.update("adapt", False, "本轮无额外适配要求：")
@@ -336,7 +377,8 @@ class EditorContext:
 
     def saved(self):
         return {
-            "version": 4,
+            "version": 5,
+            "directory": copy.deepcopy(self.directory.state),
             "origin": self.origin,
             "policy": self.policy,
             "epoch": self.epoch,

@@ -32,26 +32,3 @@ function choose(event: Event) {
     @change="choose"
   />
 </template>
-
-<style scoped>
-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 7px 9px;
-  font: var(--fs-sm) / 1.5 var(--font-ui);
-  color: var(--text-secondary);
-  background: transparent;
-  border-color: transparent;
-}
-button:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-}
-button svg {
-  width: 16px;
-  height: 16px;
-  color: var(--accent-hover);
-}
-</style>

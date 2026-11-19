@@ -305,6 +305,8 @@ class CardAuthorCreate(BaseModel):
 class CardAuthorModelOptions(BaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=200)
     reasoning_effort: ReasoningEffort | None = None
+    target_refs: list[str] = Field(default_factory=list)
+    skill: Literal["adapt", "status-display"] | None = None
 
     @field_validator("model")
     @classmethod

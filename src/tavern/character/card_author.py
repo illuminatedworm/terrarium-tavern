@@ -8,7 +8,8 @@ import httpx
 
 from tavern.character.card_author_store import EditorStore
 from tavern.character.editor_config import SYSTEM as SYSTEM
-from tavern.character.editor_run import EditorRun
+from tavern.character.editor_guides import SKILL_ENTRIES, target_labels
+from tavern.character.editor_run import EditorRun, PendingWrite
 from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.core.provider import make_provider, require_model_connection
 from tavern.storage.store import Conflict, dump, uid
@@ -46,11 +47,30 @@ class CardAuthorService:
             if request.resume_run_id:
                 if not pending or pending[0] != request.resume_run_id:
                     raise Conflict("只能继续当前对话最新的未完成进度")
-                payload["_input_ref"] = json.loads(pending[1])["current_refs"][-1]
+                progress = json.loads(pending[1])
+                payload["_input_ref"] = progress["current_refs"][-1]
+                available = progress["working"]["cards"]
+                if not request.text.strip() and not request.skill:
+                    prior_request = json.loads(
+                        db.execute("SELECT request FROM card_edit_runs WHERE id=?", (pending[0],)).fetchone()[
+                            0
+                        ]
+                    )
+                    for key in ("target_refs", "skill", "adapt"):
+                        if key in prior_request:
+                            payload[key] = prior_request[key]
             elif pending:
                 raise Conflict("请先继续或丢弃本轮未完成进度")
-            elif not request.text.strip():
+            elif not request.text.strip() and not request.skill:
                 raise ValueError("请输入制卡要求")
+            else:
+                available = workspace["cards"]
+            if request.text.strip() or request.skill:
+                targets = target_labels(self.edits, available, request.target_refs, request.skill)
+                payload["target_refs"] = [c["ref"] for c in targets]
+                payload["_target_labels"] = targets
+                if not request.text.strip():
+                    payload["text"] = SKILL_ENTRIES[request.skill][0]
             cfg = editor_runtime_config(self.store, wid, payload)
             if not self.provider_factory:
                 require_model_connection(cfg)
@@ -58,8 +78,8 @@ class CardAuthorService:
             if not workspace.get("environment"):
                 workspace["environment"] = self.edits.environment_snapshot(db, workspace, now)
                 self.edits.write(db, workspace, increment=False)
-            if request.text.strip():
-                payload["_input_ref"] = self.edits.message(db, wid, "user", request.text, rid)
+            if payload["text"].strip():
+                payload["_input_ref"] = self.edits.message(db, wid, "user", payload["text"], rid)
                 payload["_file_refs"] = []
                 for file in workspace.get("files", []):
                     if not file.get("message_ref"):
@@ -146,7 +166,10 @@ class CardAuthorService:
             ):
                 detail += "\n请求包含图片，请确认所选模型支持图片输入，并符合服务商的尺寸与请求大小限制。原图与本轮进度已保留。"
             with self.store.connection() as db:
-                db.execute("UPDATE card_edit_runs SET status='error',error=? WHERE id=?", (detail, rid))
+                db.execute(
+                    "UPDATE card_edit_runs SET status=?,error=? WHERE id=?",
+                    ("pending" if isinstance(error, PendingWrite) else "error", detail, rid),
+                )
             self.edits.event(rid, "error", {"message": detail})
         finally:
             if provider:

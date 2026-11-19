@@ -9,6 +9,7 @@ const names = {
   message: 'chat',
   sliders: 'sliders',
   file: 'file',
+  cards: 'cards',
   chevron: 'chevron-right',
   book: 'book',
   trash: 'trash',

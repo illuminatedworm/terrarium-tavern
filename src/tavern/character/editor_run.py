@@ -19,6 +19,24 @@ from tavern.web.client import WebTools
 from tavern.web.cloud import WebSession
 
 
+class PendingWrite(ValueError):
+    """A native final response included a rejected write; only the user can resume."""
+
+
+WRITE_TOOLS = {
+    "create_draft",
+    "patch_draft",
+    "set_text_field",
+    "edit_document_text",
+    "transfer_document",
+    "set_opening",
+    "set_portrait",
+    "revert_draft",
+    "create_persona",
+    "update_persona",
+}
+
+
 class EditorRun:
     def __init__(self, service, rid):
         self.service, self.store, self.edits, self.rid = service, service.store, service.edits, rid
@@ -229,6 +247,7 @@ class EditorRun:
             self.cfg.cache_window = self.context.epoch
             self.event("context_rollover", {"window": self.working["state"].get("window", 0)})
         self.save()
+        return batch["results"]
 
     def archived_trace(self):
         result = []
@@ -408,8 +427,27 @@ class EditorRun:
             self.trace.append(assistant)
             self.pending_calls = {"assistant": assistant, "results": [], "forced": self.context.must_rollover}
             self.save()
-            await self.execute_pending()
+            results = await self.execute_pending()
             if ended:
+                errors = {
+                    r["tool_call_id"]: json.loads(r["content"])["error"]
+                    for r in results
+                    if r.get("_tool_error")
+                }
+                rejected = []
+                for call in calls:
+                    if call.id in errors and call.name in WRITE_TOOLS:
+                        args = json.loads(call.arguments)
+                        rejected.append(
+                            f"{args.get('card_ref') or args.get('persona_ref') or ''} {call.name}（{errors[call.id]}）".strip()
+                        )
+                if rejected:
+                    previous = {c["ref"]: c for c in self.base["cards"]}
+                    changed = [c["ref"] for c in self.working["cards"] if c != previous.get(c["ref"])]
+                    changed.extend(self.persona_changes)
+                    raise PendingWrite(
+                        f"待续。已暂存变更：{'、'.join(changed) or '无'}。未执行成功：{'、'.join(rejected)}。可继续、补充要求或丢弃进度。"
+                    )
                 # Executed tools stay paired; a resume asks the model again.
                 if not reply.strip():
                     raise ValueError("模型没有返回完整说明，本轮进度保留")

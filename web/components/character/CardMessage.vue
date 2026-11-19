@@ -7,6 +7,8 @@ defineProps<{
   role?: string;
   status?: 'intermediate' | 'streaming' | 'interrupted';
   attachments?: EditorFile[];
+  targets?: { ref: string; name: string }[];
+  skill?: string;
 }>();
 </script>
 <template>
@@ -21,6 +23,10 @@ defineProps<{
     <div class="cw-message-body">
       <div class="cw-message-meta">
         <strong>{{ role === 'user' ? '你' : '制卡 agent' }}</strong>
+        <small v-if="targets?.length"
+          >目标 · {{ targets.map((t) => t.name + ' (' + t.ref + ')').join('、') }}</small
+        >
+        <small v-if="skill">{{ skill }}</small>
         <small v-if="status" :class="{ 'cw-working': status === 'streaming' }">{{
           status === 'streaming' ? '处理中' : status === 'interrupted' ? '未完成' : '中间回复'
         }}</small>

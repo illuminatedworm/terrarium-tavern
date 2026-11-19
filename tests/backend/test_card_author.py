@@ -697,5 +697,28 @@ async def test_native_end_with_tools_finishes_on_prose_beside_them(tmp_path):
         result = editor.edits.run(run["id"])
         assert (result["status"], result["response"], provider.call_count) == ("completed", "已改好描述。", 1)
         assert editor.edits.get(workspace["id"])["document"]["description"] == "新描述"
+        bad = EndWithTools(
+            [
+                (
+                    "set_text_field",
+                    {"card_ref": "C1", "path": "/first_mes", "text": "误报成功", "comment": "未读开场"},
+                )
+            ]
+        )
+        editor.provider_factory = lambda: bad
+        run = editor.submit(
+            workspace["id"],
+            CardAuthorRequest(
+                text="改开场",
+                expected_revision=editor.edits.get(workspace["id"])["revision"],
+                operation_id="closing-error",
+            ),
+            legacy=False,
+        )
+        await editor.tasks[run["id"]]
+        result = editor.edits.run(run["id"])
+        assert result["status"] == "pending" and not result["response"] and bad.call_count == 1
+        assert "未执行成功" in result["error"] and editor.edits.progress(workspace["id"])
+        assert editor.edits.get(workspace["id"])["document"]["first_mes"] == "开场一"
     finally:
         await editor.close()

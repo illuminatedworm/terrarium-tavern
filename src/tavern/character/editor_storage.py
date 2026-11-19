@@ -270,9 +270,16 @@ class Conversations:
             {
                 **dict(r),
                 "ref": f"H{r['seq']}",
+                "target_labels": json.loads(r["target_labels"] or "[]"),
                 "attachments": [f for f in files if f.get("message_ref") == f"H{r['seq']}"],
             }
-            for r in db.execute("SELECT * FROM card_author_messages WHERE workspace=? ORDER BY seq", (wid,))
+            for r in db.execute(
+                """SELECT m.*, CASE WHEN m.role='user' THEN json_extract(r.request,'$.skill') END AS skill,
+                   CASE WHEN m.role='user' THEN json_extract(r.request,'$._target_labels') END AS target_labels
+                   FROM card_author_messages m LEFT JOIN card_edit_runs r ON r.id=m.run
+                   WHERE m.workspace=? ORDER BY m.seq""",
+                (wid,),
+            )
         ]
 
     def message(self, db, wid, role, text, rid):

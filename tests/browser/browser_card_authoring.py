@@ -1,5 +1,6 @@
 """Standalone multi-card authoring acceptance, entirely local and isolated."""
 
+import argparse
 import asyncio
 import copy
 import json
@@ -21,12 +22,15 @@ from tavern.storage.store import dump
 from tests.backend.test_card_author import ToolLLM, fixture
 
 
-async def main():
+async def main(scope_only=False):
     output = Path(".cache/card-authoring-ui")
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="card-authoring-ui-") as root:
         app = create_app(root)
         store, editor = app.state.store, app.state.editor
+        settings = store.settings_document()
+        settings.shared.card_author.model = "offline-author"
+        store.save_settings(settings)
         card = store.import_card(dump(fixture()).encode())
         second = fixture()
         second["name"] = "参考卡乙"
@@ -118,7 +122,7 @@ async def main():
                     await expect(picker).to_be_visible()
                     await composer.fill("@测试卡")
                     await composer.press("Tab")
-                    await expect(composer).to_have_value("")
+                    await expect(composer).to_have_value("「测试卡」(C2)")
                     editor.provider_factory = lambda: ToolLLM(
                         [
                             ("read_field", {"card_ref": "C2", "path": "/description"}),
@@ -159,15 +163,32 @@ async def main():
                     await page.locator(".cw-skills-button").click()
                     skills = page.get_by_role("dialog", name="内置技能", exact=True)
                     await expect(skills).to_contain_text("适配项目工作流")
+                    await skills.get_by_label("技能目标卡片").select_option("C2")
                     await (
                         skills.locator(".skill-choice")
                         .filter(has_text="迁移正文状态栏")
-                        .get_by_role("button", name="填入请求")
+                        .get_by_role("button", name="选用流程")
                         .click()
                     )
-                    await expect(composer).to_have_value(
-                        re.compile("保留我的额外要求.*关于角色卡「测试卡」.*状态栏", re.S)
-                    )
+                    await expect(composer).to_have_value("保留我的额外要求")
+                    target = page.get_by_role("button", name="选择本轮目标，测试卡 (C2)", exact=True)
+                    await expect(target).to_be_visible()
+                    if scope_only:
+                        model = ToolLLM([])
+                        editor.provider_factory = lambda: model
+                        await page.get_by_role("combobox", name="选择卡片").select_option("C1")
+                        await expect(target).to_be_visible()
+                        await page.get_by_role("button", name="发送", exact=True).click()
+                        await expect(page.locator(".cw-message")).to_have_count(8)
+                        history = editor.edits.conversation(wid)["messages"][-2]
+                        assert history["content"] == "保留我的额外要求"
+                        assert history["target_labels"] == [{"ref": "C2", "name": "测试卡"}]
+                        assert history["skill"] == "status-display"
+                        assert "references/status-display.md 全文" in dump(model.call_log[0])
+                        assert not errors, errors
+                        print("Card Author target, mention and selected skill accepted in the browser.")
+                        return
+                    await page.get_by_role("button", name="移除流程 迁移正文状态栏").click()
                     await expect(page.locator(".cw-message")).to_have_count(6)
                     await composer.fill("")
                     await (
@@ -414,4 +435,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--scope-only", action="store_true", help="Stop after the targeted message/skill flow."
+    )
+    asyncio.run(main(parser.parse_args().scope_only))

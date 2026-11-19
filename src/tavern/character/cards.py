@@ -164,6 +164,11 @@ def normalize(document):
     return copy.deepcopy(card_view(document))
 
 
+def card_root(document):
+    """Pointer to the same data returned by card_view, including unwrapped imports."""
+    return "/data" if document.get("spec") and "data" in document else ""
+
+
 def upgrade_card_purposes(document):
     return upgrade_lore_purposes(card_view(document).get("character_book"))
 
@@ -193,39 +198,44 @@ def is_initvar(entry):
     return "[initvar]" in lore_title(entry).lower()
 
 
+def lore_entry_view(slot, original, keyed, index):
+    if keyed:
+        original = dict(original, uid=slot)
+    for fields in (original, original.get("extensions", {})):
+        for key in ("id", "uid"):
+            # V2 types ids as numbers, V3 as numbers or strings, and ST's own uid
+            # is a number; anything else has no identity to derive.
+            value = fields.get(key, "")
+            if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+                raise ValueError(f"世界书条目 {key} 必须为字符串或数字")
+    # Optional nulls mean unset, so every reader uses its existing default or
+    # legacy alias. Drop them per location before merging: an extension null
+    # must not hide the top-level value. Preserve zero/false, source JSON and
+    # the four flags whose explicit null must override another spelling.
+    extension_fields = _set_lore_fields(original.get("extensions", {}))
+    # Keep the authored purpose in one location when scripts read or write
+    # the runtime worldbook view.
+    extension_fields.pop("terrarium", None)
+    e = {**_set_lore_fields(original), **extension_fields}
+    # ST exports these flags as snake_case extensions. Resolve only the view;
+    # the editor and exporter use the same precedence without rewriting storage.
+    e.update(_lore_flag_values(e))
+    e["id"] = str(e.get("id", e.get("uid", index)))
+    e["keys"] = [str(key).strip() for key in e.get("keys", e.get("key", []))]
+    e["secondary_keys"] = [str(key).strip() for key in e.get("secondary_keys", e.get("keysecondary", []))]
+    e["enabled"] = e.get("enabled", not e.get("disable", False))
+    e.setdefault("content", "")
+    return e
+
+
 def lore_entries(document, purpose=None):
     book = normalize(document).get("character_book", {}) or {}
     keyed = isinstance(book.get("entries"), dict)
     result = []
     for index, (slot, original) in enumerate(lore_rows(book)):
-        if keyed:
-            original = dict(original, uid=slot)
-        for fields in (original, original.get("extensions", {})):
-            for key in ("id", "uid"):
-                # V2 types ids as numbers, V3 as numbers or strings, and ST's own uid
-                # is a number; anything else has no identity to derive.
-                value = fields.get(key, "")
-                if isinstance(value, bool) or not isinstance(value, (str, int, float)):
-                    raise ValueError(f"世界书条目 {key} 必须为字符串或数字")
-        # Optional nulls mean unset, so every reader uses its existing default or
-        # legacy alias. Drop them per location before merging: an extension null
-        # must not hide the top-level value. Preserve zero/false, source JSON and
-        # the four flags whose explicit null must override another spelling.
-        extension_fields = _set_lore_fields(original.get("extensions", {}))
-        # Keep the authored purpose in one location when scripts read or write
-        # the runtime worldbook view.
-        extension_fields.pop("terrarium", None)
-        e = {**_set_lore_fields(original), **extension_fields}
-        # ST exports these flags as snake_case extensions. Resolve only the view;
-        # the editor and exporter use the same precedence without rewriting storage.
-        e.update(_lore_flag_values(e))
-        e["id"] = str(e.get("id", e.get("uid", index)))
-        e["keys"] = [str(key).strip() for key in e.get("keys", e.get("key", []))]
-        e["secondary_keys"] = [str(key).strip() for key in e.get("secondary_keys", e.get("keysecondary", []))]
-        e["enabled"] = e.get("enabled", not e.get("disable", False))
-        e.setdefault("content", "")
+        entry = lore_entry_view(slot, original, keyed, index)
         if purpose is None or lore_purpose(original) == purpose:
-            result.append(e)
+            result.append(entry)
     return result
 
 

@@ -20,6 +20,11 @@ export interface EditorAction {
 }
 const labels: Record<string, string> = {
   overview: '查看草稿概览',
+  list_documents: '浏览文档目录',
+  search_documents: '搜索草稿原文',
+  read_documents: '阅读草稿文档',
+  edit_document_text: '修改文档正文',
+  transfer_document: '复制或移动文档',
   read_field: '读取字段',
   read_text_file: '读取文本文件',
   read_document: '读取 Office 文档',
@@ -112,6 +117,7 @@ export function actionStatus(status: string) {
         running: '执行中',
         queued: '等待中',
         completed: '完成',
+        pending: '待续',
         error: '失败',
         cancelled: '已取消',
         interrupted: '已中断',

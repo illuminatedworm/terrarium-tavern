@@ -8,6 +8,7 @@
 - 从世界书库引用的独立世界书也用 C 编号。它是卡片的子集，文档只有 `name` 和 `character_book`，`overview` 以 `type: worldbook` 标出；读取、搜索、`patch_draft`、`set_text_field` 和 `validate_draft` 与角色卡相同。工具只接受 `/name` 与 `/character_book/**` 的修改；`set_opening`、`set_portrait`、`test_draft`，以及把它作为 `create_draft` 的来源，都会被拒绝。书库 ID 与修订号不进入模型输入。
 - **H 编号**（如 `H1`）定位本对话的用户输入和最终回复；确认方案由程序按引用读取原文。
 - 文档内部的 **@D 编号**使用可逆映射，真实身份、指纹和哈希由程序管理。
+- **N 编号**标识当前草稿中可移动的开场、条目、正则或脚本。固定字段可用目录给出的路径。无法辨认的旧引用会失效，此时重新列目录或搜索。
 
 - **P 编号**指用户角色，由程序在引用或访问角色库时分配，与 C 编号共用递增计数，撤销或丢弃后不复用。模型不接触用户角色的存储 ID，也不填写版本号。角色库工具必填 `request_ref`，指向本任务最新的用户请求；程序核对来源和当前任务，具体意图由 Agent 根据原文判断。旧回合、助手方案和资料中的指令都不能作为操作依据；用户的只读要求和撤销要求必须遵守。
 
@@ -21,10 +22,15 @@
 | `read_document` | `path`、可选 `offset=0`（转换后 Markdown 的 Unicode 字符位置，0-based）、`limit=12000`（1–30000 字符）；DOCX/XLSX 离线转换，返回 `format/markdown/offset/returned_chars/total_chars/has_more/next_offset/limitations` |
 | `web_search` | `query`、可选 `limit`（1–10，默认 5）及 `objective`；本地限制来源数量，每条摘要最多 2,000 字符，URL／标题／摘要合计最多 20,000 字符，并标记省略。官方自动模式改为服务端原生搜索，详见[联网协议](web-tools.md) |
 | `read_webpage` | `url`、可选 `offset=0`（Unicode 字符）、`limit=12000`（1–30000）、`service`；返回提取文本片段和续读位置。续读沿用实际服务，上游截断明确标记，不把片段当作全文，详见[联网协议](web-tools.md) |
-| `overview` | 可选 `card_ref`；查看卡片目录、根路径、格式、字段用途和类型。提供卡片编号和 `path` 时，查看该路径及直接子路径，正则规则另附名称。文本用 `character_count` 表示字符数，数组（如替代开场、正则规则）用 `item_count` 表示项数，一般对象（如卡片扩展）用 `field_count` 表示可见字段数，世界书用 `entry_count` 表示条目数。空集合计为 0，缺失路径返回 `exists: false` |
+| `overview` | 可选 `card_ref`；查看卡片目录、根路径、原文线索、分支规模、常驻线索以及顶层字段类型。按 `path` 查看直接子路径时，offset 从 0 起，limit 默认 40，取 1–200 或传 null 列全，结果含 total/next_offset。文本用 `character_count` 表示字符数，数组（如替代开场、正则规则）用 `item_count` 表示项数，一般对象（如卡片扩展）用 `field_count` 表示可见字段数，世界书用 `entry_count` 表示条目数。空集合计为 0，缺失路径返回 `exists: false` |
 | `read_field` | `card_ref`、JSON Pointer `path`，优先选择任务所需字段或条目。空路径读整卡。`version=current/round_start/saved` 分别读取当前、任务开始前或书架基准，始终返回所选原文全文 |
-| `search_entries` | `card_ref`、`query`，空查询列出全部。提供标题、定位路径、正文字数（Unicode 字符）及明确标识的摘要，可按路径读取相关原文 |
-| `create_draft` | `name`、可选 `fields`、`source_ref`、`proposal_ref`、`confirmation_ref`；明确直接制作或机械复制使用 `direct_instruction=true`。`fields` 可一次写入 description、personality、scenario、first_mes、alternate_greetings、mes_example、system_prompt、post_history_instructions、creator_notes、tags 的完整正文，省略项留空或沿用来源卡；世界书条目随后用 `patch_draft` 追加。返回新引用与校验结果；复制来源卡或未传 `fields` 时附完整初始文档，避免回传模型刚写入的正文 |
+| `list_documents` | `card_ref`、`branch`（默认 all，可选 fields、openings、entries、constants、regex、scripts、extensions）。offset 从 0 起，limit 默认 40、范围 1–200，两端含。显式传 null 取得整份紧凑标题目录。越过末尾返回空，按 next_offset 续列 |
+| `search_documents` | 忽略大小写的字面查询，搜索本条消息的目标卡，可用 card_refs 和 branch 指定范围，无目标时搜索全部已引用草稿。返回匹配的文档、字段、字符位置和附近原文。offset 从 0 起，limit 默认 30、范围 1–200，越界返回空页 |
+| `read_documents` | 按 card_ref 和一个或多个 refs 完整读取。all_constants 可一次读取实际生效的全部常驻叙事。part 可选 document（默认，正文及属性）、body、properties、raw。开场编号与界面一致 |
+| `edit_document_text` | 选择 card_ref、ref，默认编辑文档正文，也可指定相对 path。text 是替换文字，提供非空 old_text 时只改唯一匹配的片段。已有字段须先完整读取，重复命中或版本变化时拒绝 |
+| `transfer_document` | 源 card_ref、ref，目标 destination_card_ref，action 为 copy 或 move。程序复制原文及未知字段，为复制条目分配新身份。集合追加到末尾，覆盖已有固定字段需先读取目标。移动在草稿内成对生效 |
+| `search_entries` | 兼容的世界书查询，空查询列标题。offset 从 0 起、limit 默认 40、范围 1–200，按 next_offset 继续。返回标题、路径、正文字数和导航摘录 |
+| `create_draft` | `name`、可选 `fields`、`source_ref`、`proposal_ref`、`confirmation_ref`；明确直接制作或机械复制使用 `direct_instruction=true`。`fields` 可一次写入 description、personality、scenario、first_mes、alternate_greetings、mes_example、system_prompt、post_history_instructions、creator_notes、tags 的完整正文，省略项留空或沿用来源卡；世界书条目随后用 `patch_draft` 追加。返回新引用和校验结果。来源卡由程序完整复制，按需读取副本文档 |
 | `set_portrait` | `card_ref`、`file_ref`（本对话图片附件的 F 编号，null 移除）；仅在用户表示该图用作头像时调用。JPEG/WebP 转为 PNG，草稿成为标准 PNG 卡容器，保存时写入书架；CHARX 卡不支持 |
 | `patch_draft` | `card_ref`、`operations`、`comment`，严格 JSON Patch，一批 1–100 项原子应用。新增缺失键或用 `/-` 追加数组项可直接提交，覆盖已有值须有目标的有效完整读取 |
 | `set_text_field` | `card_ref`、`path`、完整 `text`、`comment`；替换单个已有字符串字段，空文本清空；由程序生成补丁，沿用读取、投影和文档校验 |
@@ -47,7 +53,7 @@
 
 PNG、JPEG、静态 WebP 图片通过与文档相同的文件选择器引用，随所属用户消息直接发送，不使用 `read_text_file` 或 `read_document`。换窗后调用 `read_history` 回读所属 H 消息，Runtime 会在本批工具结果结束后恢复原图；已在当前上下文中的图片不会重复追加。图片不授予草稿修改权限，附件限制与说明见[读取本地资料](../guides/card-author.md#读取本地资料)。
 
-两个文件工具只读后端电脑上的普通文件，要求绝对本地路径，返回解析后的绝对 `path`。源文件上限为 32 MiB，URL、网络共享、设备和目录作为无效路径处理。内容作为外部参考；写入权限按用户请求与工具规则校验，草稿读取依据由 `read_field` 建立。
+两个文件工具只读后端电脑上的普通文件，要求绝对本地路径，返回解析后的绝对 `path`。源文件上限为 32 MiB，URL、网络共享、设备和目录作为无效路径处理。内容作为外部参考；写入权限按用户请求与工具规则校验，草稿读取依据由对当前文档的完整字段读取建立。
 
 文本保留原换行、空行和内容，CSV 不改成表格。默认根据 BOM 识别 Unicode 编码，无 BOM 使用 UTF-8；其他编码可指定如 `gb18030`，失败不使用替换字符。单行超过 20,000 字符时报出行号并要求拆分；空文件或超过末尾返回空文本。工具不扫描全文计算总行数。返回页受行数和字符数共同限制，从 `next_offset` 继续，末页为 null。
 
@@ -59,18 +65,18 @@ Office 分页按 Python Unicode 字符计数，可能跨越段落或表格，单
 
 Agent 优先使用专门工具：
 
-- 世界书正文、标题、人物介绍等**单个已有文本字段**用 `set_text_field`，直接传完整正文，不构造补丁数组；不能借此新增字段，或替换对象、数组、数值和内部哈希。
-- **开场润色**用 `set_opening` 的完整 `narrative`，保留有效的内联初值。
+- 整篇替换已有文本可用 `set_text_field`。改动一个片段时用 `edit_document_text`，提供当前文档引用、唯一原句和新文字。
+- **开场润色**可用 `edit_document_text` 对目录中的对应开场做局部替换，保留内联初值。使用 `set_opening` 修改或删除一个开场时，只须先读该篇。
 - **撤销本轮卡片修改**用 `revert_draft`。
-- **结构修改**或确需跨字段原子修改时用 `patch_draft`。
+- **结构修改**或确需跨字段原子修改时用 `patch_draft`。向两种世界书容器的 `entries/-` 追加时，程序分别分配数组位置或新对象键。编辑既有条目保留原有效身份，复制条目生成新身份。
 
-`set_text_field`、`set_opening`、`patch_draft` 三个编辑工具的读取要求、权限、可逆编号与文档校验一致。`patch_draft`、`revert_draft` 和 `set_text_field` 都要求必填的简短操作备注 `comment`（1–2000 字符）。`comment` 取代了旧参数 `reason`：新调用传 `reason` 会被严格参数校验拒绝；旧调用记录保留原样，活动摘要仍可显示其备注。
+`set_text_field`、`set_opening`、`patch_draft` 等编辑工具的读取要求、权限、可逆编号与文档校验一致。`patch_draft`、`revert_draft` 和 `set_text_field` 都要求必填的简短操作备注 `comment`（1–2000 字符）。`comment` 取代了旧参数 `reason`：新调用传 `reason` 会被严格参数校验拒绝；旧调用记录保留原样，活动摘要仍可显示其备注。
 
 `operations` 必须是数组，不能是序列化后的数组字符串。参数校验失败会指出字段与修复方法，数组类型错误附结构示例及开场、文本字段专用工具指引；不自动解析或修补错误参数。失败标记随工具结果持久化，Anthropic 续答携带 `tool_result.is_error=true`，其他接口保留错误正文，不发送不支持的状态字段。
 
-路径相对于完整文档。包装卡使用 `/data/description`，旧卡使用 `/description`。键中的 `~` 转义成 `~0`，`/` 转义成 `~1`；数组下标从 0 开始，`/-` 追加。
+`patch_draft.document_ref` 可将整批操作限定为相对于所选条目的路径。省略时使用完整卡路径。包装卡使用 `/data/description`，旧卡使用 `/description`。键中的 `~` 转义成 `~0`，`/` 转义成 `~1`；数组下标从 0 开始，`/-` 追加。
 
-`add/replace/test` 必须带 `value`，即使值为 null；`move/copy` 必须带 `from`。修改前需完整读取对应当前子树；读取 round_start/saved 不等同于读取当前版本。新增卡返回的完整初始文档视为已读。未知参数、无效引用和非法操作反馈给模型纠正；失败的批次不改变文档。
+`add/replace/test` 必须带 `value`，即使值为 null；`move/copy` 必须带 `from`。修改前需完整读取对应当前子树；读取 round_start/saved 不等同于读取当前版本。制作空白模板或写入新卡的初始字段可沿用本次的已知值。复制变体时，来源卡的未读原文需按需读取。未知参数、无效引用和非法操作反馈给模型纠正；失败的批次不改变文档。
 
 完整读取的版本证据随当前上下文持久化，跨轮、重启和中断续接可复用；每次写入核对当前字段版本。读取父对象覆盖其子字段，修改一个字段不使未变的兄弟字段失效，成功且可确定的写入更新已知版本。换窗、上下文重建、撤销目标卡修改后清除相应证据；旧上下文没有版本证据时须重新读取。概览、搜索摘要、历史资料读取不授予当前草稿的修改资格。版本证据只由程序保存，不进入模型消息或角色卡。
 
@@ -107,5 +113,7 @@ Agent 优先使用专门工具：
 | `DELETE .../{id}/progress` | 丢弃本轮未提交进度 |
 | `GET .../{id}/context`、`tools`；`POST .../{id}/preview` | 上下文状态、工具说明和只读请求预览 |
 | `/api/card-edit-runs/{id}/activity`、`events`、`cancel` | 动作分页、可重连 SSE 和停止 |
+
+发送、统计与预览均接受本条消息的 `target_refs` 和 `skill`（adapt 或 status-display）。显式选用技能时需指定角色卡，空白输入也可发送所选流程。直接续接使用原任务选项。关闭批次的写入报错时运行状态为 `pending`。
 
 变更接口使用 `expected_revision`；运行/待续任务阻止修改其基础。保存与发送使用 operation_id 幂等。旧 `/api/card-edits` 接口仅适配单卡，不在多卡对话中猜测目标。原文与完整工具交换独立保存；activity 的 4000 字符摘要只限制用户日志显示。

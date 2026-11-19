@@ -17,6 +17,8 @@ import httpx
 
 from tavern.character.card_author import CardAuthorService
 from tavern.character.cards import lore_entries
+from tavern.character.editor_config import blank_card
+from tavern.chatgpt.provider import ChatGPTProvider
 from tavern.core.models import CardAuthorRequest
 from tavern.core.settings import migrate_settings
 from tavern.scripting.model_transport import ModelTransport
@@ -33,20 +35,18 @@ async def evaluate(args):
         )
     root = args.output / ("baseline-" + uid() if args.baseline else "evaluation-" + uid())
     store = Store(root)
-    runtime_settings = settings.runtime()
-    persisted = settings.model_copy(deep=True)
-    for provider in persisted.shared.providers:
-        provider.api_key = ""
-    store.save_settings(persisted)
-    # Evaluation artifacts must not contain copied production credentials.
-    # Only the in-memory operation snapshot retains the explicitly authorized key.
-    store.settings = lambda: runtime_settings.model_copy(deep=True)
+    # The isolated database contains no production settings or credentials.
+    # Channel selection and transport obtain their settings from memory only.
+    store.settings_document = lambda: settings.model_copy(deep=True)
+    if args.cases == "navigation":
+        settings.shared.card_author_config.web.mode = "off"
+        settings.shared.card_author_config.max_steps = args.request_limit
     service = CardAuthorService(store)
     cfg = store.settings().for_role("card_author")
     results = []
 
     async def run(workspace, text, label="baseline", *, interrupt_after_edit=False, **options):
-        if budget["requests"] >= 60:
+        if budget["requests"] >= args.request_limit:
             results.append({"label": label, "status": "not_run_budget_exhausted", "requests": 0})
             return workspace
         fault = {"edited": False, "raised": False}
@@ -63,20 +63,24 @@ async def evaluate(args):
             if interrupt_after_edit and fault["edited"] and not fault["raised"]:
                 fault["raised"] = True
                 raise ValueError("evaluation-injected interruption after durable edit")
-            if budget["requests"] >= 60:
-                raise ValueError("真实模型评测已达到累计 60 次请求上限")
+            if budget["requests"] >= args.request_limit:
+                raise ValueError("真实模型评测已达到本次累计请求上限")
             budget["requests"] += 1
             budget_file.write_text(dump(budget), encoding="utf-8")
 
         client = httpx.AsyncClient(
-            proxy=(cfg.proxy or None) if cfg.use_proxy else None,
+            proxy=args.proxy or ((cfg.proxy or None) if cfg.use_proxy else None),
             trust_env=False,
             timeout=120,
             event_hooks={"request": [counted]},
         )
-        provider = ModelTransport(
-            cfg, cfg.api_key or os.environ.get("TAVERN_API_KEY", ""), http_client=client
+        transport = ChatGPTProvider if cfg.auth_mode == "openai_api_key" else ModelTransport
+        key = (
+            cfg.api_key
+            if cfg.auth_mode == "openai_api_key"
+            else cfg.api_key or os.environ.get("TAVERN_API_KEY", "")
         )
+        provider = transport(cfg, key, http_client=client)
         service.provider_factory = lambda: provider
         request = CardAuthorRequest(
             text=text, expected_revision=workspace["revision"], operation_id=uid(), **options
@@ -147,6 +151,63 @@ async def evaluate(args):
         },
     }
     try:
+        if args.cases == "navigation" and not args.baseline:
+            workspace = service.edits.create_conversation()
+            reference, target = blank_card("雾港"), blank_card("雾港")
+            reference["data"].update(
+                description="摆渡人惜字，喜欢用短句和潮声作答。",
+                mes_example="“潮低。上船。”他把缆绳盘好。“雾散，再问。”",
+            )
+            origin = "暮色压过塔檐。潮尺仍然停在第三格。\n他请你进来。"
+            target["data"].update(first_mes="门外风大。", alternate_greetings=[origin, "翌日清晨。"])
+            target["data"]["character_book"]["entries"] = [
+                {"comment": f"港区地志 {i}", "keys": [f"栈桥{i}"], "content": f"第{i}号栈桥存放帆布。"}
+                for i in range(400)
+            ]
+            target["data"]["character_book"]["entries"].insert(
+                263,
+                {
+                    "comment": "潮务手册",
+                    "enabled": True,
+                    "constant": True,
+                    "content": "".join(f"第{i}次巡检，窗闩完好，潮尺刻线清晰。\n" for i in range(260))
+                    + "守塔人受灰鲸议会托付，必须亲手交回第七枚铜铃才能离港。",
+                },
+            )
+            for doc in (reference, target):
+                cid = store.import_card(dump(doc).encode())["id"]
+                workspace = service.edits.attach(workspace["id"], cid, workspace["revision"])
+            workspace = await run(
+                workspace,
+                "先解释目标卡里的守塔人为什么不能离港，再参考另一张同名卡的口吻，仅润色目标卡界面中第二个开场的最后一句。其余原文保留。",
+                "navigation",
+                target_refs=["C2"],
+            )
+            item = results[-1]
+            actual = workspace["cards"][1]["document"]
+            opening = actual["data"]["alternate_greetings"][0]
+            expected = copy.deepcopy(target)
+            expected["data"]["alternate_greetings"][0] = opening
+            item["checks"] = {
+                "tail_fact": all(word in item.get("response", "") for word in ("灰鲸", "铜铃")),
+                "targeted_edit": opening != origin
+                and opening.startswith(origin.rsplit("\n", 1)[0] + "\n")
+                and actual == expected,
+                "reference_intact": workspace["cards"][0]["document"] == reference,
+            }
+            item["objective_pass"] = item["status"] == "completed" and all(item["checks"].values())
+            (root / "report.json").write_text(dump(results), encoding="utf-8")
+            print(
+                dump(
+                    {
+                        "report": str(root / "report.json"),
+                        "checks": item["checks"],
+                        "requests": budget["requests"],
+                    }
+                ),
+                flush=True,
+            )
+            return
         card = store.import_card(dump(document).encode())
         workspace = service.edits.create(card["id"])
         if args.baseline:
@@ -272,5 +333,7 @@ if __name__ == "__main__":
     parser.add_argument("--data", type=Path, default=Path("data/tavern.sqlite3"))
     parser.add_argument("--output", type=Path, default=Path(".cache/card-author-evaluation"))
     parser.add_argument("--baseline", action="store_true")
-    parser.add_argument("--cases", choices=("core", "remaining", "all"), default="all")
+    parser.add_argument("--cases", choices=("navigation", "core", "remaining", "all"), default="all")
+    parser.add_argument("--request-limit", type=int, choices=range(2, 61), default=60, metavar="2..60")
+    parser.add_argument("--proxy", help="Explicit proxy for evaluation requests")
     asyncio.run(evaluate(parser.parse_args()))

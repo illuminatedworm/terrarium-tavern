@@ -37,7 +37,15 @@ def draft_changes(previous, current):
                 for path in old["fields"].keys() | value["fields"].keys()
                 if old["fields"].get(path) != value["fields"].get(path)
             )
-            updated.append({"card_ref": ref, "fields": paths or [""]})
+            nodes = value.get("nodes", {})
+            was = old.get("nodes", {})
+            changes = [
+                handle for handle in dict.fromkeys([*was, *nodes]) if was.get(handle) != nodes.get(handle)
+            ]
+            row = {"card_ref": ref, "fields": paths or [""]}
+            if changes:
+                row.update(changed_documents=changes[:40], changed_document_count=len(changes))
+            updated.append(row)
     return {
         "updated": updated,
         "added": [ref for ref in current if ref not in previous],

@@ -25,6 +25,14 @@ def validation_report(document):
         errors.append(str(error))
     if errors:
         return {"valid": False, "errors": errors, "warnings": [], "adapted": False}
+    entries = lore_entries(document)
+    if len({e["id"] for e in entries}) != len(entries):
+        return {
+            "valid": False,
+            "errors": ["世界书存在重复的条目身份，请核对冲突条目"],
+            "warnings": [],
+            "adapted": False,
+        }
     marker = re.compile(
         r"<(?:initvar|UpdateVariable|JSONPatch)\b|_\.(?:set|add|insert|delete|move)\s*\("
         r"|StatusPlaceHolder|getMvuData|getAllVariables|stat_data",
@@ -32,7 +40,7 @@ def validation_report(document):
     )
     # Existing inline MVU initialization stays outside ordinary adaptation;
     # model-written status displays have separate, advisory diagnostics.
-    for entry in lore_entries(document):
+    for entry in entries:
         if (
             lore_purpose(entry) == NARRATIVE
             and not is_initvar(entry)

@@ -1,4 +1,5 @@
 import { compare } from 'fast-json-patch';
+import type { EditorSkillId } from './cardAuthorSkills';
 
 export interface EditorCard {
   ref: string;
@@ -20,11 +21,13 @@ export interface EditorCard {
 export interface EditorRun {
   id: string;
   status: string;
-  request: { text: string; resume_run_id?: string };
+  request: { text: string; resume_run_id?: string; target_refs?: string[]; skill?: EditorSkillId | null };
   response: string;
   error: string | null;
 }
 export interface EditorMessage {
+  target_labels?: { ref: string; name: string }[];
+  skill?: EditorSkillId | null;
   attachments?: EditorFile[];
   ref: string;
   role: string;

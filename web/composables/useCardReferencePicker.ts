@@ -37,6 +37,7 @@ export function useCardReferencePicker(config: {
   const activeId = computed(() => (options.value.length ? `${id}-${activeIndex.value}` : undefined));
   const open = computed(() => !!query.value);
   let observer: ResizeObserver | undefined;
+  let attachOnly = false;
 
   function position() {
     const frame = config.frame.value;
@@ -44,6 +45,7 @@ export function useCardReferencePicker(config: {
   }
   function close() {
     query.value = null;
+    attachOnly = false;
   }
   function update() {
     const textarea = config.composer.value;
@@ -67,18 +69,20 @@ export function useCardReferencePicker(config: {
     }
     textarea.focus({ preventScroll: true });
     update();
+    attachOnly = true;
   }
-  async function complete(original: string, range: CardMentionQuery | null) {
+  async function complete(original: string, range: CardMentionQuery | null, mention: string) {
     // Only consume the trigger after the actual attachment succeeded. An error
     // leaves both the query and all unsent prose available for retry.
+    const inserted = attachOnly ? '' : mention;
     if (range && config.input.value === original) {
-      config.input.value = original.slice(0, range.start) + original.slice(range.end);
+      config.input.value = original.slice(0, range.start) + inserted + original.slice(range.end);
     }
     close();
     await nextTick();
     const textarea = config.composer.value;
     textarea?.focus({ preventScroll: true });
-    if (range) textarea?.setSelectionRange(range.start, range.start);
+    if (range) textarea?.setSelectionRange(range.start + inserted.length, range.start + inserted.length);
   }
   function keydown(event: KeyboardEvent): boolean {
     if (event.isComposing || event.keyCode === 229) return true;

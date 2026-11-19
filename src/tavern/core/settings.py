@@ -66,6 +66,7 @@ LEGACY_ADVISOR_PROMPT_HASHES = {
 
 # Previous built-in Card Author prompts replaced by the current rules.
 LEGACY_CARD_AUTHOR_PROMPT_HASHES = {
+    "f924e6726dea8984b252e4b38eb92c810415da240b16cce2fd44ad729ccdc863",
     "04ffb4bf795237bc697f7dbf46a4173818a770248f934bc652ba4f837eabcf06",
     "aa8251e3d7628c8348a285dbc517e5247a83166bc08ccb18c924b1ce18bfc869",
     "8448879a9facf4ca7f9134e539dc2815021b7c512b65b842c99da161a47b5426",

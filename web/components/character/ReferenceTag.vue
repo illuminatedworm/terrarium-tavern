@@ -14,7 +14,7 @@ defineEmits<{ inspect: []; remove: [] }>();
       :aria-label="`查看${labels[kind]}引用 ${name}`"
       @click="$emit('inspect')"
     >
-      <CardWorkspaceIcon name="file" /><span>{{ name }}</span>
+      <CardWorkspaceIcon :name="kind === 'worldbook' ? 'book' : 'cards'" /><span>{{ name }}</span>
     </button>
     <span v-else class="reference-content"
       ><CardWorkspaceIcon :name="kind === 'file' ? 'file' : 'person'" /><span>{{ name }}</span></span
@@ -34,8 +34,10 @@ defineEmits<{ inspect: []; remove: [] }>();
 
 <style scoped>
 .reference-tag {
-  position: relative;
   display: inline-flex;
+  align-items: center;
+  height: var(--cw-context-height, var(--control-h-sm));
+  min-width: 0;
   max-width: min(100%, 260px);
   border: 1px solid var(--border-control);
   border-radius: var(--radius-xs);
@@ -46,8 +48,8 @@ defineEmits<{ inspect: []; remove: [] }>();
   align-items: center;
   gap: 6px;
   min-width: 0;
-  width: 100%;
-  padding: 4px 20px 4px 8px;
+  height: 100%;
+  padding: 0 0 0 8px;
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -65,17 +67,16 @@ defineEmits<{ inspect: []; remove: [] }>();
   height: 14px;
 }
 .reference-remove {
-  position: absolute;
-  top: 1px;
-  right: 1px;
   display: grid;
   place-items: center;
-  width: 16px;
-  height: 16px;
-  padding: 1px;
+  flex: none;
+  width: 18px;
+  height: calc(100% - 4px);
+  margin-inline: 1px 2px;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-xs);
-  background: var(--surface-panel);
+  background: transparent;
   color: var(--text-muted);
   opacity: 0;
   pointer-events: none;
@@ -95,6 +96,7 @@ defineEmits<{ inspect: []; remove: [] }>();
 }
 @media (hover: none) {
   .reference-remove {
+    width: var(--control-h-sm);
     opacity: 1;
     pointer-events: auto;
   }

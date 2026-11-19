@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.character.editor_cache import follows_replies
 from tavern.character.editor_context import EditorContext
+from tavern.character.editor_guides import SKILL_ENTRIES, target_labels
 from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.character.editor_sandbox import test_card
 from tavern.character.editor_tools import EditorTools, tool_definitions
@@ -237,6 +238,9 @@ def register_conversation_routes(app, editor):
         working = (
             progress["working"] if progress else {"cards": workspace["cards"], "state": workspace["state"]}
         )
+        request = payload.model_dump()
+        if progress and not (payload.text.strip() or payload.skill):
+            request = editor.edits.run(workspace["pending"]["run"])["request"]
         owner = SimpleNamespace(
             store=editor.store,
             edits=editor.edits,
@@ -253,7 +257,7 @@ def register_conversation_routes(app, editor):
             pending_calls=copy.deepcopy(progress.get("pending_calls")) if progress else None,
             trace=copy.deepcopy(progress.get("trace", [])) if progress else [],
             persona_changes=copy.deepcopy(progress.get("persona_changes", {})) if progress else {},
-            request={},
+            request=request,
             reads={},
         )
         from tavern.web.cloud import WebSession
@@ -268,9 +272,19 @@ def register_conversation_routes(app, editor):
             copy.deepcopy(progress["context"] if progress else editor.edits.context(wid)), owner
         )
         owner.tools = EditorTools(owner)
-        if payload.text:
-            owner.context.add_message(
-                "user", payload.text, [f for f in workspace.get("files", []) if not f.get("message_ref")]
+        if payload.text.strip() or payload.skill:
+            labels = target_labels(editor.edits, working["cards"], payload.target_refs, payload.skill)
+            text = payload.text if payload.text.strip() else SKILL_ENTRIES[payload.skill][0]
+            sequence = workspace["messages"][-1]["seq"] + 1 if workspace["messages"] else 1
+            owner.context.add_history(
+                {
+                    "role": "user",
+                    "ref": f"H{sequence}",
+                    "content": text,
+                    "skill": payload.skill,
+                    "target_labels": labels,
+                    "attachments": [f for f in workspace.get("files", []) if not f.get("message_ref")],
+                }
             )
         return owner
 

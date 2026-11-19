@@ -7,7 +7,6 @@ import {
   type EditorMessage,
   type EditorRun,
 } from '../../web/lib/cardAuthor';
-import { appendSkillRequest, editorSkillPresets } from '../../web/lib/cardAuthorSkills';
 import { previewCardData, previewLore } from '../../web/lib/cardPreview';
 
 const run = (id: string, status = 'completed'): EditorRun => ({
@@ -75,17 +74,6 @@ describe('editor conversation chronology', () => {
     ];
     expect(keys(messages, [run('a')])).toEqual(['message:H1', 'run:a', 'message:H2', 'message:H3']);
     expect(messages.map((item) => item.ref)).toEqual(['H1', 'H2', 'H3']);
-  });
-});
-
-describe('built-in skill requests', () => {
-  it('targets the selected card and preserves unsent requirements verbatim', () => {
-    const input = '保留雪山书店的外貌。\n不要修改玩家身份。';
-    const result = appendSkillRequest(input, '河畔旅人', editorSkillPresets[1]);
-    expect(result).toBe(`${input}\n\n关于角色卡「河畔旅人」：${editorSkillPresets[1].prompt}`);
-    expect(appendSkillRequest('', '雪山书店', editorSkillPresets[0])).toBe(
-      `关于角色卡「雪山书店」：${editorSkillPresets[0].prompt}`,
-    );
   });
 });
 
