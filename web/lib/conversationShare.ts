@@ -38,18 +38,24 @@ export function shareRangeLabel(rounds: ShareRound[], from: number, to: number) 
   return `第 ${from}–${to} 轮`;
 }
 
+export function shareMessages(rounds: ShareRound[], from: number, to: number, omitPlayerMessages = false) {
+  return rounds
+    .filter((round) => round.number >= from && round.number <= to)
+    .flatMap((round) =>
+      omitPlayerMessages ? round.messages.filter((message) => message.role !== 'user') : round.messages,
+    );
+}
+
 /** Only the reading text of the chosen rounds: display parts with macros expanded,
  * the persona renamed to `alias`, and the status panel left out. */
 export function shareEntries(
-  rounds: ShareRound[],
+  messages: HistoryMessage[],
   session: any,
-  { from, to, alias, character }: { from: number; to: number; alias: string; character: string },
+  { alias, character }: { alias: string; character: string },
 ): ShareEntry[] {
   const persona = String(session.persona || '').trim();
   const rename = (text: string) => (persona && alias !== persona ? text.split(persona).join(alias) : text);
-  return rounds
-    .filter((round) => round.number >= from && round.number <= to)
-    .flatMap((round) => round.messages)
+  return messages
     .map((message) => ({
       role: message.role,
       speaker: message.role === 'user' ? alias : character,

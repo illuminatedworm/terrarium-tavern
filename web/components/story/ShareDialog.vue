@@ -9,6 +9,7 @@ import {
   shareDocument,
   shareEntries,
   shareMessageHtml,
+  shareMessages,
   sharePng,
   shareRangeLabel,
   shareRounds,
@@ -45,6 +46,7 @@ const last = computed(() => rounds.value.at(-1)?.number ?? 1);
 const from = ref(first.value);
 const to = ref(last.value);
 const alias = ref(props.session.persona || '');
+const omitPlayerMessages = ref(false);
 // Number inputs can hold blanks or out-of-range values while typing.
 const clamp = (value: number) => Math.min(last.value, Math.max(first.value, Math.round(Number(value)) || 0));
 watch(from, (value) => {
@@ -64,18 +66,22 @@ function endpoint(number: number) {
     reply: historySummary(reply) || '尚无回复',
   };
 }
-const messageCount = computed(
-  () =>
-    rounds.value
-      .filter((round) => round.number >= from.value && round.number <= to.value)
-      .flatMap((round) => round.messages).length,
+const selectedMessages = computed(() =>
+  shareMessages(rounds.value, from.value, to.value, omitPlayerMessages.value),
 );
+const messageCount = computed(() => selectedMessages.value.length);
 const persona = computed(() => String(props.session.persona || '').trim());
 
-// One generated document per range and form of address; previews and both
-// exports reuse it instead of fetching every image again.
+// Previews, HTML and PNG reuse the document while the share options match.
 const key = computed(() =>
-  JSON.stringify([props.session.id, props.session.head, from.value, to.value, alias.value]),
+  JSON.stringify([
+    props.session.id,
+    props.session.head,
+    from.value,
+    to.value,
+    alias.value,
+    omitPlayerMessages.value,
+  ]),
 );
 const built = ref<{ key: string; html: string } | null>(null);
 const current = computed(() => (built.value?.key === key.value ? built.value.html : ''));
@@ -128,9 +134,7 @@ async function dataUrl(url: string) {
 }
 
 const entries = () =>
-  shareEntries(rounds.value, props.session, {
-    from: from.value,
-    to: to.value,
+  shareEntries(selectedMessages.value, props.session, {
     alias: alias.value || '用户',
     character: props.name,
   });
@@ -269,12 +273,17 @@ function measure(event: Event) {
         </label>
       </template>
     </div>
-    <label class="share-alias"
-      ><span>分享时的称呼</span><input v-model.trim="alias" :disabled="working" placeholder="用户" />
-      <small v-if="persona && alias !== persona"
-        >正文中出现的“{{ persona }}”也会替换为“{{ alias || '用户' }}”。</small
-      >
-    </label>
+    <div class="share-options">
+      <label class="share-alias"
+        ><span>分享时的称呼</span><input v-model.trim="alias" :disabled="working" placeholder="用户" />
+        <small v-if="persona && alias !== persona"
+          >正文中出现的“{{ persona }}”也会替换为“{{ alias || '用户' }}”。</small
+        >
+      </label>
+      <label class="check">
+        <input v-model="omitPlayerMessages" type="checkbox" :disabled="working" />省略玩家发言
+      </label>
+    </div>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <div ref="box" class="share-preview">
       <iframe
@@ -287,7 +296,7 @@ function measure(event: Event) {
       />
       <div v-else class="share-preview-empty">
         <Icon name="eye" :size="26" />
-        <strong>{{ working ? '正在生成…' : showPreview ? '范围或称呼已改变' : '预览分享效果' }}</strong>
+        <strong>{{ working ? '正在生成…' : showPreview ? '分享选项已改变' : '预览分享效果' }}</strong>
         <span>按长图宽度 {{ IMAGE_WIDTH }} 像素排版；HTML 文件会随浏览器窗口加宽。</span>
         <button :disabled="working || !messageCount" @click="preview">
           {{ showPreview ? '重新生成预览' : '生成预览' }}

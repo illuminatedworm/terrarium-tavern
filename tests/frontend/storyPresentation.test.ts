@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { responseData, storyPresentation } from '../../web/lib/storyPresentation';
-import { shareDocument, shareEntries, shareRangeLabel, shareRounds } from '../../web/lib/conversationShare';
+import {
+  shareDocument,
+  shareEntries,
+  shareMessages,
+  shareRangeLabel,
+  shareRounds,
+} from '../../web/lib/conversationShare';
 import { orderedStoryContents, type VisualOutput } from '../../web/lib/visuals';
 
 it('interleaves delivered graphics without remounting body blocks or guessing rewritten boundaries', () => {
@@ -174,8 +180,10 @@ describe('normalized story presentation data', () => {
     expect(rounds.map((round) => round.label)).toEqual(['第 1 轮', '第 2 轮', '第 3 轮']);
     expect(shareRangeLabel(rounds, 1, 3)).toBe('共 3 轮');
     expect(shareRangeLabel(rounds, 1, 1)).toBe('第 1 轮');
-    const entries = shareEntries(rounds, session, { from: 1, to: 2, alias: '旅人', character: '星' });
+    const names = { alias: '旅人', character: '星' };
+    const entries = shareEntries(shareMessages(rounds, 1, 2), session, names);
     expect(entries.map((entry) => entry.speaker)).toEqual(['星', '旅人', '星']);
+    expect(shareEntries(shareMessages(rounds, 1, 2, true), session, names)).toEqual([entries[0], entries[2]]);
     const html = shareDocument({
       title: '星',
       portrait: '',

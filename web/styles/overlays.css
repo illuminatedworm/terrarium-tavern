@@ -828,6 +828,16 @@ p.context-footnote {
   color: var(--text-muted);
   font-size: var(--fs-xs);
 }
+.share-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.share-options .check {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
 .share-alias {
   display: flex;
   flex-wrap: wrap;
