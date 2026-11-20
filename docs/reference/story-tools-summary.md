@@ -13,7 +13,7 @@
 | `generate_speech` | 登记角色配音 | `text: string`；`speaker: string`；`delivery: string=""`；`voice: string或null=null` | 文本直接传递，不与正文核对。已有角色沿用声线，新角色首次选择可用声音；正文提交后才生成。默认每轮最多20段、2000字符，用户可改。 |
 | `generate_image` | 登记剧情插图 | `prompt: string`；`references: string[]=[]`（最多16个I引用）；`size: "auto"或"1024x1024"或"1536x1024"或"1024x1536"="auto"` | 尺寸单位为像素；画质与模型由用户控制。默认每轮最多1张，用户可改；正文提交后才生成。 |
 | `view_image` | 主动查看图片 | `ref: string`（一个I引用） | 只可查看授权参考图或当前剧情中的完成图片；在完整工具批次之后向当前模型提供原图。 |
-| `submit_story` | 交付本轮故事正文 | `content: string` | 必须非空白且结构完整，始终启用。每轮最多追加三段。普通文本仅作备注。 |
+| `submit_story` | 唯一的正文交付工具 | `content: string` | 必须非空白且结构完整，始终启用。每轮最多追加三段。普通文本仅作备注。 |
 | `present_ui` | 展示冻结的交互图形 | `spec: object`（json-render 规格） | 新建故事默认关闭；Kemini 实验对话不提供。每轮至多接收三份，失败不计数；与 `submit_story` 按调用顺序穿插显示；不接受 HTML、SVG、脚本或 URL，界面操作只改变本地显示或填写输入框。 |
 | `start_novel_research` | 异步委派资料调查者 | `question: string`；`background: string=""`；`auto_destroy: boolean=false` | 调查者看不到主上下文，问题需能独立理解；每分支同时最多三个，每轮最多启动五次，销毁或重生成不退回次数。`auto_destroy=true` 在首份最终报告可靠送达后自动销毁，保留报告和历史；报告后仍需复用上下文追问时保持 `false`；提问、失败和暂停不触发。 |
 | `list_novel_research` | 查看未销毁的调查者 | 无 | 返回 R 编号、状态、剩余额度、是否有待送达消息、失败原因，以及剩余名额和本轮剩余启动次数；不返回原文过程。 |
@@ -565,7 +565,7 @@ View an authorized reference or a completed story image with your current model.
 ### `submit_story`
 
 ```text
-Append a new story segment to this turn's draft. At most 3 successful submissions per turn; 1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. Ordinary assistant text is commentary. Tools may run before, between or after segments, including after the third. If variable updates are required this turn or you wrote notes, check the relevant content against the entire story before ending. Delivery does not commit the turn.
+This tool is the ONLY way to submit this turn's story text. Append a new story segment to this turn's draft. At most 3 successful submissions per turn; 1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. Ordinary assistant text is commentary. Tools may run before, between or after segments, including after the third. If variable updates are required this turn or you wrote notes, check the relevant content against the entire story before ending. Delivery does not commit the turn.
 ```
 
 请求：

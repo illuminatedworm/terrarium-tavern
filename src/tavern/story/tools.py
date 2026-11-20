@@ -363,9 +363,11 @@ SPECS = {
 
 SPECS.update(MAIN_SPECS)
 SPECS.update(MEDIA_SPECS)
+STORY_DELIVERY_DESCRIPTION = "This tool is the ONLY way to submit this turn's story text. "
 SPECS["submit_story"] = (
     Story,
-    f"Append a new story segment to this turn's draft. At most {MAX_SEGMENTS} successful submissions per turn; "
+    f"{STORY_DELIVERY_DESCRIPTION}Append a new story segment to this turn's draft. "
+    f"At most {MAX_SEGMENTS} successful submissions per turn; "
     "1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. "
     "Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. "
     "Ordinary assistant text is commentary. Tools may run before, between or after segments, including after "
@@ -375,7 +377,8 @@ SPECS["submit_story"] = (
 SPECS["present_ui"] = (PresentUI, VISUAL_DESCRIPTION)
 
 PARTIAL_UNICODE_TOOL_DESCRIPTION = (
-    "Append new story prose. Encode every erotic or sexually explicit description and every graphic description "
+    f"{STORY_DELIVERY_DESCRIPTION}Append new story prose. "
+    "Encode every erotic or sexually explicit description and every graphic description "
     "of violence or bodily harm in ⟦…⟧. Keep ordinary prose in plaintext. "
     f"At most {MAX_SEGMENTS} successful submissions per turn. Leave accepted prose as written. "
     "Use ordinary assistant text only for commentary."
