@@ -12,7 +12,7 @@
 [![Vue](https://img.shields.io/badge/Vue-3-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)](web)
 [![FastAPI](https://img.shields.io/badge/FastAPI-SQLite-009688?style=flat-square&logo=fastapi&logoColor=white)](src/tavern)
 [![License](https://img.shields.io/badge/license-Non--Commercial%201.1-8A2BE2?style=flat-square)](LICENSE/PROJECT_LICENSE.md)
-[![Version](https://img.shields.io/badge/version-0.8.16-4C8C72?style=flat-square)](docs/changelog.md)
+[![Version](https://img.shields.io/badge/version-0.9.0-4C8C72?style=flat-square)](docs/changelog.md)
 [![Status](https://img.shields.io/badge/status-experimental-F59E0B?style=flat-square)](#当前局限)
 
 [版本记录](docs/changelog.md) · [主要功能](#主要功能) · [游玩](#游玩) · [快速开始](#快速开始) · [上手指南](#上手指南) · [当前局限](#当前局限) · [文档](#文档与开发) · [许可](#许可与致谢)
@@ -48,7 +48,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 项目围绕**长篇互动叙事**设计，提供角色卡管理、世界书检索、剧情分支和故事记忆，探索如何在有限的上下文中维持设定与故事的连续性。剧情与配置默认保存在本机。
 
 > [!NOTE]
-> 当前版本为 **v0.8.16**，仍处于**实验阶段**，支持 Windows 10/11 与 Linux（Bash）。[GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.16) 提供 Windows x64 便携包和 Android ARM64 APK；便携包解压后双击 `点击开始.cmd`，需系统已有 Edge 或 Chrome。APK 为 debug 签名，要求 Android 9+、4 KiB 内存页。版本变化与升级注意事项见[版本记录](docs/changelog.md)。
+> 当前版本为 **v0.9.0**，仍处于**实验阶段**，支持 Windows 10/11 与 Linux（Bash）。[GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.9.0) 提供 Windows x64 便携包和 Android ARM64 APK；便携包解压后双击 `点击开始.cmd`，需系统已有 Edge 或 Chrome。APK 为 debug 签名，要求 Android 9+、4 KiB 内存页。版本变化与升级注意事项见[版本记录](docs/changelog.md)。
 
 ## 主要功能
 
@@ -99,7 +99,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 ### Windows 便携包
 
 1. 安装 Edge 或 Chrome 稳定版（Windows 10/11 通常已自带 Edge）。
-2. 从 [GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.16) 下载 `terrarium-tavern-0.8.16-windows-x64.zip`，可用同名 `.sha256` 校验完整性。
+2. 从 [GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.9.0) 下载 `terrarium-tavern-0.9.0-windows-x64.zip`，可用同名 `.sha256` 校验完整性。
 3. 解压到一个可写的新目录，双击 `点击开始.cmd`。
 
 便携包已含独立 Python、锁定依赖与界面，无需运行安装脚本。基础包不含 CUDA 检索依赖与模型权重；升级时解压到新目录，再用 `.\start.ps1 -Data '<原数据目录>'` 指向原数据目录或恢复备份，不要覆盖旧程序目录。
@@ -145,7 +145,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 ### Android APK
 
-从同一 [GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.16) 下载 `terrarium-tavern-0.8.16-android-arm64-build9.apk` 安装。APK 内嵌 Python 后端与现有界面，数据保存在手机本地；使用 debug 签名，覆盖升级需签名一致，更新前先导出个人备份。本地向量与重排需单独导入固定的 Q8_0 GGUF 模型，GPU/NPU 加速另需 Android 14+。设备范围、构建方式与已知限制见 [Android APK](docs/development/android.md)。
+从同一 [GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.9.0) 下载 `terrarium-tavern-0.9.0-android-arm64-build10.apk` 安装。APK 内嵌 Python 后端与现有界面，数据保存在手机本地；使用 debug 签名，覆盖升级需签名一致，更新前先导出个人备份。本地向量与重排需单独导入固定的 Q8_0 GGUF 模型，GPU/NPU 加速另需 Android 14+。设备范围、构建方式与已知限制见 [Android APK](docs/development/android.md)。
 
 ### 启动之后
 

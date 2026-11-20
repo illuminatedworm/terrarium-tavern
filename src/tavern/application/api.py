@@ -37,7 +37,7 @@ from tavern.core.ooc import with_ooc
 from tavern.storage.store import Conflict, Store, dump
 
 # Application version; bump together with the locations listed in .agents/VERSIONING.md.
-VERSION = "0.8.16"
+VERSION = "0.9.0"
 
 
 class AndroidFiles(StaticFiles):
