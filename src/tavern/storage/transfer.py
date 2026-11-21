@@ -176,10 +176,21 @@ def export_package(store, selection):
                 "browser": browser_preferences(selection.browser_preferences),
             }
         for table in ("personas", "worldbooks", "cards", "sessions"):
-            for identity in dict.fromkeys(getattr(selection, table)):
+            selected = list(dict.fromkeys(getattr(selection, table)))
+            order = {
+                "personas": "selected.key",
+                "sessions": "item.created DESC, item.rowid DESC",
+            }.get(table, "item.rowid DESC")
+            # Sort IDs in list order before loading the full card and story records.
+            rows = db.execute(
+                f"SELECT item.id FROM json_each(?) AS selected JOIN {table} AS item ON item.id=selected.value "
+                f"ORDER BY {order}",
+                (dump(selected),),
+            ).fetchall()
+            if len(rows) != len(selected):
+                raise ValueError("选中的数据已被删除，请刷新后重试")
+            for (identity,) in rows:
                 row = db.execute(f"SELECT * FROM {table} WHERE id=?", (identity,)).fetchone()
-                if row is None:
-                    raise ValueError("选中的数据已被删除，请刷新后重试")
                 if table == "personas":
                     package[table].append(dict(row))
                 elif table == "worldbooks":
@@ -808,13 +819,14 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 row.update(id=ids[row["id"]], version=1)
                 insert(db, "personas", row)
                 result["personas"].append(row["id"])
-            for book in package["worldbooks"]:
+            # The display lists show newest first, so write each group from bottom to top.
+            for book in reversed(package["worldbooks"]):
                 row = copy.deepcopy(book)
                 # Keep the packed revision: imported mount records compare against it.
                 row.update(id=ids[row["id"]])
                 insert(db, "worldbooks", row)
                 result["worldbooks"].append(row["id"])
-            for card in package["cards"]:
+            for card in reversed(package["cards"]):
                 row = copy.deepcopy(card)
                 dependencies = row.pop("dependencies", {})
                 defaults = row.pop("defaults", None)
@@ -834,7 +846,9 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 written.append(path)
                 path.write_text(dump(dependencies), encoding="utf-8")
                 result["cards"].append(row["id"])
-            for bundle in story_bundles:
+            # One timestamp per batch lets rowid determine the order within it.
+            imported_at = time.time()
+            for bundle in reversed(story_bundles):
                 source = session_record(bundle, package["version"])
                 row = remap(source, ids)
                 row["model_selection"] = copy.deepcopy(source.get("model_selection", {}))
@@ -844,7 +858,7 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 row["card"] = ids.get(source["card"], uid())
                 row["card_data"]["id"] = row["card"]
                 row["card_data"]["session_id"] = row["id"]
-                row.update(revision=0, created=time.time())
+                row.update(revision=0, created=imported_at)
                 insert(db, "sessions", row)
                 for message in bundle["messages"]:
                     cloned = remap(message, ids)
@@ -874,4 +888,6 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 result["sessions"].append(row["id"])
     except sqlite3.IntegrityError:
         raise ValueError("数据包记录不完整或存在冲突，未导入任何数据") from None
+    for key in ("worldbooks", "cards", "sessions"):
+        result[key].reverse()
     return result

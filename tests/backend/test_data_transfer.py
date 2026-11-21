@@ -31,6 +31,35 @@ def package(store, **options):
     return read_package(export_package(store, ExportSelection(**options)), store)
 
 
+def test_package_round_trip_preserves_list_order(tmp_path):
+    from tavern.core.models import WorldbookEdit
+    from tavern.storage import worldbooks
+
+    store = Store(tmp_path)
+    for name in ("First", "Second", "Third"):
+        card = store.import_card(dump({"name": name}).encode())
+        store.new_session(SessionCreate(card_id=card["id"]))
+        worldbooks.save(store, None, WorldbookEdit(name=name, book={"entries": []}))
+    lists = {
+        "cards": store.cards,
+        "sessions": store.sessions,
+        "worldbooks": lambda: worldbooks.summaries(store),
+    }
+    original = {key: read() for key, read in lists.items()}
+    selected = {key: [row["id"] for row in rows[::2]] for key, rows in original.items()}
+    payload, blobs = package(store, settings=False, **{key: ids[::-1] for key, ids in selected.items()})
+    manifest = preview(payload)
+    imported = import_package(store, payload, blobs)
+
+    for key, read in lists.items():
+        assert [row["id"] for row in manifest[key]] == selected[key]
+        rows = read()
+        assert [row["id"] for row in rows] == imported[key] + [row["id"] for row in original[key]]
+        assert [row["name"] for row in rows[: len(selected[key])]] == [
+            row["name"] for row in original[key][::2]
+        ]
+
+
 def previous_story_keys(bundle):
     for message in bundle["messages"]:
         snapshot = message["snapshot"]
@@ -47,8 +76,8 @@ def previous_story_keys(bundle):
 
 def test_legacy_mixed_package_preview_and_import_preserve_supported_stories(tmp_path):
     store = Store(tmp_path)
-    card, _, kept = seed(store)
     _, _, old = seed(store, name="旧故事的独占名片")
+    card, _, kept = seed(store)
     payload, blobs = package(store, cards=[card["id"]], sessions=[kept["id"], old["id"]])
     payload["version"] = 13
     for bundle, marker in zip(payload["sessions"], (OLD_STORY_KEY, RETIRED_STORY_KEY), strict=True):

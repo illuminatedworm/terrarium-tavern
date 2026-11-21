@@ -339,7 +339,7 @@ class Store(MessageAdapters):
             siblings = [
                 row[0]
                 for row in db.execute(
-                    "SELECT id FROM sessions WHERE card=? ORDER BY created DESC", (card["id"],)
+                    "SELECT id FROM sessions WHERE card=? ORDER BY created DESC, rowid DESC", (card["id"],)
                 )
             ]
         for sid in siblings:
@@ -756,7 +756,7 @@ class Store(MessageAdapters):
                 dict(x)
                 for x in db.execute(
                     "SELECT s.*,COALESCE(c.name,json_extract(s.card_data,'$.name')) AS name "
-                    "FROM sessions s LEFT JOIN cards c ON c.id=s.card ORDER BY s.created DESC"
+                    "FROM sessions s LEFT JOIN cards c ON c.id=s.card ORDER BY s.created DESC, s.rowid DESC"
                 )
             ]
 

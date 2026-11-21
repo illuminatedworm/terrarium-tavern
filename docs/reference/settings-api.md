@@ -162,6 +162,8 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 导入响应包含新 ID 数组 `personas`、`worldbooks`、`cards`、`sessions`，以及 `settings_restored`、`browser_preferences`。客户端收到后重新读取资源列表；恢复了设置时重新建立设置编辑会话，并应用返回的浏览器偏好。
 
+对话、角色卡和世界书按各自的原列表顺序导出。导入后的新条目保留数据包中的相对顺序，导入响应中的对应 ID 数组也按此顺序返回。
+
 角色卡记录附带 `defaults`（`persona_id`、`worldbook_ids`），导出时只保留同一包中的用户角色和世界书，导入时随新身份重映射。对话快照中的挂载记录同样重映射到包内世界书；未随包的世界书保留原名称，显示为“书库中已删除”。
 
 ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`，当前导出版本为 16，可读取版本 1–16。旧版程序拒绝读取新版包。下表列出各版本的新增内容。
