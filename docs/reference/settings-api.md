@@ -314,7 +314,7 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 - **10 → 11**：给 `retrieval` 补齐 `index_timeout`（单条向量索引超时，整数秒，范围 1–3600，默认 60）。重复迁移保留用户已调整的时限。
 - **11 → 12**：把 `shared.local_models.{embedding,reranker}.device` 的 Android Q8_0 设备选择扩展为 `cpu`、`opencl:0`、`hexagon:0`。已有设备值和其他配置原样保留，导入导出使用相同格式。
 - **12 → 13**：把 `shared.kemini.clear_prompt`、`thinking_prompt`、`output_prompt` 的保存值迁移到 Interleaving 输出格式，默认值和自定义值都迁移：保留首尾空白、原有换行和其他自定义内容，优先替换可定位的旧示例和引用；找不到可识别的格式段时，把完整的对应原文模块追加到同一可编辑字段。只对实际修改过的 shared 范围增加一次修订号，之后读取不再迁移。数据库仍为 schema 13，不修改历史回复，不增加开关。
-- **14 → 15**：增加 `story.novel_research`。普通 API/GPT 两个模型字段默认 `null`，明确跟随主模型；默认每个调查者 24 次请求、300 秒。
+- **14 → 15**：增加 `story.novel_research`。普通 API 和 OpenAI 官方的模型字段默认 `null`，跟随当前对话的模型。额度按[资料调查默认值](../design/novel-research.md#模型额度与压缩)补齐。
 
 - **15 → 16**：增加官方渠道的 `openai_api_key` 认证方式，固定 Responses 与 `/v1`。已有提供商、角色配置和渠道归属保持不变，不自动迁移旧 API Key 连接。
 - **17 → 18**：移除 `shared.reply_locate_start`（回复完成后定位到正文开头）。生成期间改为跟随到正文开头即停，完成时不再跳转，见[阅读、编辑与分支](../guides/story-history.md#定位历史)。保存值存在时删除并使 shared 修订号加一；设置导入同样丢弃该键。

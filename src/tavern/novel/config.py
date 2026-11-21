@@ -9,7 +9,7 @@ class NovelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: ModelProfile | None = None
     official_model: ModelProfile | None = None
-    max_requests: int = Field(default=24, ge=2, le=100, strict=True)
+    max_requests: int = Field(default=30, ge=2, le=100, strict=True)
     timeout_seconds: int = Field(default=300, ge=30, le=3600, strict=True)
 
 

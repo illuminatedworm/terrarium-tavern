@@ -22,6 +22,8 @@ from tavern.core.prompts import (
 )
 from tavern.core.update_policy import Policy
 from tavern.search.retrieval_config import (
+    DEFAULT_CONTEXT_TOKENS,
+    DEFAULT_REPLY_TOKENS,
     LocalModels,
     ModelProfile,
     Network,
@@ -166,8 +168,8 @@ class Settings(BaseModel):
     prompt_cache_key: str | None = Field(default=None, max_length=256)
     prompt_cache_mode: Literal["default", "no_write", "instructions"] = "default"
     prompt_cache_retention: Literal["default", "in_memory", "24h"] = "default"
-    context_tokens: int = Field(default=131072, ge=2048, le=2000000, strict=True)
-    reply_tokens: int = Field(default=16384, ge=128, le=65536, strict=True)
+    context_tokens: int = Field(default=DEFAULT_CONTEXT_TOKENS, ge=2048, le=2000000, strict=True)
+    reply_tokens: int = Field(default=DEFAULT_REPLY_TOKENS, ge=128, le=65536, strict=True)
     policy: Policy = "automatic"
     capability: Literal["unknown", "accepted", "unsupported"] = "unknown"
     capability_key: str = ""

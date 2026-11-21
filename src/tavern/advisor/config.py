@@ -30,9 +30,7 @@ SYSTEM = """你是角色扮演游戏的参谋 agent。你可以查看主对话�
 
 class AdvisorOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    model: ModelProfile = Field(
-        default_factory=lambda: ModelProfile(provider_id="", model="", reply_tokens=8192)
-    )
+    model: ModelProfile = Field(default_factory=lambda: ModelProfile(provider_id=""))
     official_model: ModelProfile | None = None
     recent_exchanges: int = Field(default=6, ge=0, le=1000, strict=True)
     keep_recent: int = Field(default=4, ge=1, le=100, strict=True)

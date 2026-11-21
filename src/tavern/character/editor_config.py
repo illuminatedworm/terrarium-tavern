@@ -91,7 +91,7 @@ SYSTEM = """你是 Card Author（制卡 agent），帮助用户从零创作、�
 
 class CardAuthorOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    max_steps: int = Field(default=24, ge=2, le=100, strict=True)
+    max_steps: int = Field(default=50, ge=2, le=100, strict=True)
     pressure_ratio: float = Field(default=0.80, ge=0.25, le=0.9)
     handoff_tokens: int = Field(default=8192, ge=128, le=16384, strict=True)
     web: AgentWebConfig = Field(default_factory=AgentWebConfig)
