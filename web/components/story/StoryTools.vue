@@ -18,7 +18,7 @@ const loading = ref(false);
 const saving = ref(false);
 const error = ref('');
 const resultLabels: Record<string, string> = {
-  include_ref: '编号',
+  include_ref: '已在场条目目录',
   include_title: '标题',
   include_preview: '摘要',
   include_metadata: '附加信息',
@@ -40,6 +40,7 @@ const groups: Array<{ label: string; tools: Record<string, string> }> = [
       find_lore_for_edit: '查找可编辑设定',
       read_lore_entry: '读取设定条目',
       recall_lore: '召回设定',
+      read_lore_full: '展开世界书全文',
       revise_content: '修改设定',
     },
   },
@@ -101,6 +102,7 @@ const controlSource: Record<string, { label: string; page?: string }> = {
   plot_enabled: { label: '由场景页“剧情规划”控制', page: 'scene' },
   novel_enabled: { label: '由调查页的总开关控制', page: 'novel' },
   story_protocol: { label: '始终启用' },
+  lore_preview: { label: '世界书预览的全文读取工具，始终启用' },
 };
 const open = ref(new Set<string>());
 const definitions = ref(new Set<string>());
@@ -304,7 +306,7 @@ async function toggleUnicodeStory(event: Event) {
               {{ resultLabel(tool.name, String(key)) }}
             </button>
           </div>
-          <p v-if="tool.name === 'recall_lore'">默认直接返回命中条目的完整正文。</p>
+          <p v-if="tool.name === 'recall_lore'">每个命中附带编号；长条目先展示开头，可按编号批量读取全文。</p>
           <template v-if="tool.controlled_by === 'story_protocol'">
             <p>每轮可追加最多三段正文。普通文本回复仅记录为备注。</p>
             <label class="tool-switch">

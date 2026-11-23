@@ -113,7 +113,8 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
 }
 
 export const toolLabels: Record<string, string> = {
-  recall_lore: '检索并读取世界书',
+  recall_lore: '召回世界书',
+  read_lore_full: '展开世界书全文',
   find_lore_for_edit: '定位世界书条目',
   read_lore_entry: '读取单条世界书',
   search_history: '搜索历史',

@@ -5,6 +5,7 @@ import copy
 import json
 import sys
 import time
+from itertools import islice
 
 import jsonpatch
 import jsonpointer
@@ -44,7 +45,7 @@ from tavern.story.delivery import (
     project_rejected_kemini_notes,
     story_history,
 )
-from tavern.story.lore import inject_lore, retain_lore
+from tavern.story.lore import LoreReplay, inject_lore, lore_preview, retain_lore
 from tavern.story.preview import TurnPreview
 from tavern.story.protocol import ToolError, TurnError, failed, success
 from tavern.story.recovery import PROGRESS_VERSION, saved_story_format
@@ -90,7 +91,7 @@ class StoryAgent:
             # changes before freezing rules and constructing the model view.
             self.apply_script_lore(script_mirror["lore"], script_mirror, include_existing=True)
             document = self.document
-        self.trace = load_trace(store, session["id"], history)
+        self.lore_replay = LoreReplay.for_branch(history, snapshot, load_trace(store, session["id"], history))
         self.continuation, self.new_trace = [], []
         self.story_format = saved_story_format(progress) if progress is not None else story_format
         self.definitions = tool_definitions(
@@ -103,7 +104,7 @@ class StoryAgent:
         self.model_view = ModelView(initial_view, references=self.state.setdefault("model_references", {}))
         self.rolled, self.retrieval_query = False, ""
         self.must_rollover = False
-        self.recall_ids = []
+        self.lore_result_metadata = {}
         self.patch_state_done = False
         # Keep macro values and rule edits stable across tools, rollovers and
         # failed-request resumes. The next turn takes a fresh rule snapshot.
@@ -321,23 +322,34 @@ class StoryAgent:
     def lore_refs(self):
         return lore_references(self.document, self.state)
 
-    def retain(self):
+    def visible_lore_history(self):
+        window = self.state["window"]
+        return (
+            self.history
+            if self.settings.context_strategy == "openai_compact"
+            else self.history[window["start"] :]
+        )
+
+    def lore_tool_messages(self, visible):
         window = self.state["window"]
         compact = self.settings.context_strategy == "openai_compact"
-        visible = self.history if compact else self.history[window["start"] :]
-        owners = {m["id"] for m in visible}
-        records = [
-            item["message"]
-            for item in self.trace
-            if item["message_id"] in owners
-            and (compact or window.get("replay_history") or item["window_id"] == window["id"])
-        ]
-        recalled = {
-            eid
-            for message in [*records, *self.continuation]
-            if message["role"] == "tool"
-            for eid in message.get("lore_ids", [])
-        }
+        # load_trace groups rows by message ID. Iterate in branch order so the
+        # latest admitted version wins after an edit and another recall.
+        by_owner = {m["id"]: [] for m in visible}
+        for item in self.lore_replay.trace:
+            if item["message_id"] in by_owner and (
+                compact or window.get("replay_history") or item["window_id"] == window["id"]
+            ):
+                message = item["message"]
+                if message["role"] == "tool" and message.get("lore_ids"):
+                    by_owner[item["message_id"]].append(message)
+        for messages in by_owner.values():
+            yield from messages
+        yield from (m for m in self.continuation if m["role"] == "tool" and m.get("lore_ids"))
+
+    def retain(self):
+        visible = self.visible_lore_history()
+        recalled = {eid for message in self.lore_tool_messages(visible) for eid in message["lore_ids"]}
         self.exiting |= retain_lore(
             self.document,
             self.snapshot,
@@ -388,33 +400,46 @@ class StoryAgent:
                 "injection_diagnostics": notes,
             },
         )
+        if source == "auto":
+            return
+        if not added and not include_ref:
+            return {"matches": []}
         refs = {eid: ref for ref, eid in self.lore_refs().items()}
-        matches = [
-            {
-                **({"ref": refs[r["id"]]} if include_ref else {}),
-                **({"title": r["title"]} if include_title else {}),
-                "text": wrap_lorebook(r["content"]),
-            }
-            for r in added
-        ]
+        matches, tails = [], {}
+        for record in added:
+            eid, content = record["id"], record["content"]
+            match = {"ref": refs[eid]}
+            if include_title:
+                match["title"] = record["title"]
+            body = self.model_view.text(content)
+            opening = lore_preview(body, settings.lore_preview_chars)
+            if len(opening) < len(body):
+                match["preview"] = wrap_lorebook(opening)
+                tails[eid] = body[len(opening) :]
+            else:
+                match["text"] = wrap_lorebook(body)
+            matches.append(match)
+            self.snapshot.setdefault("lore", {}).setdefault(eid, {}).update(present=True)
+        if added:
+            self.lore_result_metadata = {"lore_ids": [r["id"] for r in added]}
+            if tails:
+                self.lore_result_metadata["_lore_tails"] = tails
         result = {"matches": matches}
         if include_ref:
-            entries = {e["id"]: e for e in lore_entries(self.document, "narrative")}
             omitted = {r["id"] for r in added} | {
                 r["id"] for r in self.snapshot.get("lore_injections", []) if r.get("manually_removed")
             }
-            result["already_in_context"] = [
-                {
-                    "ref": refs[eid],
-                    **({"title": lore_title(entries[eid]) or "世界书"} if include_title else {}),
-                }
+            present = (
+                eid
                 for eid, old in self.snapshot.get("lore", {}).items()
                 if old.get("present") and eid not in omitted
-            ][:20]
-        if source == "agent":
-            self.recall_ids = [r["id"] for r in added]
-            for eid in self.recall_ids:
-                self.snapshot.setdefault("lore", {}).setdefault(eid, {}).update(present=True)
+            )
+            directory = {eid: {"ref": refs[eid]} for eid in islice(present, 20)}
+            if include_title and directory:
+                for entry in lore_entries(self.document, "narrative"):
+                    if entry["id"] in directory:
+                        directory[entry["id"]]["title"] = lore_title(entry) or "世界书"
+            result["already_in_context"] = list(directory.values())
         return result
 
     def compile(self):
@@ -427,7 +452,7 @@ class StoryAgent:
             self.request.text,
             self.settings,
             self.definitions,
-            trace=self.trace,
+            lore_replay=self.lore_replay,
             continuation=self.continuation,
             input_id=self.user_message["id"],
             instruction=(
@@ -441,6 +466,7 @@ class StoryAgent:
             allow_content_edit=self.request.allow_content_edit,
             regenerate_reply=self.regenerate_reply,
             story=self.story,
+            model_view=self.model_view,
         )
         self.must_rollover = result["rollover_required"]
         self.context_epoch = result["context_ledger"]["epoch"]
@@ -862,7 +888,7 @@ class StoryAgent:
                 # Following requests project this response to portable history.
                 # A saved routing token can still refer to the encoded parameters.
                 self.request_context.routing.clear()
-            self.recall_ids = []
+            self.lore_result_metadata = {}
             activity = {
                 "activity_id": f"call-{assistant_seq}-{index}",
                 "order": assistant_seq * 10 + index + 1,
@@ -983,10 +1009,8 @@ class StoryAgent:
             message = {"role": "tool", "tool_call_id": call["id"], "content": encoded(result)}
             if legacy_receipt:
                 message["_roleplay_received"] = legacy_receipt
-            if self.recall_ids and not tool_error:
-                # Existing trace metadata keeps runtime identities out of the
-                # model result while surviving commits, retries and story forks.
-                message["lore_ids"] = self.recall_ids
+            if not tool_error:
+                message.update(self.lore_result_metadata)
             if tool_error:
                 message["_tool_error"] = True
                 if encoded_story:

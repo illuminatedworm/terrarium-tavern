@@ -1253,7 +1253,8 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
         )
         assert (
             sum(
-                m.get("content") == "<lorebook>\n钟楼\n\n钟楼每晚九点关门。\n</lorebook>" for m in requests[0]
+                m.get("content") == "<lorebook>\n钟楼\n\n[L1 · 全文]\n钟楼每晚九点关门。\n</lorebook>"
+                for m in requests[0]
             )
             == 1
         )
@@ -1268,12 +1269,13 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
             tool_results[0]["data"]["matches"][0]["text"] == "<lorebook>\n旧港的船只明晨出发。\n</lorebook>"
         )
         assert set(tool_results[0]["data"]) == {"matches"}
-        assert set(tool_results[0]["data"]["matches"][0]) == {"title", "text"}
+        assert set(tool_results[0]["data"]["matches"][0]) == {"ref", "title", "text"}
         assert tool_results[0]["data"]["matches"][0]["title"] == "旧港"
         assert tool_results[2]["data"]["matches"] == []
         assert (
             sum(
-                m.get("content") == "<lorebook>\n钟楼\n\n钟楼每晚九点关门。\n</lorebook>" for m in requests[2]
+                m.get("content") == "<lorebook>\n钟楼\n\n[L1 · 全文]\n钟楼每晚九点关门。\n</lorebook>"
+                for m in requests[2]
             )
             == 1
         )
@@ -1347,7 +1349,7 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
         assert [r["id"] for r in current["snapshot"]["lore_injections"]] == ["port"]
         assert (
             sum(
-                m.get("content") == "<lorebook>\n旧港\n\n旧港的船只明晨出发。\n</lorebook>"
+                m.get("content") == "<lorebook>\n旧港\n\n[L2 · 全文]\n旧港的船只明晨出发。\n</lorebook>"
                 for m in model.requests[0]["messages"]
             )
             == 1
@@ -1547,12 +1549,17 @@ async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
         await service.close()
 
 
-async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
+async def test_recalled_lore_preview_then_full_read_reach_model(tmp_path):
     store = Store(tmp_path)
-    content = "loreword " * 2500 + "ENDMARK"
+    identities = [f"{i:032x}" for i in range(1, 11)]
+    opening = "loreword " * 13
+    assert len(opening) == 117
+    tail = " loreword" * 2500 + "ENDMARK"
+    content = opening + identities[-1] + tail
     document = {
         "name": "向导",
         "first_mes": "开场。",
+        "extensions": {"references": identities[:9]},
         "character_book": {
             "entries": [
                 {"id": "long", "keys": ["loreword"], "content": content, "comment": "长条目", "enabled": True}
@@ -1568,14 +1575,22 @@ async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
     service = runtime(store)
     model = Model(("recall_lore", {"query": "loreword"}), "继续。")
     try:
-        result, _ = await turn(service, session, model)
+        result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         tool_result = next(
             json.loads(m["content"]) for m in model.requests[1]["messages"] if m["role"] == "tool"
         )
         assert tool_result["data"]["matches"] == [
-            {"title": "长条目", "text": f"<lorebook>\n{content}\n</lorebook>"}
+            {"ref": "L1", "title": "长条目", "preview": f"<lorebook>\n{opening}\n</lorebook>"}
         ]
+        assert "ENDMARK" not in json.dumps(model.requests[1]["messages"])
+        fork = store.fork_session(current["id"], current["head"], current["revision"])
+        reader = Model(("read_lore_full", {"refs": ["L1"]}), "读到了。")
+        result, _ = await turn(service, fork, reader)
+        assert result["status"] == "committed", result["error"]
+        assert "ENDMARK" not in json.dumps(reader.requests[0]["messages"])
+        full = [json.loads(m["content"]) for m in reader.requests[1]["messages"] if m["role"] == "tool"][-1]
+        assert full["data"]["entries"] == [{"ref": "L1", "text": opening + "@D10" + tail}]
     finally:
         await service.close()
 
@@ -2095,20 +2110,24 @@ def test_constant_and_retained_lore_have_same_tag_without_mutating_storage(story
         "character_book": {
             "entries": [
                 {"id": "constant", "content": "常驻背景", "constant": True, "enabled": True},
+                {"id": "retained", "content": "动态背景"},
+                {"id": "disabled", "content": "已停用", "enabled": False},
             ]
         },
     }
     snapshot = copy.deepcopy(session["snapshot"])
     snapshot["lore_injections"] = [
-        {"id": "retained", "content": "动态背景", "title": "背景", "anchor_id": session["head"]}
+        {"id": eid, "content": body, "title": "背景", "anchor_id": session["head"]}
+        for eid, body in (("retained", "动态背景"), ("disabled", "已停用"), ("unmounted", "已卸载"))
     ]
     compiled = compile_window(document, session, session["messages"], snapshot, "继续", store.settings(), [])
     lore = [m for m in compiled["trace"] if m["source"].startswith("lore:")]
     assert {m["content"] for m in lore} == {
         "<lorebook>\n常驻背景\n</lorebook>",
-        "<lorebook>\n动态背景\n</lorebook>",
+        "<lorebook>\n[L2 · 全文]\n动态背景\n</lorebook>",
     }
-    assert snapshot["lore_injections"][0]["content"] == "动态背景"
+    assert [row["id"] for row in compiled["next_lore_injections"]] == ["retained"]
+    assert len(snapshot["lore_injections"]) == 3
 
 
 def test_story_window_places_current_input_before_dynamic_context(story):
@@ -2119,7 +2138,13 @@ def test_story_window_places_current_input_before_dynamic_context(story):
         {"id": "second", "content": "补充背景", "title": "背景二", "anchor_id": "current-input"},
     ]
     compiled = compile_window(
-        {"name": "向导", "post_history_instructions": "作者补充"},
+        {
+            "name": "向导",
+            "post_history_instructions": "作者补充",
+            "character_book": {
+                "entries": [{"id": "current", "content": "本轮背景"}, {"id": "second", "content": "补充背景"}]
+            },
+        },
         session,
         session["messages"],
         snapshot,

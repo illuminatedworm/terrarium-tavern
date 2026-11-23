@@ -1488,7 +1488,9 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 json={
                     "expected_revision": session["revision"],
                     "disabled_tools": [
-                        name for name in SPECS if name not in {"submit_story", *feature_controlled}
+                        name
+                        for name in SPECS
+                        if name not in {"submit_story", "read_lore_full", *feature_controlled}
                     ],
                 },
             )
@@ -1498,7 +1500,8 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             result, session = await turn(service, session, no_tools)
             assert result["status"] == "committed", result["error"]
             assert [t["function"]["name"] for t in no_tools.requests[0]["extra_body"]["tools"]] == [
-                "submit_story"
+                "read_lore_full",
+                "submit_story",
             ]
             response = await client.put(
                 url, json={"expected_revision": session["revision"], "disabled_tools": initially_disabled}

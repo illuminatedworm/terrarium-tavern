@@ -34,7 +34,7 @@
 
 - **H** 是当前分支的消息位置（开场白为 H1），剧情模型、参谋 agent 与剧情界面共用 [history_refs.py](../../src/tavern/core/history_refs.py) 的定义。`H41-H50` 表示连续闭区间，`H52#3` 表示 H52 的第 3 个原文片段。H 只是渲染形式，存档仍保存消息 ID、指纹与逐字摘录。
 
-剧情模型的 `recall_lore` 返回准入条目的完整正文。L 编号标识资料，详见 [工具参考](../reference/story-tools.md)。
+剧情模型的 `recall_lore` 返回每项的 L 编号及开头；短条目直接返回全文。`read_lore_full` 按一个或多个在场编号读取冻结全文，详见 [工具参考](../reference/story-tools.md)。
 
 短编号的生成、映射回源和来源校验均在本地执行。各运行时管理任务请求额度。编号和包装仍计入输入 tokens。
 

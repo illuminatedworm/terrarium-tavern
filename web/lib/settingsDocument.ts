@@ -93,7 +93,7 @@ export interface PromptChoices {
   options: [PromptChoice, PromptChoice, PromptChoice, PromptChoice];
 }
 export interface SettingsDocument {
-  version: 22;
+  version: 23;
   story: SettingsObject & {
     system_prompt: PromptChoices;
     novel_research: NovelConfig;

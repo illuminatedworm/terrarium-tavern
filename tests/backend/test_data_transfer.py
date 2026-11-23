@@ -191,7 +191,7 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         with pytest.raises(ValueError, match="场外发言与模型消息不一致"):
             import_package(target, inconsistent, blobs)
         assert target.sessions() == []
-        assert payload["version"] == 18
+        assert payload["version"] == 20
         payload["version"] = 14
         previous_story_keys(payload["sessions"][0])
         imported = import_package(target, payload, blobs)
@@ -241,7 +241,9 @@ def test_all_branches_lore_sources_and_cache_anchors_are_remapped(tmp_path):
     other = uid()
     snapshot = copy.deepcopy(first["snapshot"])
     snapshot["state"] = {"hp": 75}
-    snapshot["lore_injections"] = [{"anchor_id": first["id"], "source_ids": [first["id"]]}]
+    snapshot["lore_injections"] = [
+        {"id": "port", "anchor_id": first["id"], "source_ids": [first["id"]], "manually_removed": True}
+    ]
     with store.connection() as db:
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), first["id"]))
         db.execute(
@@ -262,6 +264,22 @@ def test_all_branches_lore_sources_and_cache_anchors_are_remapped(tmp_path):
             "UPDATE sessions SET cache_breakpoint_message=?,cache_breakpoint_auto=0 WHERE id=?",
             (first["id"], session["id"]),
         )
+        read = {
+            "role": "tool",
+            "tool_call_id": "read",
+            "lore_ids": ["port"],
+            "_lore_anchors": {"port": first["id"]},
+            "content": dump({"ok": True, "data": {"entries": [{"ref": "L1", "text": "港口原文"}]}}),
+        }
+        call = {
+            "id": "read",
+            "type": "function",
+            "function": {"name": "read_lore_full", "arguments": dump({"refs": ["L1"]})},
+        }
+        for seq, row in enumerate(({"role": "assistant", "content": "", "tool_calls": [call]}, read), 1):
+            db.execute(
+                "INSERT INTO story_trace VALUES (?,?,?,?,?)", (session["id"], other, seq, "window", dump(row))
+            )
     payload, blobs = package(
         store, settings=False, personas=[persona["id"]], cards=[card["id"]], sessions=[session["id"]]
     )
@@ -276,6 +294,10 @@ def test_all_branches_lore_sources_and_cache_anchors_are_remapped(tmp_path):
     assert message["auxiliary"] == []
     assert message["snapshot"]["lore_injections"][0]["anchor_id"] == message["id"]
     with store.connection() as db:
+        payload = db.execute(
+            "SELECT payload FROM story_trace WHERE session=? AND seq=2", (restored["id"],)
+        ).fetchone()[0]
+        assert json.loads(payload)["_lore_anchors"] == {"port": message["id"]}
         assert (
             db.execute("SELECT count(*) FROM messages WHERE session=?", (restored["id"],)).fetchone()[0] == 2
         )

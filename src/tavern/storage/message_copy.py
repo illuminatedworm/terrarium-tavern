@@ -24,6 +24,10 @@ def copy_traces(db, session, ids, *, new_story):
             "SELECT seq,window_id,payload FROM story_trace WHERE message_id=?", (original,)
         ).fetchall():
             payload = json.loads(row["payload"])
+            if "_lore_anchors" in payload:
+                payload["_lore_anchors"] = {
+                    eid: ids.get(anchor, anchor) for eid, anchor in payload["_lore_anchors"].items()
+                }
             if new_story:
                 payload.pop(
                     "_novel_mail", None

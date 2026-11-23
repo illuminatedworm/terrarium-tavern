@@ -124,6 +124,10 @@ export const policies = [
 ];
 export const loreFields: SettingField[] = [
   number('lore_max_entries', '单次新增条目上限', 1, 1000),
+  {
+    ...number('lore_preview_chars', '动态世界书预览长度（字符）', 1, 2_000_000),
+    help: '默认 120 个字符。剧情模型先看到动态注入和工具召回条目的开头，可按编号批量读取全文。常驻条目始终发送全文。',
+  },
   { path: 'lore_recursive', label: '世界书递归查询', type: 'checkbox' },
   {
     path: 'lore_injection_title',

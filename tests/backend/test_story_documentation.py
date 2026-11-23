@@ -83,10 +83,19 @@ async def test_documented_minimal_results_match_execution(name):
         assert query == "港口" and not options["include_ref"] and options["include_title"]
         return {
             "matches": [
-                {"title": ENTRY["title"], "text": "<lorebook>\n" + ENTRY["content"] + "\n</lorebook>"}
+                {
+                    "ref": "L1",
+                    "title": ENTRY["title"],
+                    "text": "<lorebook>\n" + ENTRY["content"] + "\n</lorebook>",
+                }
             ]
         }
 
+    owner.lore_refs = MethodType(StoryAgent.lore_refs, owner)
+    if name == "read_lore_full":
+        owner.snapshot["lore_injections"] = [
+            {"id": "port", "content": ENTRY["content"], "anchor_id": "input"}
+        ]
     owner.retrieve = retrieve
     owner.script = Script([{"id": "draft-body", "role": "assistant", "raw": ""}], owner.snapshot)
     owner.receive_story = MethodType(StoryAgent.receive_story, owner)

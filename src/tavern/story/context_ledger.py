@@ -23,7 +23,9 @@ CLEAR_TEXT = {
 
 
 class ContextLedger:
-    def __init__(self, settings, fixed, tools, document, snapshot, records, input_id, history):
+    def __init__(
+        self, settings, fixed, tools, document, snapshot, records, input_id, history, *, removed_lore_reads=""
+    ):
         self.origin = response_origin(settings)
         window = snapshot["story"]["window"]
         sources = {
@@ -32,6 +34,8 @@ class ContextLedger:
             "document": document,
             "removed_lore": [r for r in snapshot.get("lore_injections", []) if r.get("manually_removed")],
         }
+        if removed_lore_reads:
+            sources["removed_lore_reads"] = removed_lore_reads
         signature = fingerprint(sources)
         previous = next(
             (m["_context_baseline"] for m in reversed(records) if m.get("_context_baseline")), None
@@ -60,10 +64,13 @@ class ContextLedger:
         # Changing local instructions or tools requires a new runtime baseline,
         # but does not invalidate an unchanged response from the same provider.
         # Keep a separate generation so a model switch A -> B -> A cannot revive
-        # opaque A-state from before the switch.
+        # opaque A-state from before the switch. A newly withdrawn tool result
+        # also invalidates opaque replies that could retain its original text.
         self.native_epoch = (
             previous.get("native_epoch", previous["epoch"])
-            if previous and previous.get("origin") == self.origin
+            if previous
+            and previous.get("origin") == self.origin
+            and previous.get("removed_lore_reads", "") == removed_lore_reads
             else self.epoch
         )
         self.additions, self.invalidations = [], []
@@ -80,6 +87,7 @@ class ContextLedger:
                         "epoch": self.epoch,
                         "history": dict(history),
                         "native_epoch": self.native_epoch,
+                        **({"removed_lore_reads": removed_lore_reads} if removed_lore_reads else {}),
                     },
                 }
             )

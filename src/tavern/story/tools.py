@@ -37,6 +37,7 @@ from tavern.story.handoff import (
     check_limits,
     require_coverage,
 )
+from tavern.story.lore import read_present_lore
 from tavern.story.protocol import ToolError, TurnError, success
 from tavern.story.read_guards import DraftReads, state_scope
 from tavern.story.state import note_view, rollover, rollover_start
@@ -65,6 +66,12 @@ class Story(Arguments):
 
 class Query(Arguments):
     query: str = Field(min_length=1, max_length=1000, description="Search text or retrieval clues.")
+
+
+class LoreFullRead(Arguments):
+    refs: list[Annotated[str, Field(pattern=r"^L[1-9]\d*$")]] = Field(
+        min_length=1, description="One or more L handles from worldbook entries present in this context."
+    )
 
 
 class Calculation(Arguments):
@@ -254,9 +261,15 @@ SPECS = {
     "recall_lore": (
         Query,
         "Look up worldbook background for the story. To find entries to edit, use find_lore_for_edit.\n"
-        "Write a short, self-contained query in the worldbook's language. Returns complete matching entries in <lorebook>. "
+        "Write a short, self-contained query in the worldbook's language. Each match has an L handle "
+        "and either a preview of its opening or its complete text. Use read_lore_full for details beyond a preview. "
         "Entries already in this context are left out, and entry conditions, cooldowns or relevance limits may leave no matches. "
-        "When titles and L handles are shown, recalled entries can serve as the current text for later edits.",
+        "Only complete current text counts as evidence for editing.",
+    ),
+    "read_lore_full": (
+        LoreFullRead,
+        "Read the complete frozen story text of one or more admitted worldbook entries by L handle. "
+        "Use only when details beyond a preview are needed. Returns entries in requested order.",
     ),
     "revise_content": (
         ContentRevision,
@@ -445,6 +458,7 @@ def tool_definitions(
         else:
             names.discard("write_plot")
     names.add("submit_story")
+    names.add("read_lore_full")
     kemini = settings is not None and settings.kemini.enabled
     if story_format is None:
         story_format = new_story_format(session, settings)
@@ -644,6 +658,8 @@ class AgentTools:
                 include_ref=result_field(owner.session, name, "include_ref"),
                 include_title=result_field(owner.session, name, "include_title"),
             )
+        if name == "read_lore_full":
+            return read_present_lore(owner, args.refs)
         if name == "search_history":
             return self.search(
                 self.archive(),

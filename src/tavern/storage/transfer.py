@@ -33,7 +33,7 @@ from tavern.storage.worldbooks import read_defaults, write_defaults
 MAX_UPLOAD = 256 * 1024 * 1024
 MAX_UNPACKED = 512 * 1024 * 1024
 FORMAT = "terrarium-tavern-personal-data"
-PACKAGE_VERSION = 18
+PACKAGE_VERSION = 20
 JSON_FIELDS = {
     "worldbooks": {"book"},
     "cards": {"resources", "document", "report"},
@@ -289,7 +289,7 @@ def validate_row(schema, table, row, required):
                 raise ValueError("数据包字段类型无效")
 
 
-def validate_story_sources(messages):
+def validate_story_sources(messages, traces=()):
     """Check imported immutable citations against every branch in linear tree time."""
     children = {}
     for message in messages.values():
@@ -305,9 +305,9 @@ def validate_story_sources(messages):
             stack.append((mid, depth, True))
             stack.extend((child, depth + 1, False) for child in children.get(mid, []))
 
-    def position(source, owner):
+    def position(source, owner, label="记忆"):
         if source not in entered or not entered[source] <= entered[owner] < exited[source]:
-            raise ValueError("记忆来源不在所属剧情分支")
+            raise ValueError(f"{label}来源不在所属剧情分支")
         return depths[source]
 
     def points(items, owner, span=None):
@@ -330,6 +330,20 @@ def validate_story_sources(messages):
             points(chapter["points"], mid, (first, last))
             through = last
         points(state["handoff"]["current"], mid)
+    for trace in traces:
+        payload = trace["payload"]
+        if "_lore_anchors" in payload:
+            anchors, ids = payload["_lore_anchors"], payload.get("lore_ids")
+            if not (
+                isinstance(anchors, dict)
+                and isinstance(ids, list)
+                and all(isinstance(eid, str) for eid in ids)
+                and anchors.keys() <= set(ids)
+                and all(isinstance(anchor, str) for anchor in anchors.values())
+            ):
+                raise ValueError("世界书展开来源无效")
+            for anchor in anchors.values():
+                position(anchor, trace["message_id"], "世界书展开")
 
 
 def session_record(bundle, version):
@@ -581,7 +595,6 @@ def validate_package(store, package, blobs):
                     seen.add(cursor)
                     cursor = by_id[cursor]["parent"]
                 done.update(seen)
-            validate_story_sources(by_id)
             trace_keys = set()
             for trace in bundle.get("story_trace", []):
                 validate_row(
@@ -599,6 +612,7 @@ def validate_package(store, package, blobs):
                 ):
                     raise ValueError("对话上下文轨迹无效")
                 trace_keys.add(key)
+            validate_story_sources(by_id, bundle.get("story_trace", []))
             from tavern.media.transfer import validate_bundle as validate_media
             from tavern.story.visuals import successful_specs, validate_spec
 

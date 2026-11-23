@@ -293,6 +293,38 @@ def test_stale_frozen_lore_does_not_authorize_current_version(owner):
         owner.tools.reads.require_entry("L1", raw)
 
 
+async def test_preview_requires_full_read_of_the_frozen_version_before_edit(owner):
+    from tavern.story.content import lore_references
+
+    raw = lore(owner)
+    owner.lore_refs = lambda: lore_references(owner.document, owner.state)
+    owner.settings.lore_preview_chars = 3
+    owner.snapshot["lore_injections"] = [
+        {"id": raw["id"], "anchor_id": "input", "title": "Harbor", "content": "Complete Guide lore"}
+    ]
+    compiled = context(owner)
+    block = next(m for m in compiled["trace"] if m.get("source") == "lore:entry")
+    assert "[L1 · 开头预览]\nCom" in block["content"] and "Guide lore" not in block["content"]
+    with pytest.raises(ValueError, match="read_lore_entry"):
+        owner.tools.reads.require_entry("L1", raw)
+    with pytest.raises(ValueError, match="编号"):
+        await call(owner, "read_lore_full", refs=["L1", "L2"])
+    assert "lore" not in owner.snapshot
+    args = {"refs": ["L1", "L1"]}
+    full = await call(owner, "read_lore_full", **args)
+    assert full == {"entries": [{"ref": "L1", "text": "Complete Guide lore"}]}
+    records = exchange("read_lore_full", args, full)
+    context(owner, records)
+    owner.tools.reads.require_entry("L1", raw)
+    # Once the visible original differs from today's expansion it is still readable,
+    # but cannot authorize overwriting the newer version.
+    owner.document["name"] = "Other"
+    assert await call(owner, "read_lore_full", **args) == full
+    context(owner, records)
+    with pytest.raises(ValueError, match="read_lore_entry"):
+        owner.tools.reads.require_entry("L1", raw)
+
+
 def test_current_variables_from_own_call_or_visible_read_and_patch(owner):
     own_call = exchange("patch_state", {"operations": [{"op": "replace", "path": "", "value": {"hp": 8}}]})
     context(owner, own_call)
