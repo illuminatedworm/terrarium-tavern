@@ -88,7 +88,7 @@ def _without_legacy_tail(items, messages):
     return items[:-length] if length else items
 
 
-def project_compact(result, state, settings, tools, fixed_count):
+def project_compact(result, state, settings, tools, fixed_count, *, keep_visible: int | None = None):
     complete = [canonical(portable(message)) for message in result["messages"]]
     header, body = complete[:fixed_count], complete[fixed_count:]
     signature_parts = {"header": header, "tools": tools}
@@ -113,7 +113,31 @@ def project_compact(result, state, settings, tools, fixed_count):
     if not items:
         # A short history can be ready without crossing the server threshold.
         covered = 0
-    messages = header + ([opaque_message(items, settings)] if items else []) + body[covered:]
+    messages = complete
+    if items:
+        rows = result["trace"]
+        tail_start = fixed_count + covered
+        middle = [opaque_message(items, settings)]
+        middle_rows = [
+            {
+                "role": "assistant",
+                "source": "cloud_compaction",
+                "content": "云端压缩状态（加密内容由服务端解释）",
+                "opaque": True,
+            }
+        ]
+        if keep_visible is not None and fixed_count <= keep_visible < tail_start:
+            # The opaque item can end in calls. Keep their return batch adjacent before reasserting the notice.
+            while tail_start < len(complete) and complete[tail_start]["role"] == "tool":
+                middle.append(complete[tail_start])
+                middle_rows.append(rows[tail_start])
+                tail_start += 1
+            middle.append(complete[keep_visible])
+            middle_rows.append(rows[keep_visible])
+        messages = header + middle + complete[tail_start:]
+        result["trace"] = rows[:fixed_count] + middle_rows + rows[tail_start:]
+        for index, row in enumerate(result["trace"]):
+            row["position"] = index
     result.update(
         messages=messages,
         runtime_messages=copy.deepcopy(messages),
@@ -126,20 +150,6 @@ def project_compact(result, state, settings, tools, fixed_count):
         _compact_signature=signature,
         _compact_covered=covered,
     )
-    if items:
-        rows = result["trace"]
-        result["trace"] = [
-            *rows[:fixed_count],
-            {
-                "role": "assistant",
-                "source": "cloud_compaction",
-                "content": "云端压缩状态（加密内容由服务端解释）",
-                "opaque": True,
-            },
-            *rows[fixed_count + covered :],
-        ]
-        for index, row in enumerate(result["trace"]):
-            row["position"] = index
     result["diagnostics"].append(
         {"reason": "云端状态只使用接口实测；压缩后等待新请求反馈，不从密文推算占用。"}
     )

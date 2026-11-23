@@ -38,7 +38,7 @@ export function draftStoryContents(segments: readonly string[], activities: read
   }
   for (const item of activities) {
     if (item.status !== 'returned') continue;
-    if (item.name === 'submit_story') appendStory();
+    if (item.name === 'submit_story' || item.is_story) appendStory();
     else if (item.visual) items.push({ key: item.id, kind: 'visual', spec: item.visual });
   }
   while (story < segments.length) appendStory();

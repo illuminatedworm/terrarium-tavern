@@ -7,9 +7,15 @@ from typing import Literal
 
 from tavern.core.kemini import TOOL_NAME
 from tavern.core.story_segments import SEPARATOR
+from tavern.scripting.kemini import split_auxiliary
 from tavern.scripting.native_response import portable
 
 LEGACY_TURN_TOOLS = frozenset({"roleplay", "finish_turn"})
+PLAIN_STORY_MIN_CHARACTERS = 100
+PLAIN_STORY_WARNING = (
+    "Runtime 已接收刚才以普通文本输出的正文。这是对错误执行的兜底处理，"
+    "后续正文必须用 submit_story 提交，已接收的内容无需重发。"
+)
 
 StoryFormat = Literal["plain", "unicode_full", "unicode_partial"]
 
@@ -40,6 +46,26 @@ ENCODED_STORY_DESCRIPTIONS = {
 }
 UNICODE_SCALAR = re.compile(r"[0-9A-F]{4,6}")
 UNICODE_SPAN_MARKER = re.compile(r"[⟦⟧]")
+
+
+def is_plain_story_warning(message: dict) -> bool:
+    return message.get("role") == "system" and message.get("content") == PLAIN_STORY_WARNING
+
+
+def plain_story_parts(message: dict) -> tuple[str, str]:
+    """Separate explicitly phased Responses progress from the candidate final prose."""
+    native = message.get("_native_response") or {}
+    if native.get("origin", {}).get("api") == "responses":
+        messages = [item for item in native["items"] if item.get("type") == "message"]
+        if any(item.get("phase") for item in messages):
+            commentary, final = [], []
+            for item in messages:
+                target = final if item.get("phase") == "final_answer" else commentary
+                target.extend(
+                    part["text"] for part in item.get("content", []) if part.get("type") == "output_text"
+                )
+            return "".join(commentary), "".join(final)
+    return "", message["content"]
 
 
 def decode_unicode_story(content: str, *, label: str = "正文") -> str:
@@ -162,6 +188,35 @@ def committed_story(message, text):
     if message.get("content") == text:
         return message
     return portable({**message, "content": text})
+
+
+def project_rejected_kemini_notes(records, config, *, resume_reason=""):
+    """Older drafts kept the raw terminal note. Its correction identifies a rejected delivery."""
+    rejected = "submit_story" in resume_reason
+    owner = None
+    changed = False
+    for index in reversed(range(len(records))):
+        message = records[index]
+        if message.get("message_type") == "reply_correction":
+            rejected = "submit_story" in message["content"]
+            owner = message.get("_content_owner")
+        if message["role"] != "assistant":
+            continue
+        if (
+            rejected
+            and message.get("_content_owner") == owner
+            and "message_type" not in message
+            and message.get("_model_completion", {}).get("action") == "end"
+            and not message.get("_story_received")
+            and not message.get("tool_calls")
+            and "<" in message["content"]
+        ):
+            visible, _, _ = split_auxiliary(message["content"], config)
+            if visible != message["content"]:
+                records[index] = committed_story(message, visible)
+                changed = True
+        rejected = False
+    return changed
 
 
 def project_story_segments(message, parts):

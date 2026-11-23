@@ -1135,6 +1135,64 @@ async def test_novel_authorization_refreshes_before_compact_story_requests(tmp_p
         await service.close()
 
 
+def test_plain_story_warning_keeps_checkpoints_and_tool_results_paired():
+    from tavern.conversation.compaction import hashes
+    from tavern.core.models import Settings
+    from tavern.scripting.request_context import response_origin
+    from tavern.story.compaction import capture_checkpoint
+    from tavern.story.context import compile_window
+    from tavern.story.delivery import PLAIN_STORY_WARNING
+
+    settings = Settings(model="fixture", api_mode="responses", context_strategy="openai_compact")
+    history = [{"role": "assistant", "id": "opening", "raw": "原开场"}]
+    snapshot, records = {"state": {}}, []
+
+    def compile_current():
+        result = compile_window(
+            {}, {"persona": "玩家"}, history, snapshot, "继续", settings, [], continuation=records
+        )
+        records.extend(result["context_additions"])
+        return result
+
+    before = compile_current()
+    snapshot["story"]["compaction"] = {
+        "version": 1,
+        "origin": response_origin(settings),
+        "signature": before["_compact_signature"],
+        "covered": hashes(before["_compact_body"][: before["_replay_complete"]]),
+        "items": [{"type": "compaction", "encrypted_content": "old"}],
+    }
+    records.extend(
+        [{"role": "assistant", "content": "已接收正文"}, {"role": "system", "content": PLAIN_STORY_WARNING}]
+    )
+    after = compile_current()
+    assert after["compaction_opaque"] and not after["_compact_stale"]
+    assert [m["content"] for m in after["messages"]].count(PLAIN_STORY_WARNING) == 1
+
+    call = {
+        "id": "read",
+        "type": "function",
+        "function": {"name": "read_history", "arguments": '{"ref":"H1"}'},
+    }
+    assistant = {"role": "assistant", "content": "", "tool_calls": [call]}
+    provider = SimpleNamespace(
+        last_native_response={
+            "items": [
+                {"type": "compaction", "encrypted_content": "new"},
+                {"type": "function_call", "call_id": "read", **call["function"]},
+            ]
+        }
+    )
+    assert capture_checkpoint(snapshot["story"], after, settings, provider, assistant)
+    records.extend([assistant, {"role": "tool", "tool_call_id": "read", "content": '{"ok":true}'}])
+    projected = compile_current()
+    assert projected["compaction_opaque"] and not projected["_compact_stale"]
+    at = next(i for i, row in enumerate(projected["trace"]) if row.get("opaque"))
+    messages = projected["messages"]
+    assert messages[at + 1]["tool_call_id"] == "read" and messages[at + 2]["content"] == PLAIN_STORY_WARNING
+    assert sum(m["content"] == PLAIN_STORY_WARNING for m in messages) == 1
+
+
 async def test_pre_turn_recompaction_keeps_the_pending_exchange_outside_the_checkpoint():
     from tavern.conversation.compaction import hashes, prepare_turn, project_compact
     from tavern.core.models import Settings

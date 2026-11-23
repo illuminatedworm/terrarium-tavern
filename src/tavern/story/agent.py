@@ -23,7 +23,7 @@ from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
 from tavern.core.story_segments import MAX_SEGMENTS, SEPARATOR, text_length
 from tavern.media.tools import MediaDraft
-from tavern.scripting.kemini import AuxiliaryParser
+from tavern.scripting.kemini import split_auxiliary
 from tavern.scripting.lore import merge_script_lore, sync_runtime_lore
 from tavern.scripting.native_response import completion_message, message_digest
 from tavern.scripting.request_context import ProviderRequestContext, response_origin
@@ -33,7 +33,17 @@ from tavern.story.config import MAX_BATCH_CALLS
 from tavern.story.content import lore_references
 from tavern.story.content_history import CONTENT_TOOLS_VERSION, content_history, retired_content_call
 from tavern.story.context import compile_window, load_trace
-from tavern.story.delivery import LEGACY_TURN_TOOLS, StoryFormat, story_history
+from tavern.story.delivery import (
+    LEGACY_TURN_TOOLS,
+    PLAIN_STORY_MIN_CHARACTERS,
+    PLAIN_STORY_WARNING,
+    StoryFormat,
+    committed_story,
+    is_plain_story_warning,
+    plain_story_parts,
+    project_rejected_kemini_notes,
+    story_history,
+)
 from tavern.story.lore import inject_lore, retain_lore
 from tavern.story.preview import TurnPreview
 from tavern.story.protocol import ToolError, TurnError, failed, success
@@ -140,9 +150,13 @@ class StoryAgent:
         if progress:
             self.continuation, retired = content_history(progress["continuation"])
             _, retired_story = story_history(self.continuation)
-            if retired or retired_story:
+            cleaned = self.settings.kemini.enabled and project_rejected_kemini_notes(
+                self.continuation, self.settings.kemini, resume_reason=self.resume_reason
+            )
+            if retired or retired_story or cleaned:
                 self.request_context.routing.clear()
             self.new_trace = copy.deepcopy(progress["new_trace"])
+            self.restore_draft_warning()
             self.retrieval_query = progress["retrieval_query"]
             self.must_rollover = progress["must_rollover"]
             if progress.get("provider_origin") and progress["provider_origin"] != response_origin(settings):
@@ -217,21 +231,17 @@ class StoryAgent:
             await self.stop_for_user("TURN_NOT_READY", "；".join(missing))
         return self.story["content"]
 
-    async def receive_story(self, text):
+    async def receive_story(self, text: str, *, auxiliary: list[dict] | None = None) -> dict:
         if self.story is not None and len(self.story["breaks"]) + 1 >= MAX_SEGMENTS:
             raise ToolError("STORY_LIMIT_REACHED", f"本轮已接收 {MAX_SEGMENTS} 段正文，不能再追加。")
         if self.must_rollover:
             await self.stop_for_user("CONTEXT_ROLLOVER_REQUIRED", "当前须先换窗，本次正文未接收")
-        auxiliary = []
-        if self.settings.kemini.enabled:
-            parser = AuxiliaryParser(self.settings.kemini)
-            try:
-                text = parser.feed(text, final=True)
-            except ValueError as error:
+        if auxiliary is None:
+            text, auxiliary, error = split_auxiliary(text, self.settings.kemini)
+            if error:
                 raise ToolError("INVALID_ARGUMENTS", str(error)) from error
-            if not text.strip():
+            if self.settings.kemini.enabled and not text.strip():
                 raise ToolError("INVALID_ARGUMENTS", "实验输出未包含故事正文")
-            auxiliary = parser.parts
         breaks = []
         if self.story is not None:
             breaks = [*self.story["breaks"], text_length(self.story["content"])]
@@ -251,6 +261,19 @@ class StoryAgent:
         if auxiliary:
             self.event("kemini_auxiliary", {"items": all_auxiliary})
         return {"input_id": self.user_message["id"], "content_hash": fingerprint(text)}
+
+    async def plain_story_response(self, assistant: dict) -> tuple[dict, str, ValueError | None]:
+        commentary, candidate = plain_story_parts(assistant)
+        kemini = self.settings.kemini
+        note, _, _ = split_auxiliary(commentary, kemini)
+        prose, auxiliary, error = split_auxiliary(candidate, kemini)
+        if error or sum(not char.isspace() for char in prose) < PLAIN_STORY_MIN_CHARACTERS:
+            # Keep ordinary notes and discard any opaque state that could replay removed auxiliary text.
+            if (note, prose) != (commentary, candidate):
+                assistant = committed_story(assistant, note + prose)
+            return assistant, "", error
+        receipt = await self.receive_story(prose, auxiliary=auxiliary)
+        return {**committed_story(assistant, prose), "_story_received": receipt}, note, None
 
     def restore_preview(self):
         self.preview.replace(
@@ -446,6 +469,30 @@ class StoryAgent:
         message = {**message, "_context_epoch": self.context_epoch}
         self.continuation.append(copy.deepcopy(message))
         self.new_trace.append({"window_id": window_id, "message": copy.deepcopy(message)})
+
+    def restore_draft_warning(self):
+        if self.story is None or any(is_plain_story_warning(m) for m in self.continuation):
+            return
+        # A local rollover retires the continuation. The draft trace survives it and a process restart.
+        for record in self.new_trace:
+            if is_plain_story_warning(record["message"]):
+                self.continuation.insert(0, copy.deepcopy(record["message"]))
+                break
+
+    def append_assistant(self, assistant: dict, window_id: str) -> int:
+        seq = len(self.new_trace) + 1
+        self.append(assistant, window_id)
+        if assistant["content"].strip():
+            self.event(
+                "story_assistant",
+                {
+                    "activity_id": f"text-{seq}",
+                    "order": seq * 10,
+                    "content": assistant["content"],
+                    "is_story": bool(assistant.get("_story_received")),
+                },
+            )
+        return seq
 
     def novel_sources(self) -> tuple[str | None, bool]:
         return self.novel.data.active_sources(self.session["id"]) if self.novel else (None, False)
@@ -683,12 +730,27 @@ class StoryAgent:
                             f"服务商返回的 {call.name} 工具参数不是合法 JSON；已停止本回合，避免连续付费重试。"
                             "请检查提供商的工具调用协议；Claude 可尝试 Anthropic Messages 接口。",
                         ) from None
-                assistant_seq = len(self.new_trace) + 1
                 assistant = self.response_message(response, provider, calls)
                 text = response.content or ""
                 self.model_completed = completion.action == "end"
+                commentary, fallback_error = "", None
+                if (
+                    self.model_completed
+                    and plain_story
+                    and not calls
+                    and self.story is None
+                    and not self.must_rollover
+                    and (self.settings.kemini.enabled or len(text) >= PLAIN_STORY_MIN_CHARACTERS)
+                ):
+                    assistant, commentary, fallback_error = await self.plain_story_response(assistant)
+                    if assistant["content"] != text:
+                        self.request_context.routing.clear()
                 encoded_delivery = not plain_story and any(c.name == "submit_story" for c in calls)
-                if self.settings.context_strategy == "openai_compact" and not encoded_delivery:
+                if (
+                    self.settings.context_strategy == "openai_compact"
+                    and not encoded_delivery
+                    and assistant["content"] == text
+                ):
                     from tavern.story.compaction import capture_checkpoint
 
                     # The checkpoint covers the provider response. The tool
@@ -699,19 +761,22 @@ class StoryAgent:
                             {"message": "云端已压缩上下文", "window": self.state["window"]["number"]},
                         )
                 window_id = self.state["window"]["id"]
-                self.append(assistant, window_id)
-                if text.strip():
-                    self.event(
-                        "story_assistant",
+                if commentary:
+                    self.append_assistant({"role": "assistant", "content": commentary}, window_id)
+                assistant_seq = self.append_assistant(assistant, window_id)
+                if assistant.get("_story_received"):
+                    self.append(
                         {
-                            "activity_id": f"text-{assistant_seq}",
-                            "order": assistant_seq * 10,
-                            "content": text,
-                            "is_story": False,
+                            "role": "system",
+                            "content": PLAIN_STORY_WARNING,
+                            "message_type": "reply_correction",
                         },
+                        window_id,
                     )
                 # Save the response before executing a batch, then checkpoint each
                 # result. Interrupted batches resume only their unpaired calls.
+                if fallback_error is not None:
+                    await self.stop_for_user("TURN_NOT_READY", f"{fallback_error}；请调用 submit_story")
                 await self.save_progress()
                 batch_failed = await self.execute_tools(assistant, window_id, assistant_seq)
                 if self.model_completed:
@@ -941,6 +1006,7 @@ class StoryAgent:
             )
             if self.rolled:
                 self.continuation = []
+                self.restore_draft_warning()
                 self.rolled = False
                 self.must_rollover = False
                 self.retain()
@@ -979,6 +1045,9 @@ class StoryAgent:
                 for c in calls
             ],
         }
+        if self.settings.kemini.enabled and not calls:
+            # Fresh notes reflect the auxiliary settings at receipt. Only legacy untyped rejections need projection.
+            message["message_type"] = "assistant"
         message.update(
             {
                 k: copy.deepcopy(v)

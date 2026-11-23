@@ -46,7 +46,7 @@ MVU 管理 `stat_data`，HTML 只是可选的展示方式。文字或 Markdown �
 
 普通文字、Markdown 和无 MVU 读取脚本的 HTML 留在消息原位置。含已识别 MVU 读取脚本的界面放到右栏，其他文字与 Markdown 状态展示沿原位置保留；整条消息都被移走且右栏未显示 MVU 页时，原位置显示打开该页的按钮。实际页面、消息回调和制卡 `test_draft` 共用内容拆分规则。
 
-剧情模型用工具提交变量 JSON Patch，并用 `submit_story` 追加 1–3 段并合成一条正文，普通 assistant 文本只作备注。开场初始化和受支持的脚本回调由 Runtime 校验，并与剧情原子提交。
+剧情模型用工具提交变量 JSON Patch，并用 `submit_story` 追加 1–3 段并合成一条正文。开场初始化和受支持的脚本回调由 Runtime 校验，并与剧情原子提交。 [正文兜底条件](../design/story.md#正文交付submit_story)
 
 剧情模型的非空变量补丁只触发 MVU 变量事件；`MESSAGE_RECEIVED` 在正文及变量草稿就绪、开始收尾时触发一次，异步处理完成后才保存。依赖旧版“补丁阶段也触发 MESSAGE_RECEIVED”的卡片需把变量专用逻辑改挂 MVU 事件；按消息计次的逻辑保留在 MESSAGE_RECEIVED。正文交付本身、过程说明、网络结束和预览重放都不触发该消息事件。
 

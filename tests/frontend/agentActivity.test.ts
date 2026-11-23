@@ -45,6 +45,15 @@ it('previews only accepted graphics, preserving order and unfinished prose acros
     preview,
   );
   expect(draftStoryContents([], [activity[1]])).toEqual([preview[1]]);
+  const fallback = liveActivity(
+    [
+      { ...events[0], kind: 'story_assistant', payload: { order: 1, content: '第一段全文', is_story: true } },
+      graphic,
+    ],
+    'current',
+    'running',
+  );
+  expect(draftStoryContents(['第一段全文', '尚未交付的第二段'], fallback)).toEqual(preview);
 });
 
 it('batches visible graphics across callback microtasks and preserves unsent drafts', async () => {

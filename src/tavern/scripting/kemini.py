@@ -75,6 +75,19 @@ class AuxiliaryParser:
         return "".join(output)
 
 
+def split_auxiliary(text: str, config: KeminiConfig) -> tuple[str, list[dict], ValueError | None]:
+    if not text or not config.enabled:
+        return text, [], None
+    parser = AuxiliaryParser(config)
+    visible = parser.feed(text)
+    try:
+        visible += parser.feed("", final=True)
+    except ValueError as error:
+        # The response is rejected, but its visible prefix can still be replayed as commentary.
+        return visible, parser.parts, error
+    return visible, parser.parts, None
+
+
 class ArgumentText:
     """Decode only the schema's content string, holding incomplete JSON escapes."""
 

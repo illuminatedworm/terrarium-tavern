@@ -297,15 +297,21 @@ def message_visuals(store, sid, message_ids):
             "ORDER BY t.seq,CAST(c.key AS INTEGER)) AS next_call "
             "FROM story_trace t,json_each(t.payload,'$.tool_calls') c "
             "WHERE t.session=? AND t.message_id IN (" + placeholders + ")"
-            ") SELECT c.message_id,c.name,c.arguments FROM calls c WHERE c.name IN ('present_ui','submit_story') AND ("
+            ") SELECT c.message_id,c.name,c.arguments,c.seq,c.position FROM calls c "
+            "WHERE c.name IN ('present_ui','submit_story') AND ("
             "SELECT CASE WHEN json_valid(json_extract(r.payload,'$.content')) "
             "THEN json_type(json_extract(r.payload,'$.content'),'$.ok') END "
             "FROM story_trace r WHERE r.session=? AND r.message_id=c.message_id "
             "AND r.seq>c.seq AND (c.next_call IS NULL OR r.seq<c.next_call) "
             "AND json_extract(r.payload,'$.role')='tool' "
             "AND json_extract(r.payload,'$.tool_call_id')=c.call_id ORDER BY r.seq LIMIT 1"
-            ")='true' ORDER BY c.seq,c.position",
-            (sid, *groups, sid),
+            ")='true' UNION ALL "
+            "SELECT t.message_id,'story',NULL,t.seq,0 FROM story_trace t "
+            "WHERE t.session=? AND t.message_id IN (" + placeholders + ") "
+            "AND json_type(t.payload,'$._story_received')='object' "
+            "AND COALESCE(json_array_length(t.payload,'$.tool_calls'),0)=0 "
+            "ORDER BY seq,position",
+            (sid, *groups, sid, sid, *groups),
         )
         for row in rows:
             output = groups[row["message_id"]]
@@ -313,8 +319,7 @@ def message_visuals(store, sid, message_ids):
                 output["specs"].append(json.loads(row["arguments"])["spec"])
                 output["order"].append("visual")
             else:
-                # Delivery identity/order only: the reader already has the
-                # final processed prose. Never fetch/copy submit_story text.
+                # Delivery order only: the reader already has the final processed prose.
                 output["order"].append("story")
     return groups
 

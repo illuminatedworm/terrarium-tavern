@@ -22,7 +22,10 @@ from tavern.story.config import tool_protocol
 from tavern.story.content_history import content_history
 from tavern.story.context_ledger import ContextLedger
 from tavern.story.delivery import (
+    PLAIN_STORY_WARNING,
     committed_records,
+    is_plain_story_warning,
+    project_rejected_kemini_notes,
     project_story_segments,
     story_history,
     without_encoded_failures,
@@ -47,6 +50,16 @@ def load_trace(store, sid, history):
             message["content"] = message.pop("_archive_content")
         result.append({**dict(row), "message": message})
     return result
+
+
+def _legacy_warning_header(fixed, settings, tools, checkpoint):
+    """Keep the original layout only for a saved checkpoint signed with the old fixed warning."""
+    from tavern.conversation.compaction import canonical
+
+    old = [*fixed, {"role": "system", "content": PLAIN_STORY_WARNING, "source": "system"}]
+    adapted, _, _ = adapt_messages(runtime_messages(old), settings, managed=True)
+    signature = fingerprint({"header": [canonical(m) for m in adapted], "tools": tools})
+    return signature == checkpoint.get("signature")
 
 
 def compile_window(
@@ -169,11 +182,14 @@ def compile_window(
     add("system", expand(wrap_card_field("mes_example", card.get("mes_example", ""))), "examples")
     handoff = state["handoff"]
     fixed_count = len(items)
-
+    history_text = {m["id"]: expand(m.get("model", m["raw"]), m.get("ooc", "")) for m in visible}
     by_owner = {}
+    warning_outside_window = False
     for item in trace:
-        if complete_source or window.get("replay_history") or item["window_id"] == window["id"]:
-            message = item["message"]
+        message = item["message"]
+        if item["message_id"] in history_text and (
+            complete_source or window.get("replay_history") or item["window_id"] == window["id"]
+        ):
             if window.get("replay_history") and item["window_id"] != window["id"]:
                 from tavern.scripting.native_response import portable
 
@@ -181,6 +197,8 @@ def compile_window(
                 # an old cloud checkpoint through a final-response attachment.
                 message = portable(message)
             by_owner.setdefault(item["message_id"], []).append(message)
+        elif is_plain_story_warning(message):
+            warning_outside_window = True
 
     # Filter a single chronological sequence so native state after a retired
     # exchange cannot resurrect broad source reads through another turn.
@@ -191,6 +209,8 @@ def compile_window(
     ]
     records.extend({**message, "_content_owner": None} for message in continuation)
     records, _ = story_history(records)
+    if settings.kemini.enabled:
+        project_rejected_kemini_notes(records, settings.kemini)
     if any(record.get("_unicode_story_rejected") for record in records):
         records = without_encoded_failures(records)
     if story is not None and (
@@ -217,7 +237,6 @@ def compile_window(
         else:
             by_owner.setdefault(owner, []).append(message)
 
-    history_text = {m["id"]: expand(m.get("model", m["raw"]), m.get("ooc", "")) for m in visible}
     for message in visible:
         records = by_owner.get(message["id"], [])
         text = history_text[message["id"]]
@@ -240,6 +259,16 @@ def compile_window(
             len(breaks) + 1,
         )
     records = [m for message in visible for m in by_owner.get(message["id"], [])] + list(continuation)
+    warning_position = None
+    if (
+        compact
+        and compaction.get("items")
+        and any("message_type" not in m and is_plain_story_warning(m) for m in records)
+        and _legacy_warning_header(items, settings, tools, compaction)
+    ):
+        warning_position = fixed_count
+        add("system", PLAIN_STORY_WARNING, "system")
+        fixed_count = len(items)
     ledger = ContextLedger(
         settings,
         items,
@@ -251,7 +280,20 @@ def compile_window(
         {mid: fingerprint(text) for mid, text in history_text.items()},
     )
 
+    def add_warning():
+        nonlocal warning_position
+        if warning_position is None:
+            warning_position = len(items)
+            add("system", PLAIN_STORY_WARNING, "reply_correction")
+
+    if warning_outside_window:
+        add_warning()
+
     def replay(message):
+        if is_plain_story_warning(message):
+            # Keep the first delivery's chronological position until its window or checkpoint covers it.
+            add_warning()
+            return
         source = message.get("source")
         # Older versions persisted Kemini request requirements as append frames.
         # Keep those audit rows, but never replay them into a later request.
@@ -580,5 +622,5 @@ def compile_window(
     if compact:
         from tavern.conversation.compaction import project_compact
 
-        return project_compact(result, state, settings, tools, fixed_count)
+        return project_compact(result, state, settings, tools, fixed_count, keep_visible=warning_position)
     return result if replay_all else prepare_context(result, session, history, snapshot, settings)

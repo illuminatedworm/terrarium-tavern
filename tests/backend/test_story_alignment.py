@@ -958,6 +958,66 @@ async def test_native_story_http_replay_final_reply_and_cache_anchor(tmp_path, m
         await service.close()
 
 
+async def test_phased_plain_delivery_keeps_progress_and_auxiliary_out_of_prose(tmp_path):
+    store, service, session = game(tmp_path, "responses", kemini=True)
+    config = store.settings_document()
+    config.shared.kemini.normal_disclaimer_enabled = True
+    store.save_settings(config)
+    settings = store.session_settings(session).for_role("story")
+    requests = []
+
+    def phased_response(note, final):
+        items = [
+            {
+                "type": "message",
+                "id": "msg_" + phase,
+                "role": "assistant",
+                "phase": phase,
+                "content": [{"type": "output_text", "text": text, "annotations": []}],
+            }
+            for phase, text in (("commentary", note), ("final_answer", final))
+        ]
+
+        def route(request):
+            requests.append(json.loads(request.content)["input"])
+            return httpx.Response(200, json=reply("responses", items))
+
+        return transport(settings, route)
+
+    note = "这是过程备注。" * 20
+    short = "<thinking>短答自检标记</thinking>短答。<disclaimer>短答声明标记</disclaimer>"
+    prose = "雾" * 100
+    try:
+        failed, unchanged = await turn(service, session, phased_response(note, short))
+        assert failed["status"] == "error" and failed["draft"] == "" and unchanged["head"] == session["head"]
+        raw = next(
+            e["payload"]["content"] for e in store.events(failed["id"]) if e["kind"] == "story_response"
+        )
+        assert raw == note + short
+        saved, current = await turn(
+            service,
+            unchanged,
+            phased_response("交付前的备注。", "<thinking>正文自检标记</thinking>" + prose),
+            resume_turn_id=failed["id"],
+            operation_id="resume-phased",
+        )
+        assert saved["status"] == "committed", saved["error"]
+        output = current["messages"][-1]
+        assert output["raw"] == prose and output["auxiliary"] == [
+            {"kind": "thinking", "text": "正文自检标记"}
+        ]
+        following, _ = await turn(service, current, phased_response("", prose), operation_id="next-phased")
+        assert following["status"] == "committed", following["error"]
+        for messages in requests[1:]:
+            wire = json.dumps(messages, ensure_ascii=False)
+            assert note in wire and "短答。" in wire
+            assert "短答自检标记" not in wire and "短答声明标记" not in wire
+        last = json.dumps(requests[-1], ensure_ascii=False)
+        assert "交付前的备注。" in last and last.count(prose) == 1 and "正文自检标记" not in last
+    finally:
+        await service.close()
+
+
 async def test_preview_and_committed_replay_use_same_frames_without_new_memory(tmp_path):
     from httpx import ASGITransport, AsyncClient
 

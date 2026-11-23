@@ -454,7 +454,7 @@ async def test_visuals_are_opt_in_and_follow_atomic_reply_versions(story):
         result, current = await turn(
             service,
             unchanged,
-            Model("图形随正文保存。"),
+            Model({"content": "图形随正文保存。" * 20, "commentary": True}),
             resume_turn_id=failed["id"],
             operation_id="visual-resume",
         )
@@ -1764,6 +1764,70 @@ async def test_submit_story_appends_across_resume_and_rollover_with_one_history_
         )
         assert missing["status"] == "error" and "submit_story" in missing["error"]
         assert after_missing["head"] == current["head"] and missing["draft"] == ""
+    finally:
+        await service.close()
+
+
+async def test_plain_story_fallback_survives_required_work_and_follows_the_committed_branch(story):
+    from tavern.story.state import rollover
+
+    warning = (
+        "Runtime 已接收刚才以普通文本输出的正文。这是对错误执行的兜底处理，"
+        "后续正文必须用 submit_story 提交，已接收的内容无需重发。"
+    )
+    store, session = story
+    service = runtime(store)
+    prose = "雾" * 99 + "\n🌙"
+    first = Model({"content": prose, "commentary": True})
+    try:
+        short = Model({"content": "只有备注。 " * 19 + "只是备注", "commentary": True})
+        missing, unchanged = await turn(service, session, short, operation_id="plain-story-short")
+        assert missing["status"] == "error" and "submit_story" in missing["error"]
+        assert missing["draft"] == "" and unchanged["head"] == session["head"]
+
+        failed, unchanged = await turn(service, session, first, update_variables=True)
+        assert failed["status"] == "error" and "patch_state" in failed["error"]
+        assert len(first.requests) == 1 and unchanged["head"] == session["head"]
+        assert failed["draft"] == prose and failed["resumable"]
+
+        resumed = Model(
+            ("new_context", {"keep_recent": 2}),
+            ("patch_state", {"operations": [], "comment": "变量无变化"}),
+            "灯灭了。",
+        )
+        result, current = await turn(
+            service,
+            unchanged,
+            resumed,
+            update_variables=True,
+            resume_turn_id=failed["id"],
+            operation_id="plain-story-resume",
+        )
+        assert result["status"] == "committed", result["error"]
+        assert current["messages"][-1]["raw"] == prose + "\n\n灯灭了。"
+        for request in resumed.requests:
+            contents = [m.get("content") for m in request["messages"]]
+            assert contents.count(warning) == 1 and sum(content.count(prose) for content in contents) == 1
+
+        before = store.fork_session(current["id"], session["head"], current["revision"])
+        after = store.fork_session(current["id"], current["head"], current["revision"])
+        for branch, expected in ((before, 0), (after, 1)):
+            history, snapshot = branch["messages"], branch["snapshot"]
+            rollover(snapshot["story"], history, None, 0)
+            settings = store.settings()
+            for strategy in ("new_context", "openai_compact"):
+                settings.context_strategy = strategy
+                compiled = compile_window(
+                    store.session_card(branch["id"])["document"],
+                    branch,
+                    history,
+                    snapshot,
+                    "继续",
+                    settings,
+                    [],
+                    trace=load_trace(store, branch["id"], history),
+                )
+                assert [m.get("content") for m in compiled["messages"]].count(warning) == expected
     finally:
         await service.close()
 
