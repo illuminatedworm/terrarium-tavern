@@ -38,7 +38,7 @@
 | `read_character` | 完整读取一个人物字段 | `ref: string`（下述七字段之一） | 缺失返回 null；登记读取记录，含执行代码的字段受保护。 |
 | `revise_content` | 修改人物或普通世界书设定 | `operations: object[]`（1–100 项）；`comment: string` | 仅限本轮授权（不沿用前几轮），未授权的调用被拒绝；四种动作见下表；批次失败不部分写入；成功返回目标完整最终内容并刷新读取记录，可继续编辑。 |
 | `set_retrieval_query` | 覆盖本轮准备保存的下轮检索线索 | `query: string` | 最后一次成功调用生效；空串清空本轮线索，历史线索保留；随正文提交且不进入正文。 |
-| `calculate` | JavaScript 运算与掷骰 | `code: string`，`summary: boolean=false` | 表达式直接取值，多条语句用 `return`。默认记录 `roll()` 的逐颗明细，批量模拟可只保留返回值。[用法与限额](story-tools.md#运算与掷骰) |
+| `calculate` | JavaScript 运算与掷骰 | `code: string`，`summary: boolean=false`，`commentary: string=""` | 表达式直接取值，多条语句用 `return`。备注显示在玩家的工具记录中。默认记录 `roll()` 的逐颗明细，批量模拟可只保留返回值。[用法与限额](story-tools.md#运算与掷骰) |
 
 ## 编辑参数补充
 
@@ -410,7 +410,7 @@ Compute a JSON value in fresh, isolated JavaScript with Math.random() and roll(f
 请求：
 
 ```json
-{"code":"[2, 5, 8].reduce((sum, hit) => sum + Math.max(0, hit - 3), 0)"}
+{"code":"[2, 5, 8].reduce((sum, hit) => sum + Math.max(0, hit - 3), 0)","commentary":"三段伤害分别扣除护甲，再合计。"}
 ```
 
 成功返回：

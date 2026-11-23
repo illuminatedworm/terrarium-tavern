@@ -151,13 +151,17 @@ it('pairs streamed calls/results in order and ignores replay and foreign turns',
     event(4, 'story_tool', 'call-1-0', 11, { result: { ok: true, data: { text: '原文' } } }),
     first,
     first,
-    event(3, 'story_tool_started', 'call-1-1', 12),
+    event(3, 'story_tool_started', 'call-1-1', 12, {
+      name: 'calculate',
+      arguments: JSON.stringify({ code: '2 + 3', commentary: '合计两次伤害' }),
+    }),
     { ...event(5, 'story_tool', 'foreign', 1), turn: 'other' },
   ];
   const items = liveActivity(events, 'current', 'running');
   expect(items.map((item) => item.id)).toEqual(['call-1-0', 'call-1-1']);
   expect(items.map((item) => item.status)).toEqual(['returned', 'running']);
   expect(items[0].details?.result).toContain('原文');
+  expect(items[1].summary).toBe('合计两次伤害');
   expect(liveActivity(events, 'current', 'cancelled')[1].status).toBe('interrupted');
   expect(mergeActivity(items, items)).toHaveLength(2);
   const snapshot = { ...items[0], event_seq: 20, status: 'returned' as const };

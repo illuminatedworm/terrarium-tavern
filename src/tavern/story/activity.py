@@ -42,7 +42,10 @@ def tool_item(key, order, name, arguments):
         ),
         "",
     )
-    if name == "write_plot":
+    if name == "calculate":
+        commentary = args.get("commentary") if isinstance(args, dict) else None
+        summary = commentary if isinstance(commentary, str) else ""
+    elif name == "write_plot":
         summary = "包含未来剧情，展开查看"
     elif name == "submit_story":
         summary = "正文交付；展开查看提交内容"

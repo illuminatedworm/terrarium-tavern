@@ -77,6 +77,11 @@ class Calculation(Arguments):
         default=False,
         description="Set true before a simulation to return only the program value and omit individual dice receipts.",
     )
+    commentary: str = Field(
+        default="",
+        max_length=2000,
+        description="Optional note for the player, displayed with this calculation in the activity log.",
+    )
 
 
 class RetrievalQuery(Arguments):
@@ -578,6 +583,7 @@ class AgentTools:
             except ValidationError as error:
                 raise ToolArgumentError(name, model, error) from None
         if name == "calculate":
+            # Activity displays the model's player-facing commentary directly from the call arguments.
             try:
                 return await calculate(args.code, args.summary)
             except CalculationError as error:

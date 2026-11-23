@@ -14,7 +14,7 @@ from tavern.media.config import SPECS as MEDIA_SPECS
 from tavern.novel.tools import MAIN_SPECS
 from tavern.storage.legacy_story import OLD_STORY_KEY
 from tavern.storage.store import Store
-from tavern.story.activity import turn_items
+from tavern.story.activity import message_items, turn_items
 from tavern.story.agent import StoryAgent
 from tavern.story.argument_errors import ToolArgumentError
 from tavern.story.handoff import (
@@ -78,12 +78,14 @@ async def test_dice_receipt_is_durable_before_publication_and_only_regeneration_
 
     monkeypatch.setattr("tavern.story.tools.calculate", draw)
     monkeypatch.setattr(store, "event", disconnect_after_first_roll)
+    commentary = "开锁检定，取较高的一骰。"
     call = (
         "calculate",
         {
             "code": "const check=roll('2d20kh1'); check.pools[0].dice=[]; "
             "return {source:'a potion of healing', damage_after_absorbing_the_armor:check.total+3, "
-            f"checksum:'{session['card'][:16]}'+'{session['card'][16:]}'}};"
+            f"checksum:'{session['card'][:16]}'+'{session['card'][16:]}'}};",
+            "commentary": commentary,
         },
     )
     try:
@@ -102,7 +104,9 @@ async def test_dice_receipt_is_durable_before_publication_and_only_regeneration_
         ref = actual[-1]["data"]["value"]["checksum"]
         assert re.fullmatch(r"@D\d+", ref)
         assert current["snapshot"]["story"]["model_references"][ref] == value["checksum"] == session["card"]
-        assert actual[-1]["data"] == {**draws[0], "value": {**value, "checksum": ref}}
+        assert actual[-1] == {"ok": True, "data": {**draws[0], "value": {**value, "checksum": ref}}}
+        activity = message_items(store, current, [current["head"]])[current["head"]]
+        assert next(item for item in activity if item.get("name") == "calculate")["summary"] == commentary
         # The program edited its own copy. The original faces must survive
         # both that edit and the interruption.
         dice = draws[0]["rolls"][0]["pools"][0]["dice"]

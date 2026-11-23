@@ -147,7 +147,13 @@ EXAMPLES = {
     ),
     "read_character": ({"ref": "description"}, {"ref": "description", "exists": True, "text": "角色描述。"}),
     "set_retrieval_query": ({"query": ""}, {"saved_to_draft": True}),
-    "calculate": ({"code": "[2, 5, 8].reduce((sum, hit) => sum + Math.max(0, hit - 3), 0)"}, {"value": 7}),
+    "calculate": (
+        {
+            "code": "[2, 5, 8].reduce((sum, hit) => sum + Math.max(0, hit - 3), 0)",
+            "commentary": "三段伤害分别扣除护甲，再合计。",
+        },
+        {"value": 7},
+    ),
     "start_novel_research": (
         {"question": "查证人物早年经历", "background": "本局尚未遇见此人"},
         {

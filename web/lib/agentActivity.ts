@@ -73,14 +73,15 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
       } catch {
         args = {};
       }
-      const summary =
-        p.name === 'write_plot'
-          ? '包含未来剧情，展开查看'
-          : ['roleplay', 'kemini_emit_story'].includes(p.name)
-            ? '正文交付；展开查看原始参数'
-            : p.name === 'finish_turn'
-              ? '申请正文回调与统一校验'
-              : ['query', 'key', 'ref', 'path', 'reason', 'content'].map((key) => args?.[key]).find(Boolean);
+      let summary;
+      if (p.name === 'calculate') summary = typeof args?.commentary === 'string' ? args.commentary : '';
+      else if (p.name === 'write_plot') summary = '包含未来剧情，展开查看';
+      else if (['roleplay', 'kemini_emit_story'].includes(p.name)) summary = '正文交付；展开查看原始参数';
+      else if (p.name === 'finish_turn') summary = '申请正文回调与统一校验';
+      else
+        summary = ['query', 'key', 'ref', 'path', 'reason', 'content']
+          .map((key) => args?.[key])
+          .find(Boolean);
       const finished = event.kind === 'story_tool';
       items.set(id, {
         id,
