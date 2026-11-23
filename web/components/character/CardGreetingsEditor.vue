@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, useId, watch } from 'vue';
-import { openingProse } from '../../lib/storyText';
+import { openingSnippet } from '../../lib/storyText';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 import Icon from '../common/Icon.vue';
 import CardPreviewProse from './CardPreviewProse.vue';
@@ -24,16 +24,7 @@ let defaultMoves = 0;
 const selectedIndex = computed(() => ids.value.indexOf(selected.value));
 const current = computed(() => props.greetings[selectedIndex.value] ?? '');
 const snippets = computed(() =>
-  props.greetings.map((text) => {
-    const prefix = text.trimStart().slice(0, 160);
-    return (
-      openingProse(prefix)
-        .replace(/<(?:initvar|UpdateVariable)\b[\s\S]*$/i, '')
-        .replace(/<[^>]*>|\s+/g, ' ')
-        .trim()
-        .slice(0, 72) || (prefix ? '查看开头预览' : '暂无正文')
-    );
-  }),
+  props.greetings.map((text) => openingSnippet(text) || (text.trimStart() ? '查看开头预览' : '暂无正文')),
 );
 const listOpen = ref(false);
 const listId = useId();

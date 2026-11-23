@@ -8,6 +8,27 @@ export function openingProse(source: string): string {
     .replace(/<StatusPlaceHolderImpl\s*\/>/gi, '');
 }
 
+export function openingSnippet(source: string): string {
+  // Skip whole comments so even a long author note does not consume the list preview.
+  let prefix = '';
+  let cursor = 0;
+  while (cursor < source.length && prefix.length < 160) {
+    if (source.startsWith('<!--', cursor)) {
+      const end = source.indexOf('-->', cursor + 4);
+      if (end === -1) break;
+      cursor = end + 3;
+    } else {
+      const char = source[cursor++];
+      if (prefix || char.trim()) prefix += char;
+    }
+  }
+  return openingProse(prefix)
+    .replace(/<(?:initvar|UpdateVariable)\b[\s\S]*$/i, '')
+    .replace(/<[^>]*>|\s+/g, ' ')
+    .trim()
+    .slice(0, 72);
+}
+
 export function dialogueRanges(text: string): Array<[number, number]> {
   // Word boundaries keep English contractions and possessives out of dialogue.
   const quotes =
