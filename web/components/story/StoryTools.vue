@@ -60,6 +60,7 @@ const groups: Array<{ label: string; tools: Record<string, string> }> = [
     tools: { read_state: '读取变量', patch_state: '修改变量', read_character: '读取角色' },
   },
   { label: '检索', tools: { set_retrieval_query: '设置检索线索' } },
+  { label: '运算', tools: { calculate: '运算与掷骰' } },
   {
     label: '资料调查',
     tools: {

@@ -46,10 +46,13 @@ def hidden_field(key):
 
 
 class ModelView:
-    def __init__(self, value=None):
-        self.forward, self.reverse = {}, {}
+    def __init__(self, value=None, *, references=None):
+        self.reverse = references if references is not None else {}
+        self.forward = {raw: ref for ref, raw in self.reverse.items()}
         self._pattern = self._compiled_for = None
-        self.reserved = set(HANDLE.findall(str(value)))
+        self._history_only = set(self.forward)
+        self._authored_pattern = None
+        self.reserved = set(HANDLE.findall(str(value))).difference(self.reverse)
         self.seed(value)
 
     def bind(self, value):
@@ -60,22 +63,28 @@ class ModelView:
             handle = f"@D{number}"
             self.forward[value] = handle
             self.reverse[handle] = value
-            self._pattern = None
+            self._pattern = self._authored_pattern = None
+        elif value in self._history_only:
+            self._history_only.remove(value)
+            self._authored_pattern = None
         return self.forward[value]
 
-    def seed(self, value):
+    def seed(self, value, *, authored=False):
         if isinstance(value, dict):
             for key, item in value.items():
-                if hidden_field(str(key)):
-                    continue  # Never allocate handles for omitted bookkeeping.
-                if isinstance(item, str) and key in IDENTITY_FIELDS and len(item) > 12:
-                    self.bind(item)
-                if len(str(key)) > 24 and key != "post_history_instructions":
-                    self.bind(str(key))
-                self.seed(item)
+                if authored:
+                    self.seed(str(key))  # Only intrinsic opaque tokens in a program-defined key.
+                else:
+                    if hidden_field(str(key)):
+                        continue  # Never allocate handles for omitted bookkeeping.
+                    if isinstance(item, str) and key in IDENTITY_FIELDS and len(item) > 12:
+                        self.bind(item)
+                    if len(str(key)) > 24 and key != "post_history_instructions":
+                        self.bind(str(key))
+                self.seed(item, authored=authored)
         elif isinstance(value, list):
             for item in value:
-                self.seed(item)
+                self.seed(item, authored=authored)
         elif isinstance(value, str):
             for match in OPAQUE.finditer(value):
                 self.bind(match[0])
@@ -97,15 +106,32 @@ class ModelView:
         """Bundled instructions own their field/tool names; only intrinsic opaque tokens need handles."""
         return OPAQUE.sub(lambda match: self.bind(match[0]), text)
 
-    def expose(self, value):
-        self.seed(value)
-        if isinstance(value, dict):
-            return {self.text(str(k)): self.expose(v) for k, v in value.items() if not hidden_field(str(k))}
-        if isinstance(value, list):
-            return [self.expose(v) for v in value]
-        if isinstance(value, str):
-            return self.text(value)
-        return value
+    def expose(self, value, *, authored=False):
+        self.seed(value, authored=authored)
+        if authored and self._history_only:
+            # A sandbox owns its JSON field names. Older saves may have bound those
+            # names as document IDs. Keep their handles for replay, but only redact
+            # identities observed in live source data and intrinsically opaque tokens.
+            if self._authored_pattern is None:
+                known = sorted(self.forward.keys() - self._history_only, key=len, reverse=True)
+                self._authored_pattern = re.compile("|".join(map(re.escape, known))) if known else OPAQUE
+            pattern = self._authored_pattern
+
+            def text(raw):
+                return pattern.sub(lambda match: self.forward[match[0]], raw)
+        else:
+            text = self.text
+
+        def project(item):
+            if isinstance(item, dict):
+                return {
+                    text(str(k)): project(v) for k, v in item.items() if authored or not hidden_field(str(k))
+                }
+            if isinstance(item, list):
+                return [project(v) for v in item]
+            return text(item) if isinstance(item, str) else item
+
+        return project(value)
 
     def restore(self, value):
         if isinstance(value, str):

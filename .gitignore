@@ -70,6 +70,7 @@ htmlcov/
 /build/
 /releases/
 /src/tavern/static/runtime.js
+/src/tavern/static/calculation/
 /src/tavern/static/mvu-core.js
 /src/tavern/static/esbuild/
 /src/tavern/static/web/

@@ -27,11 +27,16 @@ public final class RealmClient {
     private boolean bound;
     private volatile int generation;
 
-    /** {@code tools} selects :realm_tools, so resetting one process never ends the other's pages. */
-    public RealmClient(Context context, RealmCallback callback, boolean tools) {
+    /** Each purpose has its own process so cancelling work only resets its own pages. */
+    public RealmClient(Context context, RealmCallback callback, String purpose) {
         this.context = context.getApplicationContext();
         this.callback = callback;
-        realm = tools ? ToolRealmService.class : RealmService.class;
+        switch (purpose) {
+            case "story": realm = RealmService.class; break;
+            case "tools": realm = ToolRealmService.class; break;
+            case "calculation": realm = CalculationRealmService.class; break;
+            default: throw new IllegalArgumentException("Unknown realm purpose");
+        }
     }
 
     public void request(String json) {

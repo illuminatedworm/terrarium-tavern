@@ -3,8 +3,8 @@
 Java only transports JSON and renders pages. Resource/host capabilities and the
 authoritative script lifecycle remain here. Cancellation kills the backend's realm
 process, invalidating all of its mirrors, so a looping script cannot hold the host UI
-or a close operation. Story scripts use :realm and tools use :realm_tools, so a tool
-timeout never ends a story turn's pages.
+or a close operation. Story scripts, card tools and calculations use :realm,
+:realm_tools and :realm_calculation respectively.
 """
 
 import asyncio
@@ -82,8 +82,8 @@ class AndroidContext:
 
 
 class AndroidBackend:
-    def __init__(self, *, tools=False):
-        self.tools = tools
+    def __init__(self, *, purpose="story"):
+        self.purpose = purpose
         self.client = None
         self.callback = None
         self.loop = None
@@ -108,7 +108,7 @@ class AndroidBackend:
 
         self.callback = Callback()
         application = jclass("com.chaquo.python.Python").getPlatform().getApplication()
-        self.client = jclass("com.terrarium.tavern.RealmClient")(application, self.callback, self.tools)
+        self.client = jclass("com.terrarium.tavern.RealmClient")(application, self.callback, self.purpose)
 
     async def new_context(self, resource):
         self.start()

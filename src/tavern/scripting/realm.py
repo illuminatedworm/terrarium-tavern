@@ -30,7 +30,7 @@ def default_backend(*, tools: bool = False) -> "RealmBackend":
     if is_android():
         from tavern.scripting.android_realm import AndroidBackend
 
-        return AndroidBackend(tools=tools)
+        return AndroidBackend(purpose="tools" if tools else "story")
     from tavern.scripting.playwright_realm import PlaywrightBackend
 
     return PlaywrightBackend()

@@ -61,6 +61,8 @@ Vue、lodash、jQuery、Zod、YAML、JSON5、fast-json-patch、Acorn、DOMPurify
 
 卡片离线模块打包使用 [esbuild](https://github.com/evanw/esbuild) 的 **MIT** 许可浏览器版本 `esbuild-wasm 0.25.10`。构建会将浏览器脚本、WebAssembly 二进制及其 `LICENSE.md` 原文复制至 `src/tavern/static/esbuild/`，随桌面和 Android 应用一同分发。
 
+剧情运算使用 [QuickJS 的 WebAssembly 绑定](https://github.com/justjake/quickjs-emscripten) 0.32.0，骰式语法使用 [dice-roller-parser](https://github.com/BTMorton/dice_roller) 0.1.8。运行器、QuickJS 与绑定的许可及骰式解析器的 MIT 许可随构建输出保存在 `src/tavern/static/calculation/`。
+
 ## 示例角色卡
 
 [samples/](../samples/) 中的两张示例角色卡是为本项目制作的原创测试样例，当前版本随附的样例适用 [Terrarium Tavern 非商业许可 1.1](PROJECT_LICENSE.md)。使用、修改和再分发须注明 Terrarium Tavern 来源，并遵守非商业限制。此前已合法取得的样例所附授权不被追溯变更。

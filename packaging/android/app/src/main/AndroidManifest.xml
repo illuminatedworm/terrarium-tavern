@@ -35,6 +35,7 @@
         </service>
         <service android:name=".RealmService" android:exported="false" android:process=":realm" />
         <service android:name=".ToolRealmService" android:exported="false" android:process=":realm_tools" />
+        <service android:name=".CalculationRealmService" android:exported="false" android:process=":realm_calculation" />
         <service android:name=".DocumentService" android:exported="false" android:process=":documents" />
     </application>
 </manifest>

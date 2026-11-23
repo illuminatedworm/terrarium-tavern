@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, TurnRequest
+from tavern.media.config import SPECS as MEDIA_SPECS
 from tavern.novel.tools import MAIN_SPECS
 from tavern.storage.legacy_story import OLD_STORY_KEY
 from tavern.storage.store import Store
@@ -29,6 +30,89 @@ from tests.backend import test_story
 from tests.backend.test_story import Model, current_text, handoff, runtime, turn
 
 story = test_story.story
+
+
+def test_android_calculations_serialize_on_each_backend_loop(monkeypatch):
+    from tavern.scripting import calculation
+
+    busy = False
+
+    async def render(payload):
+        nonlocal busy
+        assert not busy
+        busy = True
+        try:
+            await asyncio.sleep(0)  # Let the other story queue on the same renderer.
+            return {"data": {"value": payload["code"]}}
+        finally:
+            busy = False
+
+    monkeypatch.setattr(calculation, "is_android", lambda: True)
+    monkeypatch.setattr(calculation, "_android", render)
+
+    async def two_stories():
+        return await asyncio.gather(calculation.calculate("1", False), calculation.calculate("2", False))
+
+    for _ in range(2):  # Android restarts the server in the same interpreter.
+        assert asyncio.run(two_stories()) == [{"value": "1"}, {"value": "2"}]
+
+
+async def test_dice_receipt_is_durable_before_publication_and_only_regeneration_redraws(story, monkeypatch):
+    from tavern.scripting.calculation import calculate
+
+    store, session = story
+    service = runtime(store)
+    draws = []
+    original_event = store.event
+
+    async def draw(code, summary):
+        result = await calculate(code, summary)
+        draws.append(result)
+        return result
+
+    def disconnect_after_first_roll(tid, kind, payload, **kwargs):
+        event = original_event(tid, kind, payload, **kwargs)
+        if kind == "story_tool" and payload["name"] == "calculate" and len(draws) == 1:
+            raise ConnectionError("interrupted immediately after the visible roll")
+        return event
+
+    monkeypatch.setattr("tavern.story.tools.calculate", draw)
+    monkeypatch.setattr(store, "event", disconnect_after_first_roll)
+    call = (
+        "calculate",
+        {
+            "code": "const check=roll('2d20kh1'); check.pools[0].dice=[]; "
+            "return {source:'a potion of healing', damage_after_absorbing_the_armor:check.total+3, "
+            f"checksum:'{session['card'][:16]}'+'{session['card'][16:]}'}};"
+        },
+    )
+    try:
+        failed, _ = await turn(service, session, Model(call))
+        assert failed["status"] == "error" and len(draws) == 1
+        resumed_model = Model("第一次检定")
+        resumed, current = await turn(
+            service, session, resumed_model, resume_turn_id=failed["id"], operation_id="resume-roll"
+        )
+        assert resumed["status"] == "committed", resumed["error"]
+        actual = [
+            json.loads(m["content"]) for m in resumed_model.requests[0]["messages"] if m["role"] == "tool"
+        ]
+        assert len(draws) == 1
+        value = draws[0]["value"]
+        ref = actual[-1]["data"]["value"]["checksum"]
+        assert re.fullmatch(r"@D\d+", ref)
+        assert current["snapshot"]["story"]["model_references"][ref] == value["checksum"] == session["card"]
+        assert actual[-1]["data"] == {**draws[0], "value": {**value, "checksum": ref}}
+        # The program edited its own copy. The original faces must survive
+        # both that edit and the interruption.
+        dice = draws[0]["rolls"][0]["pools"][0]["dice"]
+        assert len(dice) == 2 and sum(not d.get("dropped") for d in dice) == 1
+        assert value["damage_after_absorbing_the_armor"] == max(d["value"] for d in dice) + 3
+        regenerated, _ = await turn(service, current, Model(call, "另一版检定"), mode="regenerate")
+        assert regenerated["status"] == "committed", regenerated["error"]
+        assert len(draws) == 2
+    finally:
+        await service.close()
 
 
 def media_story(store, session):
@@ -1319,6 +1403,7 @@ async def test_required_mvu_update_rejects_disabled_dependency(story, tool):
 async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
     store, session = story
     initially_disabled = session["disabled_tools"]
+    feature_controlled = {"write_plot", *MAIN_SPECS, *MEDIA_SPECS}
     app = create_app(store.root)
     service = runtime(store)
     url = f"/api/sessions/{session['id']}/story/tools"
@@ -1341,9 +1426,7 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             assert {t["name"] for t in catalog} == set(SPECS)
             assert "read_lore" not in {t["name"] for t in catalog}
             for tool in catalog:
-                assert tool["enabled"] == (
-                    tool["name"] not in {"write_plot", *MAIN_SPECS, *initially_disabled}
-                )
+                assert tool["enabled"] == (tool["name"] not in {*feature_controlled, *initially_disabled})
                 if tool["name"] == "write_plot":
                     description = tool["description"].replace(" (锚点)", "").replace(" (冷酷度)", "")
                     tool = {**tool, "description": description}
@@ -1401,7 +1484,7 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 json={
                     "expected_revision": session["revision"],
                     "disabled_tools": [
-                        name for name in SPECS if name not in {"submit_story", "write_plot", *MAIN_SPECS}
+                        name for name in SPECS if name not in {"submit_story", *feature_controlled}
                     ],
                 },
             )
@@ -1429,8 +1512,10 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 await client.put(url, json={"expected_revision": session["revision"], "disabled_tools": []})
             ).status_code == 409
             store.set_turn(tid, status="cancelled")
-            half = store.new_session(SessionCreate(card_id=session["card"]))
-            assert (await client.get(f"/api/sessions/{half['id']}/story/tools")).status_code == 400
+            # New stories select a channel on creation. Only legacy rows may still be unclassified.
+            with store.connection() as db:
+                db.execute("UPDATE sessions SET channel_origin=NULL WHERE id=?", (session["id"],))
+            assert (await client.get(url)).status_code == 400
     finally:
         await service.close()
         await app.state.service.close()

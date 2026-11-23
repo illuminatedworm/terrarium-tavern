@@ -100,12 +100,7 @@ class StoryAgent:
         # Tool exchanges survive turns/windows. Their short document handles
         # must keep the same meaning after document reorder or a new provider.
         initial_view = {"document": document, "state": snapshot["state"]}
-        self.model_view = ModelView(initial_view)
-        refs = self.state.setdefault("model_references", {})
-        self.model_view.reverse = refs
-        self.model_view.forward = {raw: ref for ref, raw in refs.items()}
-        self.model_view.reserved.difference_update(refs)
-        self.model_view.seed(initial_view)
+        self.model_view = ModelView(initial_view, references=self.state.setdefault("model_references", {}))
         self.rolled, self.retrieval_query = False, ""
         self.must_rollover = False
         self.recall_ids = []
@@ -982,7 +977,9 @@ class StoryAgent:
                 mirror = await self.script.call("snapshot")
                 sync_runtime_lore(mirror, self.document, previous_document)
                 await self.script.call("update", mirror)
-            result = self.model_view.expose(result)
+            # AgentTools already projected successes according to their source.
+            if tool_error:
+                result = self.model_view.expose(result)
             message = {"role": "tool", "tool_call_id": call["id"], "content": encoded(result)}
             if legacy_receipt:
                 message["_roleplay_received"] = legacy_receipt
@@ -995,6 +992,11 @@ class StoryAgent:
                 if encoded_story:
                     message["_unicode_story_rejected"] = True
             self.append(message, window_id)
+            # A player may disconnect as soon as a roll appears in activity.
+            # Persist its randomness before publishing it so resume cannot redraw.
+            saved_calculation = name == "calculate" and not tool_error
+            if saved_calculation:
+                await self.save_progress()
             self.event(
                 "story_tool",
                 {
@@ -1014,7 +1016,7 @@ class StoryAgent:
                     "context_rollover",
                     {"window": self.state["window"]["number"], "message": "Agent 已保存 handoff 并换新窗口"},
                 )
-            if not rejected_batch:
+            if not rejected_batch and not saved_calculation:
                 await self.save_progress()
         if rejected_batch:
             # A rejected batch must never persist just its first error. Recovery

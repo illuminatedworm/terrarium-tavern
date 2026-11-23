@@ -134,6 +134,7 @@ export const toolLabels: Record<string, string> = {
   read_character: '读取角色资料',
   revise_content: '修改设定',
   set_retrieval_query: '设置检索线索',
+  calculate: '运算与掷骰',
   start_novel_research: '委派资料调查',
   list_novel_research: '查看调查者',
   message_novel_research: '联系资料调查者',

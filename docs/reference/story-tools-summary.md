@@ -1,6 +1,6 @@
 # 剧情工具速查
 
-当前共 **28 个工具**，其中六个资料调查工具在用户开启调查者且具备可用来源时提供给模型，三个媒体工具由右侧“配音与生图”页控制。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
+当前共 **29 个工具**，其中六个资料调查工具在用户开启调查者且具备可用来源时提供给模型，三个媒体工具由右侧“配音与生图”页控制。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
 
 ## 如何工作
 
@@ -38,6 +38,7 @@
 | `read_character` | 完整读取一个人物字段 | `ref: string`（下述七字段之一） | 缺失返回 null；登记读取记录，含执行代码的字段受保护。 |
 | `revise_content` | 修改人物或普通世界书设定 | `operations: object[]`（1–100 项）；`comment: string` | 仅限本轮授权（不沿用前几轮），未授权的调用被拒绝；四种动作见下表；批次失败不部分写入；成功返回目标完整最终内容并刷新读取记录，可继续编辑。 |
 | `set_retrieval_query` | 覆盖本轮准备保存的下轮检索线索 | `query: string` | 最后一次成功调用生效；空串清空本轮线索，历史线索保留；随正文提交且不进入正文。 |
+| `calculate` | JavaScript 运算与掷骰 | `code: string`，`summary: boolean=false` | 表达式直接取值，多条语句用 `return`。默认记录 `roll()` 的逐颗明细，批量模拟可只保留返回值。[用法与限额](story-tools.md#运算与掷骰) |
 
 ## 编辑参数补充
 
@@ -398,6 +399,24 @@ Set clues for next turn's automatic worldbook lookup: the scenes, people, places
 
 ```json
 {"ok":true,"data":{"saved_to_draft":true}}
+```
+
+### `calculate`
+
+```text
+Compute a JSON value in fresh, isolated JavaScript with Math.random() and roll(formula). Supply all inputs in code. For roll('4d6kh3').total + 3, the runtime records actual dice and kept/dropped results. Roll20 syntax supports arithmetic, kh/kl/dh/dl, r/ro, !/!!/!p and success counts (8d10>8 counts 8 or higher). Follow any applicable rules when choosing rolls. Summary mode is for bulk statistics. Limits per call: 1200 ms in JavaScript, 16 MiB guest heap, 32 KiB JSON result, 256 individual dice in detail or 20000 in summary, 1–1000000 sides per numbered die, 1–256 UTF-16 code units per formula (inclusive).
+```
+
+请求：
+
+```json
+{"code":"[2, 5, 8].reduce((sum, hit) => sum + Math.max(0, hit - 3), 0)"}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"value":7}}
 ```
 
 ### `start_novel_research`

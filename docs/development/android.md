@@ -34,6 +34,7 @@ Android 版把 Python/FastAPI 后端、Vue 前端和脚本 WebView 装入同一�
 | --- | --- | --- |
 | [`application/api.py`](../../src/tavern/application/api.py) `create_app` | 本地访问边界 | 另加启动令牌认证、固定 Host、CSP 与 `AndroidFiles` 缓存策略 |
 | [`scripting/realm.py`](../../src/tavern/scripting/realm.py) `default_backend` | Playwright 驱动系统 Edge/Chrome 稳定版 | [`android_realm.py`](../../src/tavern/scripting/android_realm.py)，`:realm` / `:realm_tools` 进程 |
+| [`scripting/calculation.py`](../../src/tavern/scripting/calculation.py) 运算与掷骰 | Playwright 随附的 Node 子进程加载 QuickJS/WASM，每次调用结束即退出 | 独立的 `:realm_calculation` WebView 进程加载同一份离线运行器，每次仅执行一项运算 |
 | [`search/local_models.py`](../../src/tavern/search/local_models.py) `create_local_model_manager` | CUDA/Hugging Face 子进程 | [`android/local_models.py`](../../src/tavern/android/local_models.py)，llama.cpp GGUF |
 | [`character/editor_files.py`](../../src/tavern/character/editor_files.py) | MarkItDown | [`android/documents.py`](../../src/tavern/android/documents.py)，`:documents` 进程 |
 | [`chatgpt/vault.py`](../../src/tavern/chatgpt/vault.py) | Windows DPAPI / Linux 明文加权限 | Android Keystore AES-GCM |
@@ -250,7 +251,7 @@ $env:PYTHONUTF8 = "1"
 
 ## 手机端运行约束
 
-- **进程**：后端由可见的前台服务承载。故事脚本在 `:realm`、制卡验证与依赖打包在 `:realm_tools`、Office 解析在 `:documents` 进程运行，超时或取消只终止对应进程。停止服务会取消故事、制卡和参谋任务并让存储收尾。
+- **进程**：后端由可见的前台服务承载。故事脚本在 `:realm`、制卡验证与依赖打包在 `:realm_tools`、剧情运算在 `:realm_calculation`、Office 解析在 `:documents` 进程运行，超时或取消只终止对应进程。停止服务会取消故事、制卡和参谋任务并让存储收尾。
 - **访问边界**：首次启动选定端口并保存，之后复用同一 origin，使阅读设置和侧栏偏好保持有效；端口被占用时报错，不更换 origin。每次启动生成新令牌，API 与静态资源都需认证（见[架构](../design/architecture.md)）。主 WebView 只请求本地 origin，外链交给系统浏览器。
 - **文件导入**：使用系统文件选择器，不按 MIME 类型过滤，由导入流程校验内容；`Android/data` 等受限目录需先复制到 `Download` 等公共目录。
 - **显示**：Android 11+ 界面铺满系统栏，内边距经 `--safe-*` 变量传入；键盘弹出时 WebView 缩到键盘上方。应用更新后首次启动清空 WebView 缓存。

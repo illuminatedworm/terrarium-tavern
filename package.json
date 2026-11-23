@@ -14,9 +14,11 @@
     "format:check": "prettier --check web tests/frontend"
   },
   "dependencies": {
+    "@jitl/quickjs-singlefile-browser-release-sync": "0.32.0",
     "@json-render/core": "0.22.0",
     "@json-render/vue": "0.22.0",
     "acorn": "8.15.0",
+    "dice-roller-parser": "0.1.8",
     "dompurify": "3.4.17",
     "fast-json-patch": "3.1.1",
     "jquery": "3.7.1",
@@ -25,6 +27,7 @@
     "lodash": "4.18.1",
     "marked": "16.3.0",
     "mathjs": "15.2.0",
+    "quickjs-emscripten-core": "0.32.0",
     "vue": "3.5.44",
     "yaml": "2.9.1",
     "zod": "4.6.7"

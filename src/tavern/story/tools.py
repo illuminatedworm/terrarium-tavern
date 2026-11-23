@@ -17,6 +17,7 @@ from tavern.core.tokens import count_text
 from tavern.media.config import SPECS as MEDIA_SPECS
 from tavern.media.config import MediaConfig, enabled_tools
 from tavern.novel.tools import MAIN_SPECS
+from tavern.scripting.calculation import CalculationError, calculate
 from tavern.scripting.runtime import RuntimeRollbackError
 from tavern.scripting.state_patch import InvalidStatePatch, InvalidStatePath, ProtectedStateField, stage
 from tavern.story.argument_errors import ToolArgumentError
@@ -64,6 +65,18 @@ class Story(Arguments):
 
 class Query(Arguments):
     query: str = Field(min_length=1, max_length=1000, description="Search text or retrieval clues.")
+
+
+class Calculation(Arguments):
+    code: str = Field(
+        min_length=1,
+        max_length=8192,
+        description="JavaScript expression or statements with an explicit return. 1–8192 Unicode characters.",
+    )
+    summary: bool = Field(
+        default=False,
+        description="Set true before a simulation to return only the program value and omit individual dice receipts.",
+    )
 
 
 class RetrievalQuery(Arguments):
@@ -358,6 +371,16 @@ SPECS = {
         "to matter, with anticipated events marked as anticipated. The last successful call this turn wins; "
         'query="" clears this turn\'s clues without touching earlier turns. Clues never appear in the story.',
     ),
+    "calculate": (
+        Calculation,
+        "Compute a JSON value in fresh, isolated JavaScript with Math.random() and roll(formula). "
+        "Supply all inputs in code. For roll('4d6kh3').total + 3, the runtime records actual dice and kept/dropped results. "
+        "Roll20 syntax supports arithmetic, kh/kl/dh/dl, r/ro, !/!!/!p and success counts (8d10>8 counts 8 or higher). "
+        "Follow any applicable rules when choosing rolls. Summary mode is for bulk statistics. "
+        "Limits per call: 1200 ms in JavaScript, 16 MiB guest heap, 32 KiB JSON result, "
+        "256 individual dice in detail or 20000 in summary, 1–1000000 sides per numbered die, "
+        "1–256 UTF-16 code units per formula (inclusive).",
+    ),
 }
 
 
@@ -511,8 +534,8 @@ class AgentTools:
         return {"matches": results, **({"notice": "使用 read 工具读取完整原文。"} if results else {})}
 
     async def execute(self, name, arguments: str | Story):
-        # One boundary covers every successful result, including free-form source text.
-        return success(self.owner.model_view.expose(await self._execute(name, arguments)))
+        data = await self._execute(name, arguments)
+        return success(self.owner.model_view.expose(data, authored=name == "calculate"))
 
     def decode_story_arguments(self, arguments: str) -> Story:
         try:
@@ -554,6 +577,11 @@ class AgentTools:
                 args = model.model_validate_json(arguments)
             except ValidationError as error:
                 raise ToolArgumentError(name, model, error) from None
+        if name == "calculate":
+            try:
+                return await calculate(args.code, args.summary)
+            except CalculationError as error:
+                raise ToolError("INVALID_ARGUMENTS", owner.model_view.text(str(error))) from None
         state = owner.state
         if name in MEDIA_SPECS:
             return owner.media.execute(name, args)

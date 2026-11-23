@@ -22,3 +22,22 @@ it('allows a later attempt after a failed download', async () => {
   expect(await load()).toEqual('sdk');
   expect(request).toHaveBeenCalledTimes(2);
 });
+
+it('scores the retained physical faces when a computed pool and a penetrating die are rerolled', async () => {
+  const { diceSession } = await vi.importActual<{
+    diceSession(summary: boolean, random: () => number): (formula: string) => unknown;
+  }>('../../compat/calculation/dice.js');
+  const faces = [2, 4, 1, 3, 6, 2, 5];
+  const roll = diceSession(false, () => (faces.shift()! - 0.5) / 6);
+  const formula = '0d6 + (3/2)d6r1r2 + 1d6!pro<2 * -1.5 - 0.5';
+  expect(roll(formula)).toEqual({
+    formula,
+    total: -8.5,
+    pools: [
+      { sides: 6, dice: [], total: 0 },
+      { sides: 6, dice: [{ value: 3, rerolled: [2, 1] }, { value: 4 }], total: 7 },
+      { sides: 6, dice: [{ value: 6 }, { extra: true, face: 5, value: 4, rerolled: [2] }], total: 10 },
+    ],
+  });
+  expect(faces).toHaveLength(0);
+});
