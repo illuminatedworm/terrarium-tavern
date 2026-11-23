@@ -324,22 +324,23 @@ function drop(event: DragEvent, index: number) {
   margin: 0;
 }
 .greetings-layout {
+  --greetings-pane-limit: clamp(20rem, 65dvh, 36rem);
   display: grid;
   grid-template-columns: minmax(155px, 25%) minmax(0, 1fr);
   gap: 16px;
 }
-.greetings-rail {
+.greetings-rail,
+.greeting-preview {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  max-block-size: var(--greetings-pane-limit);
 }
 .greetings-list {
   display: grid;
   align-content: start;
   gap: 4px;
-  /* The preview sets the grid row height; the list fills the available space. */
   flex: 1;
-  block-size: 0;
   overflow: auto;
   padding: 2px;
   margin: 0;
@@ -347,6 +348,7 @@ function drop(event: DragEvent, index: number) {
 }
 .greetings-rail > .quiet {
   align-self: flex-start;
+  flex: none;
   margin-top: 8px;
 }
 .greeting-row {
@@ -434,13 +436,13 @@ function drop(event: DragEvent, index: number) {
   display: none;
 }
 .greeting-preview {
-  min-width: 0;
   padding: 12px 16px 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-input);
 }
 .greeting-preview-heading {
+  flex: none;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -460,7 +462,7 @@ function drop(event: DragEvent, index: number) {
 }
 .greeting-preview-viewport {
   position: relative;
-  max-block-size: 8lh;
+  min-block-size: 0;
   overflow: clip;
   margin: 16px 0 10px;
   font: var(--story-font-size, var(--fs-base)) / var(--story-line-height, 1.85)
@@ -482,6 +484,7 @@ function drop(event: DragEvent, index: number) {
   margin: 0;
 }
 .greeting-preview-caption {
+  flex: none;
   min-height: 20px;
   gap: 6px;
 }
@@ -496,6 +499,7 @@ function drop(event: DragEvent, index: number) {
     grid-column: 1 / -1;
   }
   .greetings-layout {
+    --greetings-pane-limit: none;
     grid-template-columns: minmax(0, 1fr);
     gap: 10px;
   }
@@ -514,12 +518,14 @@ function drop(event: DragEvent, index: number) {
   }
   .greetings-list.is-open {
     flex: none;
-    block-size: auto;
     max-block-size: 20rem;
     margin-top: 4px;
   }
   .greeting-preview {
     padding-inline: 12px;
+  }
+  .greeting-preview-viewport {
+    max-block-size: 8lh;
   }
 }
 </style>
