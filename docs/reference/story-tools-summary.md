@@ -1,6 +1,6 @@
 # 剧情工具速查
 
-当前共 **29 个工具**，其中六个资料调查工具在用户开启调查者且具备可用来源时提供给模型，三个媒体工具由右侧“配音与生图”页控制。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
+当前共 **30 个工具**，其中六个资料调查工具在用户开启调查者且具备可用来源时提供给模型，三个媒体工具由右侧“配音与生图”页控制。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
 
 ## 如何工作
 
@@ -21,8 +21,9 @@
 | `wait_novel_research` | 可选等待调查 | `ref: string`；`timeout_seconds: integer=30` | 允许 1–60 秒，只返回状态，超时不取消；报告和提问在本次工具结果之后单独送达。 |
 | `resume_novel_research` | 明确恢复调查 | `ref: string` | 只恢复暂停或失败调查，不刷新额度；额度耗尽时拒绝。 |
 | `destroy_novel_research` | 销毁调查者 | `ref: string` | 释放名额，保留历史及已交付报告；尚有待送达的报告或提问时拒绝。 |
-| `recall_lore` | 为叙事召回完整世界书正文 | `query: string` | 共用自动检索的索引、准入、在场排除与冷却规则；允许零命中，已在上下文中的注入或召回正文省略。可选 L 引用可用于单条读取，完整当前召回正文可作为修改依据。 |
+| `recall_lore` | 召回世界书开头及编号 | `query: string` | 共用自动检索的索引、准入、在场排除与冷却规则；允许零命中，已在上下文中的注入或召回正文省略。每项均附 L 编号，短条目直接给全文。 |
 | `find_lore_for_edit` | 定位可编辑的普通条目 | `query: string`；`limit: integer=5` | 字面匹配标题、关键词和正文，包含停用条目；`*` 列出条目；返回 L 引用、标题与定位摘要。 |
+| `read_lore_full` | 批量展开在场动态条目 | `refs: string[]` | 按 L 编号读取当时展开宏的完整正文；窗口中完整且匹配当前版本的正文可作为编辑依据。 |
 | `read_lore_entry` | 完整读取一个普通条目 | `ref: string`（如 `L1`） | 返回标题、正文、主／辅助关键词及启用状态，登记当前读取记录；保护目标不可读写。 |
 | `search_history` | 搜索当前分支剧情原文 | `query: string`；`limit: integer=5` | 字面检索，返回 H 引用及可选摘要；`*` 列最近记录，不搜索旧工具过程。 |
 | `read_history` | 完整读取剧情原文 | `ref: string`（如 `H1` 或 `H52-H58`） | 可读取当前用户输入和已接收的正文草稿；区间最多 8 条，按分支顺序逐条返回完整原文，H 与角色随“返回编号和角色”设置附带。 |
@@ -112,7 +113,7 @@ Read one worldbook entry in full by L handle: title, content, keys, secondary_ke
 
 ```text
 Look up worldbook background for the story. To find entries to edit, use find_lore_for_edit.
-Write a short, self-contained query in the worldbook's language. Returns complete matching entries in <lorebook>. Entries already in this context are left out, and entry conditions, cooldowns or relevance limits may leave no matches. When titles and L handles are shown, recalled entries can serve as the current text for later edits.
+Write a short, self-contained query in the worldbook's language. Each match has an L handle and either a preview of its opening or its complete text. Use read_lore_full for details beyond a preview. Entries already in this context are left out, and entry conditions, cooldowns or relevance limits may leave no matches. Only complete current text counts as evidence for editing.
 ```
 
 请求：
@@ -124,7 +125,25 @@ Write a short, self-contained query in the worldbook's language. Returns complet
 成功返回：
 
 ```json
-{"ok":true,"data":{"matches":[{"title":"港口","text":"<lorebook>\n港口有一座灯塔。\n</lorebook>"}]}}
+{"ok":true,"data":{"matches":[{"ref":"L1","title":"港口","text":"<lorebook>\n港口有一座灯塔。\n</lorebook>"}]}}
+```
+
+### `read_lore_full`
+
+```text
+Read the complete frozen story text of one or more admitted worldbook entries by L handle. Use only when details beyond a preview are needed. Returns entries in requested order.
+```
+
+请求：
+
+```json
+{"refs":["L1"]}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"entries":[{"ref":"L1","text":"港口有一座灯塔。"}]}}
 ```
 
 ### `revise_content`

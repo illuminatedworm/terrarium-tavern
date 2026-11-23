@@ -79,9 +79,10 @@ EXAMPLES = {
         },
     ),
     "read_lore_entry": ({"ref": "L1"}, ENTRY),
+    "read_lore_full": ({"refs": ["L1"]}, {"entries": [{"ref": "L1", "text": ENTRY["content"]}]}),
     "recall_lore": (
         {"query": "港口"},
-        {"matches": [{"title": "港口", "text": "<lorebook>\n港口有一座灯塔。\n</lorebook>"}]},
+        {"matches": [{"ref": "L1", "title": "港口", "text": "<lorebook>\n港口有一座灯塔。\n</lorebook>"}]},
     ),
     "search_history": (
         {"query": "港口"},

@@ -17,8 +17,10 @@ from tavern.core.cache_policy import fingerprint
 from tavern.core.context_usage import context_tokens
 from tavern.core.history_refs import labeled, message_ref, span_ref
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
+from tavern.core.model_view import ModelView
 from tavern.core.story_segments import MAX_SEGMENTS, split_segments
 from tavern.story.config import tool_protocol
+from tavern.story.content import lore_references
 from tavern.story.content_history import content_history
 from tavern.story.context_ledger import ContextLedger
 from tavern.story.delivery import (
@@ -82,6 +84,7 @@ def compile_window(
     regenerate_reply="",
     story=None,
     replay_all=False,
+    model_view=None,
 ):
     state = story_state(snapshot)
     from tavern.core.kemini import TURN_SOURCES, prefix_frames, turn_frames
@@ -119,6 +122,21 @@ def compile_window(
 
     # Anchored records keep frozen content; an opted-in title comes from the current entry.
     narrative_lore = {e["id"]: e for e in lore_entries(document, "narrative")}
+    records_by_anchor = {}
+    for record in snapshot.get("lore_injections", []):
+        if not record.get("manually_removed"):
+            records_by_anchor.setdefault(record["anchor_id"], []).append(record)
+    if records_by_anchor:
+        # Read-only previews calculate the same handles without allocating them in a snapshot.
+        ref_state = (
+            state if model_view is not None else {"lore_references": dict(state.get("lore_references", {}))}
+        )
+        ref_by_id = {eid: ref for ref, eid in lore_references(document, ref_state).items()}
+        if model_view is None:
+            model_view = ModelView(
+                {"document": document, "state": snapshot.get("state", {})},
+                references=dict(state.get("model_references", {})),
+            )
 
     # This absolute prefix is outside all application ordering and history
     # offsets; no runtime rules or worldbook entries can split its four blocks.
@@ -202,12 +220,17 @@ def compile_window(
 
     # Filter a single chronological sequence so native state after a retired
     # exchange cannot resurrect broad source reads through another turn.
+    # Unsent recall suffixes belong to the durable exchange used by read_lore_full.
+    # Keep them out of all replay/preview rows, including compact maintenance.
+    def replay_record(message, owner):
+        row = {**message, "_content_owner": owner}
+        row.pop("_lore_tails", None)
+        return row
+
     records = [
-        {**message, "_content_owner": owner["id"]}
-        for owner in visible
-        for message in by_owner.get(owner["id"], [])
+        replay_record(message, owner["id"]) for owner in visible for message in by_owner.get(owner["id"], [])
     ]
-    records.extend({**message, "_content_owner": None} for message in continuation)
+    records.extend(replay_record(message, None) for message in continuation)
     records, _ = story_history(records)
     if settings.kemini.enabled:
         project_rejected_kemini_notes(records, settings.kemini)
@@ -321,16 +344,31 @@ def compile_window(
         return frame
 
     def anchored(message_id):
-        for record in snapshot.get("lore_injections", []):
-            if record["anchor_id"] == message_id and not record.get("manually_removed"):
-                add(
-                    "system",
-                    lore_block(narrative_lore.get(record["id"], {}), record["content"]),
-                    "lore:" + record["id"],
-                    lore_ids=[record["id"]],
-                    anchor_id=message_id,
-                    title=record["title"],
-                )
+        for record in records_by_anchor.get(message_id, ()):
+            eid = record["id"]
+            entry = narrative_lore.get(eid, {})
+            body = model_view.text(record["content"])
+            ref = ref_by_id.get(eid) if entry else None
+            # Older snapshots can contain an orphaned frozen block. Keep it readable
+            # in history instead of offering a handle with no resolvable entry.
+            preview = bool(ref) and len(body) > settings.lore_preview_chars
+            text = lore_text(
+                entry,
+                body[: settings.lore_preview_chars] if preview else body,
+                settings.lore_injection_title,
+                lambda title: model_view.text(expand(title)),
+                ref=ref,
+                preview=preview,
+            )
+            add(
+                "system",
+                wrap_lorebook(text),
+                "lore:" + eid,
+                lore_ids=[eid],
+                anchor_id=message_id,
+                lore_preview=preview,
+                title=record["title"],
+            )
 
     # Boundaries belong to source exchanges, not SDK roles (lore may be mapped
     # to user). Include anchored lore before its user and all tool continuations.

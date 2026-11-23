@@ -134,7 +134,13 @@ def observe_context(reads, messages):
         if injected:
             # Compare the complete compiled block; stripping an arbitrary first
             # line could accidentally authorize a different or incomplete body.
-            expected = lore_text(normalized, expected, owner.settings.lore_injection_title, owner.expand)
+            expected = lore_text(
+                normalized,
+                expected,
+                owner.settings.lore_injection_title,
+                owner.expand,
+                ref=None if normalized.get("constant") else ref,
+            )
         if text == expose(expected):
             reads.read_entry(ref, raw)
 
@@ -150,7 +156,7 @@ def observe_context(reads, messages):
         field = {"examples": "mes_example", "post": "post_history_instructions"}.get(source, source)
         if field in CHARACTER_FIELDS:
             character(field, text, expanded=True)
-        elif source.startswith("lore:") and source[5:] in reverse:
+        elif source.startswith("lore:") and source[5:] in reverse and not message.get("lore_preview"):
             entry(reverse[source[5:]], text, expanded=True, injected=True)
 
         for call in message.get("tool_calls", []):
@@ -199,6 +205,9 @@ def observe_context(reads, messages):
             character(args.get("ref"), result.get("text"))
         elif name == "read_lore_entry":
             entry(args.get("ref"), result.get("content"))
+        elif name == "read_lore_full":
+            for row in objects(result.get("entries")):
+                entry(row.get("ref"), row.get("text"), expanded=True)
         elif name == "revise_content":
             for row in objects(result.get("characters")):
                 character(row.get("ref"), row.get("text"))
@@ -206,11 +215,15 @@ def observe_context(reads, messages):
                 entry(row.get("ref"), row.get("content"))
         elif name == "recall_lore":
             for match in objects(result.get("matches")):
-                # Default recall results deliberately omit navigation handles.
-                # A complete matching body still supplies the editable text.
+                if "text" not in match:
+                    continue
                 body = unwrapped(match.get("text", ""), "lorebook")
-                for ref in refs:
-                    entry(ref, body, expanded=True)
+                if "ref" in match:
+                    entry(match["ref"], body, expanded=True)
+                else:
+                    # Original tool exchanges may predate mandatory handles.
+                    for ref in refs:
+                        entry(ref, body, expanded=True)
         elif name == "read_state":
             value = parsed_json(result.get("text"))
             path, scope = args.get("path", ""), state_scope(args.get("scope", "mvu"))

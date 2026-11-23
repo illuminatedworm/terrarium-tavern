@@ -97,7 +97,7 @@ def register_story_routes(app, store, context_operations=None):
                         t["function"]["name"] in defined_tools
                         if t["function"]["name"] in MEDIA_SPECS
                         else True
-                        if t["function"]["name"] == "submit_story"
+                        if t["function"]["name"] in {"submit_story", "read_lore_full"}
                         else session["plot_enabled"]
                         if t["function"]["name"] == "write_plot"
                         else session["novel_enabled"]
@@ -106,6 +106,9 @@ def register_story_routes(app, store, context_operations=None):
                     ),
                     **({"controlled_by": "plot_enabled"} if t["function"]["name"] == "write_plot" else {}),
                     **({"controlled_by": "media"} if t["function"]["name"] in MEDIA_SPECS else {}),
+                    **(
+                        {"controlled_by": "lore_preview"} if t["function"]["name"] == "read_lore_full" else {}
+                    ),
                     **(
                         {"controlled_by": "story_protocol"} if t["function"]["name"] == "submit_story" else {}
                     ),
@@ -135,6 +138,8 @@ def register_story_routes(app, store, context_operations=None):
             raise ValueError("write_plot 由剧情规划开关统一控制，请在记忆面板调整")
         if "submit_story" in edit.disabled_tools:
             raise ValueError("submit_story 是本轮正文交付工具，不能关闭")
+        if "read_lore_full" in edit.disabled_tools:
+            raise ValueError("read_lore_full 用于展开世界书预览，始终启用")
         if set(edit.disabled_tools) & MAIN_SPECS.keys():
             raise ValueError("资料调查工具由「调查」页的总开关统一控制")
         if set(edit.disabled_tools) & MEDIA_SPECS.keys():

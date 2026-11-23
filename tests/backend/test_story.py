@@ -1253,7 +1253,8 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
         )
         assert (
             sum(
-                m.get("content") == "<lorebook>\n钟楼\n\n钟楼每晚九点关门。\n</lorebook>" for m in requests[0]
+                m.get("content") == "<lorebook>\n钟楼\n\n[L1 · 全文]\n钟楼每晚九点关门。\n</lorebook>"
+                for m in requests[0]
             )
             == 1
         )
@@ -1268,12 +1269,13 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
             tool_results[0]["data"]["matches"][0]["text"] == "<lorebook>\n旧港的船只明晨出发。\n</lorebook>"
         )
         assert set(tool_results[0]["data"]) == {"matches"}
-        assert set(tool_results[0]["data"]["matches"][0]) == {"title", "text"}
+        assert set(tool_results[0]["data"]["matches"][0]) == {"ref", "title", "text"}
         assert tool_results[0]["data"]["matches"][0]["title"] == "旧港"
         assert tool_results[2]["data"]["matches"] == []
         assert (
             sum(
-                m.get("content") == "<lorebook>\n钟楼\n\n钟楼每晚九点关门。\n</lorebook>" for m in requests[2]
+                m.get("content") == "<lorebook>\n钟楼\n\n[L1 · 全文]\n钟楼每晚九点关门。\n</lorebook>"
+                for m in requests[2]
             )
             == 1
         )
@@ -1347,7 +1349,7 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
         assert [r["id"] for r in current["snapshot"]["lore_injections"]] == ["port"]
         assert (
             sum(
-                m.get("content") == "<lorebook>\n旧港\n\n旧港的船只明晨出发。\n</lorebook>"
+                m.get("content") == "<lorebook>\n旧港\n\n[L2 · 全文]\n旧港的船只明晨出发。\n</lorebook>"
                 for m in model.requests[0]["messages"]
             )
             == 1
@@ -1547,7 +1549,7 @@ async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
         await service.close()
 
 
-async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
+async def test_recalled_lore_preview_then_full_read_reach_model(tmp_path):
     store = Store(tmp_path)
     content = "loreword " * 2500 + "ENDMARK"
     document = {
@@ -1568,14 +1570,22 @@ async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
     service = runtime(store)
     model = Model(("recall_lore", {"query": "loreword"}), "继续。")
     try:
-        result, _ = await turn(service, session, model)
+        result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         tool_result = next(
             json.loads(m["content"]) for m in model.requests[1]["messages"] if m["role"] == "tool"
         )
         assert tool_result["data"]["matches"] == [
-            {"title": "长条目", "text": f"<lorebook>\n{content}\n</lorebook>"}
+            {"ref": "L1", "title": "长条目", "preview": f"<lorebook>\n{content[:120]}\n</lorebook>"}
         ]
+        assert "ENDMARK" not in json.dumps(model.requests[1]["messages"])
+        fork = store.fork_session(current["id"], current["head"], current["revision"])
+        reader = Model(("read_lore_full", {"refs": ["L1"]}), "读到了。")
+        result, _ = await turn(service, fork, reader)
+        assert result["status"] == "committed", result["error"]
+        assert "ENDMARK" not in json.dumps(reader.requests[0]["messages"])
+        full = [json.loads(m["content"]) for m in reader.requests[1]["messages"] if m["role"] == "tool"][-1]
+        assert full["data"]["entries"] == [{"ref": "L1", "text": content}]
     finally:
         await service.close()
 

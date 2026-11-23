@@ -52,10 +52,12 @@ def wrap_lorebook(content):
     return f"<lorebook>\n{content}\n</lorebook>"
 
 
-def lore_text(entry, content, with_title, expand=str):
+def lore_text(entry, content, with_title, expand=str, *, ref=None, preview=False):
     """Model-visible body of one entry. The title is a first body line, not a tag
     attribute: the message adapter strips and rewraps the lorebook tag per user rule."""
     title = expand(lore_title(entry)).strip() if with_title else ""
+    if ref:
+        content = f"[{ref} · {'开头预览' if preview else '全文'}]\n{content}"
     return f"{title}\n\n{content}" if title else content
 
 

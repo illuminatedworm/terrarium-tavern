@@ -176,7 +176,7 @@ def test_removed_reply_locate_switch_is_dropped_from_strict_v17_settings():
     raw["version"] = 17
     raw["shared"]["reply_locate_start"] = False
     migrated = migrate_settings(raw)
-    assert migrated.version == 22 and "reply_locate_start" not in migrated.shared.model_dump()
+    assert migrated.version == 23 and "reply_locate_start" not in migrated.shared.model_dump()
     assert migrated.revisions["shared"] == raw["revisions"]["shared"] + 1
 
 
@@ -219,7 +219,7 @@ def test_upgrade_keeps_custom_prompt_wording_and_story_data_verbatim(tmp_path):
     raw["story"]["local_runtime"]["instruction_prompt"] = "Retrieve the player's setting."
     original = deepcopy(raw)
     migrated = migrate_settings(raw)
-    assert migrated.version == 22 and migrated.story.tools.max_duration_seconds == 900
+    assert migrated.version == 23 and migrated.story.tools.max_duration_seconds == 900
     assert migrated.story.retrieval.index_timeout == 60
     assert raw == original
     assert migrated.revisions == {"story": 4, "shared": 8}
@@ -330,11 +330,14 @@ async def test_scoped_updates_undo_and_secret_preservation(tmp_path):
             {
                 "model.model": "new-full",
                 "lore_max_entries": 9,
+                "lore_preview_chars": 37,
                 "system_prompt.options.0.text": "new-story-prompt",
             },
         )
         assert response.status_code == 200, response.text
         saved = response.json()
+        assert original["story"]["lore_preview_chars"] == 120
+        assert app.state.store.settings().lore_preview_chars == 37
         assert saved["shared"] == original["shared"]
         assert app.state.store.settings().story_system_prompt == "new-story-prompt"
         invalid = await patch("story", {"model.context_tokens": 2048})

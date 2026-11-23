@@ -7,7 +7,7 @@ from tavern.scripting.native_response import portable
 from tavern.story.delivery import StoryFormat
 from tavern.story.protocol import failed as tool_failed
 
-PROGRESS_VERSION = 8
+PROGRESS_VERSION = 9
 
 
 def saved_story_format(progress: dict) -> StoryFormat:

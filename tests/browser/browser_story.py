@@ -177,7 +177,7 @@ async def main():
                 search_toggle = tools.get_by_label("启用 召回设定", exact=True)
                 await expect(search_toggle).to_be_checked()
                 await tool_item("召回设定").locator(".tool-name").click()
-                ref_toggle = tools.get_by_label("recall_lore 返回编号", exact=True)
+                ref_toggle = tools.get_by_label("recall_lore 返回已在场条目目录", exact=True)
                 title_toggle = tools.get_by_label("recall_lore 返回标题", exact=True)
                 await expect(ref_toggle).to_have_attribute("aria-pressed", "false")
                 await expect(title_toggle).to_have_attribute("aria-pressed", "true")

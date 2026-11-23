@@ -2,9 +2,56 @@
 
 import asyncio
 import copy
+import json
 
 from tavern.character.cards import lore_entries, lore_title, normalize
 from tavern.conversation.context import activate_lore, macros
+from tavern.core.message_adapter import unwrapped
+from tavern.story.protocol import ToolError
+
+
+def read_present_lore(owner, requested):
+    """Use the frozen anchor or tool exchange, even after macro values change."""
+    references = owner.lore_refs()
+    selected = {ref: references.get(ref) for ref in requested}
+    anchors = {r["id"]: r for r in owner.snapshot.get("lore_injections", [])}
+    frozen, recalled = {}, set()
+    for eid in selected.values():
+        if eid in anchors and not anchors[eid].get("manually_removed"):
+            frozen[eid] = anchors[eid]["content"]
+        elif eid not in anchors and owner.snapshot.get("lore", {}).get(eid, {}).get("present"):
+            recalled.add(eid)
+        else:
+            raise ToolError("INVALID_REFERENCE", "该编号没有在场的世界书正文，请重新召回。")
+    if recalled:
+        frozen.update(recalled_bodies(owner.lore_tool_messages(owner.visible_lore_history()), recalled))
+    # The read itself can outlive the exchange that introduced the preview.
+    owner.recall_ids = list(selected.values())
+    return {"entries": [{"ref": ref, "text": frozen[eid]} for ref, eid in selected.items()]}
+
+
+def recalled_bodies(messages, requested: set[str]) -> dict[str, str]:
+    bodies = {}
+    # A re-admitted entry can have older versions in the same window. Parse
+    # only the newest exchange for each requested identity, once per batch.
+    for message in reversed(list(messages)):
+        ids = message["lore_ids"]
+        if all(eid not in requested or eid in bodies for eid in ids):
+            continue
+        data = json.loads(message["content"])["data"]
+        matched = "matches" in data
+        for eid, row in zip(ids, data["matches" if matched else "entries"], strict=True):
+            if eid not in requested or eid in bodies:
+                continue
+            if "preview" in row:
+                body = unwrapped(row["preview"], "lorebook") + message["_lore_tails"][eid]
+            else:
+                # Short entries and pre-preview recalls already contain the entire body.
+                body = unwrapped(row["text"], "lorebook") if matched else row["text"]
+            bodies[eid] = body
+        if len(bodies) == len(requested):
+            return bodies
+    raise ToolError("INVALID_REFERENCE", "旧记录没有可定位的正文；可用 read_lore_entry 读取当前设定。")
 
 
 class RetrievalLane:

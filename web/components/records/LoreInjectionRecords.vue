@@ -8,7 +8,7 @@ const emit = defineEmits<{ remove: [record: LoreRecord] }>();
 <template>
   <details class="lore-injection-records" :data-anchor-id="records[0]?.anchor_id">
     <summary>
-      <span>世界书注入</span><small>{{ records.length }} 条</small>
+      <span>世界书注入</span><small>{{ records.length }} 条 · 冻结原文</small>
     </summary>
     <div class="lore-injection-items">
       <details v-for="record in records" :key="record.id" class="lore-injection-item">

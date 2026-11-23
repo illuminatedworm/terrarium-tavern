@@ -106,6 +106,7 @@ class AgentSettings(StrictSettings):
     lore_recursive: bool = Field(default=True, strict=True)
     lore_recursion_depth: int = Field(default=1, ge=0, le=16, strict=True)
     lore_max_entries: int = Field(default=5, ge=1, le=1000, strict=True)
+    lore_preview_chars: int = Field(default=120, ge=1, le=2_000_000, strict=True)
     # Include a title line by default; users can choose ST-style content-only injection.
     lore_injection_title: bool = Field(default=True, strict=True)
     # Legacy setting retained for stored profiles; selected entries are always complete.
@@ -186,7 +187,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[22] = 22
+    version: Literal[23] = 23
     story: StorySettings = Field(default_factory=StorySettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
     revisions: dict[str, int] = Field(default_factory=lambda: {"story": 0, "shared": 0})
@@ -533,6 +534,9 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                 kemini.pop(key, None)
         if raw["version"] == 21:
             raw["version"] = 22
+        if raw["version"] == 22:
+            raw["version"] = 23
+            changed_scopes.add("story")
         doc = SettingsDocument.model_validate(raw)
         # Story and Advisor update the bundled default in slot 1.
         for scope, option, legacy_hashes, default in (

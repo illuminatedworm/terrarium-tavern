@@ -204,7 +204,7 @@ android-dev/build-env/Scripts/python.exe tools/android/dev.py check
 
 - 原生程序只从安装器提取的 `nativeLibraryDir` 启动，不执行可写目录中的文件。
 - 每个模型独立进程、loopback 随机端口和临时认证密钥；取消、超时或停止服务结束对应进程，不影响另一个模型。
-- 固定单槽、4096-token 上下文，超过时报错，不截断；世界书索引沿用 token 分片，已准入条目完整注入。
+- 固定单槽、4096-token 上下文，超过时报错，不截断；世界书索引沿用 token 分片，剧情动态条目沿用桌面的预览与全文读取协议。
 - 设备选择保存为 `cpu`、`opencl:0` 或 `hexagon:0`。切换设备不重新导入权重，但需重新预热，派生向量按设备与引擎包隔离。
 - 加速设备在服务启动后由后台探测，探测完成前 CPU 可直接使用。加速推理失败时明确报错，不自动回退 CPU。界面显示实际设备与层卸载数量；层卸载不代表所有算子都在加速器上执行。
 - Hexagon 是[上游实验性后端](https://github.com/ggml-org/llama.cpp/blob/184f6536024668e8908ab8c86033d56708e62b40/docs/backend/snapdragon/README.md)。reranker 在三种设备上都使用 `rank` pooling 读取 `P(yes)`。

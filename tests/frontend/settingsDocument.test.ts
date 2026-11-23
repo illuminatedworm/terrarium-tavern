@@ -3,7 +3,7 @@ import { clone, difference, rebaseSettings, type SettingsDocument } from '../../
 
 const fixture = () =>
   ({
-    version: 22,
+    version: 23,
     story: {
       model: { model: 'full', reply_tokens: 2048 },
       system_prompt: {
