@@ -6,6 +6,7 @@ import json
 from tavern.media.config import (
     LegacySpeechArguments,
     MediaConfig,
+    available_voices,
     canonical_voice,
     image_reference_limit,
     image_sizes,
@@ -33,10 +34,16 @@ class MediaDraft:
                     clip.get("story_model", story) == story
                     and conn["provider_id"] == self.config.speech.provider_id
                     and conn["model"] == self.config.speech.model
+                    and clip["speaker"] not in self.config.voices
                 ):
-                    self.config.voices.setdefault(
-                        clip["speaker"], canonical_voice(conn["adapter"], clip["voice"])
-                    )
+                    voice = canonical_voice(conn["adapter"], clip["voice"])
+                    try:
+                        validate_voice(self.config.speech, voice)
+                    except ValueError:
+                        # Keep the old clip for review. A repaired default can serve
+                        # later clips for this speaker without inheriting the invalid voice.
+                        continue
+                    self.config.voices[clip["speaker"]] = voice
         self.pending_images = list((saved or {}).get("pending_images", []))
         self.history_ids = {m["id"] for m in owner.history}
 
@@ -106,6 +113,12 @@ class MediaDraft:
                     chosen = canonical_voice(self.config.speech.adapter, args.voice)
                     if args.speaker in self.config.voices and chosen != voice:
                         raise ToolError("PERMISSION_DENIED", "旧配音调用不能覆盖此角色已有的声线")
+                    # A pending model-authored choice is limited to the catalog it saw.
+                    if self.config.speech.adapter in (
+                        "openai_realtime",
+                        "gemini_tts",
+                    ) and chosen not in available_voices(self.config.speech, legacy_catalog=True):
+                        raise ToolError("INVALID_ARGUMENTS", "旧配音调用只能选择当时提供的预设音色")
                     voice = chosen
                 elif args.speaker not in self.config.voices:
                     raise ToolError("INVALID_ARGUMENTS", "旧配音调用没有为新角色选择声线")

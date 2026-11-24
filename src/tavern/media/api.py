@@ -14,6 +14,7 @@ from tavern.core.channels import Channel, provider_channel
 from tavern.core.errors import NotFound
 from tavern.media import storage
 from tavern.media.config import (
+    GEMINI_CLOUD_VOICE_MODELS,
     GEMINI_METADATA_VOICES,
     GEMINI_PROMPT_MODELS,
     SEED_VOICES,
@@ -115,6 +116,7 @@ def protocol_catalog(document):
         "seed_voice_names": {identity: name for name, identity in SEED_VOICES.items()},
         "gemini_speech": {
             "prompt_prefixes": GEMINI_PROMPT_MODELS,
+            "cloud_voice_prefixes": GEMINI_CLOUD_VOICE_MODELS,
             "metadata_voices": GEMINI_METADATA_VOICES,
         },
         "adapters": {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
 import { channelLabels, type Channel } from '../../lib/channels';
-import type { MediaKind, MediaProtocols, Profile } from '../../lib/media';
+import { isSeedClone, voiceError, type MediaKind, type MediaProtocols, type Profile } from '../../lib/media';
 import { mediaPreview } from '../../lib/api';
 import MediaVoiceSelect from './MediaVoiceSelect.vue';
 const props = defineProps<{
@@ -80,8 +80,11 @@ async function generate() {
     </div>
     <small
       >{{ channelLabels[channel] }} · {{ providerName || '未选择提供商' }} ·
-      {{ profile.model || '未选择模型' }}。生成将使用此渠道额度。</small
-    >
+      {{ profile.model || '未选择模型' }}。生成将使用此渠道额度。
+      <strong v-if="isSeedClone(profile)"
+        >试听会调用正式合成接口。尚未转正的后付费复刻音色首次合成会转正并收取音色槽位费。</strong
+      >
+    </small>
     <button
       type="button"
       :disabled="
@@ -90,7 +93,7 @@ async function generate() {
         missingKey ||
         !profile.model.trim() ||
         !sample.trim() ||
-        (kind === 'speech' && !voice.trim())
+        ('default_voice' in profile && !!voiceError(profile, catalog, voice))
       "
       @click="generate"
     >

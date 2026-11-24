@@ -3,7 +3,7 @@
 import base64
 import json
 from typing import Protocol
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from websockets.asyncio.client import connect
 
@@ -81,13 +81,26 @@ class OpenAIImages:
         return single_image(body, mime)
 
 
+def openai_voice(request: dict) -> str | dict[str, str]:
+    voice = request["voice"]
+    conn = request["connection"]
+    # The default ordinary API-key connection also points directly at OpenAI.
+    if voice.startswith("voice_") and (
+        conn["auth_mode"] == "openai_api_key" or urlsplit(conn["base_url"]).hostname == "api.openai.com"
+    ):
+        return {"id": voice}
+    return voice
+
+
 class OpenAIHTTPSpeech:
     async def generate(self, request, *, key, proxy, references):
         conn = request["connection"]
-        voice = request["voice"]
-        if conn["auth_mode"] == "openai_api_key" and voice.startswith("voice_"):
-            voice = {"id": voice}
-        body = {"model": conn["model"], "input": request["text"], "voice": voice, "response_format": "wav"}
+        body = {
+            "model": conn["model"],
+            "input": request["text"],
+            "voice": openai_voice(request),
+            "response_format": "wav",
+        }
         if conn["speed"] != 1:
             body["speed"] = conn["speed"]
         if conn["send_instructions"] and (instructions := speech_instructions(request)):
@@ -130,7 +143,7 @@ class OpenAIRealtime:
                             "audio": {
                                 "output": {
                                     "format": {"type": "audio/pcm", "rate": 24000},
-                                    "voice": request["voice"],
+                                    "voice": openai_voice(request),
                                 }
                             },
                         },

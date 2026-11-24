@@ -6,6 +6,7 @@ import wave
 from email.message import Message
 from urllib.parse import quote
 
+from tavern.media.config import GEMINI_METADATA_VOICES
 from tavern.media.transport import MediaResult, image_result, pcm_wav, post_json, speech_instructions
 from tavern.scripting.http_errors import upstream_message
 
@@ -38,7 +39,15 @@ async def generate_content(connection, parts, config, *, key, proxy):
 class GeminiSpeech:
     async def generate(self, request, *, key, proxy, references):
         connection = request["connection"]
-        speech = {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": request["voice"]}}}
+        voice = request["voice"]
+        # Keep the prebuilt request used by existing clips and older relays.
+        # generateContent takes a project voice ID in voiceConfig.voice.
+        voice_config = (
+            {"prebuiltVoiceConfig": {"voiceName": voice}}
+            if voice in GEMINI_METADATA_VOICES
+            else {"voice": voice}
+        )
+        speech = {"voiceConfig": voice_config}
         if connection["language_code"]:
             speech["languageCode"] = connection["language_code"]
         config = {"responseModalities": ["AUDIO"], "speechConfig": speech}

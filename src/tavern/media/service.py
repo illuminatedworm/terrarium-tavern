@@ -9,6 +9,7 @@ from functools import partial
 
 from tavern.core.errors import NotFound
 from tavern.media import storage
+from tavern.media.config import validate_frozen_voice
 from tavern.media.providers import ADAPTERS, connection, reference_bytes
 from tavern.storage.store import Conflict
 
@@ -169,6 +170,9 @@ class MediaService:
         key = ""
         try:
             request = json.loads(row["request"])
+            if row["kind"] == "speech":
+                # Queued and manually retried jobs can predate the current voice checks.
+                validate_frozen_voice(request)
             key, proxy = connection(self.store, request)
             references = await file_io(reference_bytes, self.store, row["session"], request)
             async with asyncio.timeout(request["connection"]["timeout_seconds"]):

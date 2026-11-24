@@ -12,12 +12,14 @@ from tavern.media.config import (
     canonical_voice,
     image_reference_limit,
     regenerate_image_size,
+    validate_frozen_voice,
     validate_voice,
 )
 from tavern.media.routing import (
     ModelKey,
     StoryMediaSettings,
     VoiceTable,
+    media_key,
     story_key,
     upgrade_selection,
     validate_channels,
@@ -142,22 +144,32 @@ def save_config(
         if expected_selection is not None and expected_selection != selection_token(row["media_config"]):
             raise Conflict("角色表或媒体设置已改变，请重新载入")
         text_model = story_key(row, document)
+        previous = StoryMediaSettings.model_validate_json(row["media_config"])
         if not isinstance(value, StoryMediaSettings):
             raw = value.model_dump() if isinstance(value, MediaConfig) else value
-            value = upgrade_selection(
-                raw, row, document, StoryMediaSettings.model_validate_json(row["media_config"])
-            )
+            value = upgrade_selection(raw, row, document, previous)
         for part in (value.speech, value.image):
             if part.custom:
                 validate_channels(part.custom, document.shared.providers, allow_missing=True)
+        if value.speech.custom:
+            value.speech.custom.validate_voice_edits(previous.speech.custom or document.story.media.speech)
         effective = value.resolve(document.story.media, text_model)
         for options in (effective.speech, effective.image):
             if options.enabled:
                 connection_snapshot(document.shared, options)
         if effective.speech.enabled:
             validate_voice(effective.speech, effective.speech.default_voice)
-            for voice in set(effective.voices.values()):
-                validate_voice(effective.speech, voice)
+        previous_table = previous.table(text_model, media_key(effective.speech))
+        previous_voices = previous_table.voices if previous_table else {}
+        # Switching speech off must still work with an old invalid binding. Only
+        # edited bindings need checking while disabled; enabling checks the whole table.
+        voices = {
+            voice
+            for name, voice in effective.voices.items()
+            if effective.speech.enabled or voice != previous_voices.get(name)
+        }
+        for voice in voices:
+            validate_voice(effective.speech, voice)
         db.execute("UPDATE sessions SET media_config=? WHERE id=?", (dump(value.model_dump()), sid))
         sequence = next_sequence(db, sid)
         for kind, enabled in (("speech", value.speech.enabled), ("image", value.image.enabled)):
@@ -330,6 +342,14 @@ def commit(db, sid, mid, draft):
                 (jid,),
             )
         if kind == "speech":
+            # A review or interrupted draft from v26 may already contain an
+            # incompatible clip. Keep the story and the request, without binding its voice.
+            try:
+                validate_frozen_voice(request)
+            except ValueError as error:
+                if selection.speech.enabled:
+                    db.execute("UPDATE media_jobs SET status='failed',error=? WHERE id=?", (str(error), jid))
+                continue
             if "story_model" in request:
                 story = ModelKey.model_validate(request["story_model"])
             else:

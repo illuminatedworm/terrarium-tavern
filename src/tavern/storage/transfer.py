@@ -33,7 +33,7 @@ from tavern.storage.worldbooks import read_defaults, write_defaults
 MAX_UPLOAD = 256 * 1024 * 1024
 MAX_UNPACKED = 512 * 1024 * 1024
 FORMAT = "terrarium-tavern-personal-data"
-PACKAGE_VERSION = 24
+PACKAGE_VERSION = 25
 JSON_FIELDS = {
     "worldbooks": {"book"},
     "cards": {"resources", "document", "report"},
@@ -868,7 +868,7 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                     incoming.shared.card_author,
                 ):
                     profile.capability, profile.capability_key = "unknown", ""
-                store.write_settings(db, current, incoming)
+                store.write_settings(db, current, incoming, restoring=True)
                 result.update(
                     settings_restored=True,
                     browser_preferences=browser_preferences(package["settings"].get("browser", {})),

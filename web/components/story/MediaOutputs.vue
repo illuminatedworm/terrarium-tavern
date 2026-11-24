@@ -156,6 +156,9 @@ function showImage(url: string) {
           }}
         </p>
         <p v-if="job.request.connection.adapter === 'seed_tts'">
+          <template v-if="job.request.connection.model === 'seed-icl-2.0'"
+            >复刻标准版 · 服务忽略演绎指令 ·
+          </template>
           语速调整 {{ job.request.connection.speech_rate }}% · 音量调整
           {{ job.request.connection.loudness_rate }}% · {{ job.request.connection.sample_rate }} Hz
         </p>

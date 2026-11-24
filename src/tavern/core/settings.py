@@ -189,7 +189,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[25] = 25
+    version: Literal[26] = 26
     story: StorySettings = Field(default_factory=StorySettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
     revisions: dict[str, int] = Field(default_factory=lambda: {"story": 0, "shared": 0})
@@ -551,6 +551,10 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                 story.get("media", {}), raw.get("shared", {}).get("providers", [])
             ).model_dump()
             raw["version"] = 25
+            changed_scopes.add("story")
+        if raw["version"] == 25:
+            # Older readers reject cloud IDs in Gemini and Realtime default voices.
+            raw["version"] = 26
             changed_scopes.add("story")
         doc = SettingsDocument.model_validate(raw)
         # Story and Advisor update the bundled default in slot 1.

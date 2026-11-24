@@ -156,7 +156,7 @@ def validate_bundle(bundle, messages, blobs, identity):
             SpeechArguments.model_validate(
                 {k: v for k, v in request.items() if k not in ("connection", "voice", "story_model")}
             )
-            validate_voice(options, request["voice"])
+            validate_voice(options, request["voice"], stored=True)
             if "story_model" in request:
                 ModelKey.model_validate(request["story_model"])
         else:

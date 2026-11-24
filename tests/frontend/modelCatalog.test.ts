@@ -39,7 +39,7 @@ describe('persistent model catalog UI', () => {
       api_path: 'proxy/v2',
     });
     const saved = {
-      version: 25,
+      version: 26,
       story: { model: original },
       shared: {},
       revisions: { story: 0, shared: 0 },

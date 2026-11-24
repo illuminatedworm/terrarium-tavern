@@ -3,7 +3,10 @@ import { computed, ref, useId } from 'vue';
 import { channelLabels, channelProviders, type Channel } from '../../lib/channels';
 import {
   adapterLabels,
+  isSeedClone,
   metadataStyle,
+  seedCloneResource,
+  voiceError,
   type Adapter,
   type MediaDefaults,
   type MediaKind,
@@ -48,13 +51,18 @@ function hasCredential(p: Provider | undefined, profile: Profile) {
   );
 }
 const missingKey = computed(() => !!provider.value && !hasCredential(provider.value, current.value));
-const liveReady = computed(
-  () =>
-    !!live.value.model.trim() &&
-    hasCredential(
-      props.providers.find((p) => p.id === live.value.provider_id),
-      live.value,
-    ),
+function ready(p: Provider | undefined, profile: Profile) {
+  return (
+    !!profile.model.trim() &&
+    hasCredential(p, profile) &&
+    (!('default_voice' in profile) || !voiceError(profile, props.catalog, profile.default_voice))
+  );
+}
+const liveReady = computed(() =>
+  ready(
+    props.providers.find((p) => p.id === live.value.provider_id),
+    live.value,
+  ),
 );
 const providerOptions = computed(() => [
   ...available.value.map((p) => ({ value: p.id, label: p.name, description: p.base_url })),
@@ -117,6 +125,7 @@ const list = useModelCatalog(
   () => !props.disabled && !!provider.value && current.value.adapter !== 'seed_tts',
 );
 const models = computed(() => {
+  if (current.value.adapter === 'seed_tts') return [props.catalog.adapters.seed_tts.model, seedCloneResource];
   const names = list.catalog.value?.models || [];
   const relevant = props.kind === 'image' ? /image|banana|seedream|seededit/i : /tts|realtime|speech/i;
   return [
@@ -271,7 +280,7 @@ async function refreshModels() {
                     }}
                   </option>
                   <option value="speech_metadata">独立样式</option>
-                  <option value="prompt">台词前的提示词</option>
+                  <option value="prompt">台词前的提示词（模型别名使用旧版预设音色）</option>
                 </select></label
               >
               <label>朗读语言<input v-model.trim="speech.language_code" placeholder="自动 / zh-CN" /></label>
@@ -293,8 +302,9 @@ async function refreshModels() {
             </template>
             <template v-if="speech.adapter === 'seed_tts'">
               <small class="full"
-                >套餐语音使用 openspeech.bytedance.com 的专属连接和密钥。按量语音使用语音服务密钥，路径填
-                api/v3。</small
+                >套餐语音使用专属密钥、路径 api/v3/plan 和资源
+                seed-tts-2.0。调用已复刻的音色，请使用按量语音连接，路径填 api/v3，资源选
+                seed-icl-2.0。</small
               >
               <label
                 >语速调整（%）<input v-model.number="speech.speech_rate" type="number" min="-50" max="100"
@@ -310,6 +320,9 @@ async function refreshModels() {
                 </select></label
               >
             </template>
+            <small v-if="isSeedClone(speech)" class="full"
+              >复刻标准版会忽略随请求发送的演绎指令，语速和音量仍可调。</small
+            >
             <label v-if="speech.adapter !== 'openai_speech' || speech.send_instructions" class="full"
               >语音基础指令<textarea v-model="speech.instructions" rows="3" />
             </label>
@@ -356,7 +369,7 @@ async function refreshModels() {
       <button
         v-if="editing !== route.active_channel && !disabled"
         type="button"
-        :disabled="!provider || missingKey || !current.model.trim()"
+        :disabled="!ready(provider, current)"
         @click="route.active_channel = editing"
       >
         使用此渠道

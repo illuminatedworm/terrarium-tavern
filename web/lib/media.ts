@@ -83,28 +83,62 @@ export interface MediaProtocols {
   keyless_adapters: Record<string, Adapter[]>;
   speech_voices: Record<SpeechProfile['adapter'], string[]>;
   seed_voice_names: Record<string, string>;
-  gemini_speech: { prompt_prefixes: string[]; metadata_voices: string[] };
+  gemini_speech: { prompt_prefixes: string[]; cloud_voice_prefixes: string[]; metadata_voices: string[] };
   adapters: { [A in Adapter]: Extract<MediaConnection, { adapter: A }> };
 }
 export type MediaSource = 'story' | 'global' | 'mixed';
 export const modelKey = ({ provider_id, model }: ModelKey): ModelKey => ({ provider_id, model });
 export const sameModel = (a: ModelKey, b: ModelKey) => a.provider_id === b.provider_id && a.model === b.model;
+export const seedCloneResource = 'seed-icl-2.0';
+export function isSeedClone(profile: Profile) {
+  return profile.adapter === 'seed_tts' && profile.model === seedCloneResource;
+}
+export function seedPresetId(id: string, catalog: MediaProtocols) {
+  if (Object.hasOwn(catalog.seed_voice_names, id)) return id;
+  return Object.keys(catalog.seed_voice_names).find((key) => catalog.seed_voice_names[key] === id);
+}
+function matchesModel(model: string, prefixes: string[]) {
+  const name = model.replace(/^models\//, '');
+  return prefixes.some((prefix) => name.startsWith(prefix));
+}
+export function geminiPresetOnly(speech: SpeechProfile, catalog: MediaProtocols) {
+  if (speech.adapter !== 'gemini_tts') return false;
+  const models = catalog.gemini_speech;
+  return (
+    matchesModel(speech.model, models.prompt_prefixes) ||
+    (speech.instruction_format === 'prompt' && !matchesModel(speech.model, models.cloud_voice_prefixes))
+  );
+}
 export function metadataStyle(speech: SpeechProfile, catalog: MediaProtocols) {
   if (speech.adapter !== 'gemini_tts') return false;
   if (speech.instruction_format !== 'auto') return speech.instruction_format === 'speech_metadata';
-  const name = speech.model.replace(/^models\//, '');
-  return !catalog.gemini_speech.prompt_prefixes.some((prefix) => name.startsWith(prefix));
+  return !matchesModel(speech.model, catalog.gemini_speech.prompt_prefixes);
 }
-export function voiceOptions(p: SpeechProfile, catalog: MediaProtocols) {
-  const ids = metadataStyle(p, catalog)
-    ? catalog.gemini_speech.metadata_voices
-    : catalog.speech_voices[p.adapter];
+export function voiceError(p: SpeechProfile, catalog: MediaProtocols, id: string): string {
+  if (!id.trim()) return '请选择音色或填写音色 ID。';
+  if (geminiPresetOnly(p, catalog) && !catalog.speech_voices.gemini_tts.includes(id))
+    return '当前模型或别名配置仅支持旧版 Gemini 预设音色，请重新选择。';
+  if (p.adapter === 'gemini_tts' && id.startsWith('voicekey_'))
+    return '请填写同一 Google 项目保存的 voice_… 音色 ID。';
+  if (isSeedClone(p) && seedPresetId(id, catalog))
+    return '当前音色属于豆包普通语音合成，请为复刻资源填写专属音色 ID。';
+  return '';
+}
+export function voiceOptions(p: SpeechProfile, catalog: MediaProtocols, selected = p.default_voice) {
+  const saved = [p.default_voice, selected].filter((id) => !voiceError(p, catalog, id));
+  if (isSeedClone(p)) {
+    return [...new Set(saved)].map((id) => ({ value: id, label: id, description: undefined }));
+  }
+  const ids =
+    p.adapter === 'gemini_tts' && !geminiPresetOnly(p, catalog)
+      ? catalog.gemini_speech.metadata_voices
+      : catalog.speech_voices[p.adapter];
   const names =
     p.adapter === 'openai_speech' ? p.voice_names : p.adapter === 'seed_tts' ? catalog.seed_voice_names : {};
-  return [...new Set([...Object.keys(names), ...ids])].map((id) => ({
+  return [...new Set([...saved, ...Object.keys(names), ...ids])].map((id) => ({
     value: id,
-    label: names[id] || id,
-    description: names[id] ? id : undefined,
+    label: Object.hasOwn(names, id) && names[id] ? names[id] : id,
+    description: Object.hasOwn(names, id) && names[id] ? id : undefined,
   }));
 }
 export interface MediaAsset {

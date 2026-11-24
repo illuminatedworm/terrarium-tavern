@@ -49,6 +49,14 @@ class SpeechChannels(ChannelSettings[SpeechProfile]):
     max_segments: int = Field(default=20, ge=1, le=100, strict=True)
     max_characters: int = Field(default=2000, ge=1, le=100000, strict=True)
 
+    def validate_voice_edits(self, previous: "SpeechChannels") -> None:
+        # Leave an older incompatible choice editable without blocking other settings.
+        for channel in ("standard", "chatgpt"):
+            profile = getattr(self, channel)
+            activated = channel == self.active_channel and channel != previous.active_channel
+            if activated or profile != getattr(previous, channel):
+                validate_voice(profile, profile.default_voice)
+
 
 class ImageChannels(ChannelSettings[ImageProfile]):
     standard: ImageProfile = Field(
@@ -143,7 +151,7 @@ def validate_channels(routes, providers, *, allow_missing=False):
     for channel in ("standard", "chatgpt"):
         profile = getattr(routes, channel)
         if isinstance(routes, SpeechChannels):
-            validate_voice(profile, profile.default_voice)
+            validate_voice(profile, profile.default_voice, stored=True)
         if not profile.provider_id:
             continue
         p = by_id.get(profile.provider_id)

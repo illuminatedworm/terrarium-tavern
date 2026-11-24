@@ -20,7 +20,7 @@ const props = withDefaults(
     compact?: boolean;
     highlighted?: boolean;
     searchable?: boolean;
-    allowCustom?: boolean;
+    allowCustom?: boolean | ((value: string) => boolean);
     customDescription?: string;
     searchPlaceholder?: string;
     emptyText?: string;
@@ -50,12 +50,11 @@ const filtered = computed(() => {
     `${option.label} ${option.value} ${option.description || ''}`.toLocaleLowerCase().includes(needle),
   );
 });
-const custom = computed(
-  () =>
-    props.allowCustom &&
-    !!query.value.trim() &&
-    !props.options.some((option) => option.value === query.value.trim()),
-);
+const custom = computed(() => {
+  const value = query.value.trim();
+  const allowed = typeof props.allowCustom === 'function' ? props.allowCustom(value) : props.allowCustom;
+  return !!value && allowed && !props.options.some((option) => option.value === value);
+});
 const choices = computed<SelectMenuOption[]>(() =>
   custom.value
     ? [
@@ -179,8 +178,9 @@ function onScroll(event: Event) {
 function toggled(event: Event) {
   open.value = (event as ToggleEvent).newState === 'open';
 }
-watch(query, async () => {
-  active.value = choices.value.findIndex((option) => !option.disabled);
+watch(query, async (value) => {
+  if (value.trim()) active.value = choices.value.findIndex((option) => !option.disabled);
+  else resetActive();
   await nextTick();
   position();
   scrollActive();

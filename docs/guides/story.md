@@ -75,14 +75,22 @@
 | 用途与协议 | 连接与 API 路径 | 可调参数 |
 |---|---|---|
 | 配音 · Speech HTTP | 普通兼容服务或 OpenAI API Key，通常为 `v1`，调用 `/audio/speech` | 默认音色和自定义音色 ID、显示名称、语速、可选演绎指令，返回 PCM WAV |
-| 配音 · OpenAI Realtime | OpenAI API Key 或兼容服务，通常为 `v1` | 角色声线、语音基础指令 |
-| 配音 · Gemini TTS | Google AI Studio 或本地反代，通常为 `v1beta` | 3.8 的独立样式与 70 种声线，2.5 / 3.1 的提示词与 30 种声线。可指定朗读语言与采样温度，使用模型别名时可手选演绎指令格式 |
+| 配音 · OpenAI Realtime | OpenAI API Key 或兼容服务，通常为 `v1` | 预设音色、云端音色 ID、语音基础指令 |
+| 配音 · Gemini TTS | Google AI Studio 或本地反代，通常为 `v1beta` | 3.8 支持预设音色、同项目保存的云端音色和独立演绎样式。2.5 / 3.1 使用预设音色和提示词。可指定语言、温度和演绎指令格式 |
 | 配音 · 豆包语音 2.0 | `https://openspeech.bytedance.com`。Agent Plan 专属密钥使用 `api/v3/plan`，按量语音服务密钥使用 `api/v3` | 角色声线、语音指令、语速、音量、采样率 |
 | 插图 · OpenAI Images | OpenAI API Key 或兼容服务，通常为 `v1` | 画质、固定尺寸或剧情选图幅、PNG/JPEG/WebP |
 | 插图 · Gemini | Google AI Studio 或本地反代，通常为 `v1beta` | 分辨率、宽高比，可固定画幅或交给剧情模型 |
 | 插图 · Seedream | `https://ark.cn-beijing.volces.com`，路径 `api/v3` | 分辨率档位或固定宽高、输出格式、AI 生成水印 |
 
 例如，本地 AI Studio 服务使用 `http://127.0.0.1:2048` 时，可把密钥留空并关闭该连接的接口代理。方舟生图使用推理密钥，套餐配音需另建语音连接。不同型号支持的分辨率和格式以服务为准，任务详情会显示接口返回的错误。[Gemini 配音](https://ai.google.dev/gemini-api/docs/speech-generation) · [Gemini 生图](https://ai.google.dev/gemini-api/docs/image-generation) · [Seedream 参数](https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh) · [方舟套餐语音](https://docs.volcengine.com/docs/ark/agent-plan-personal-voice-model?lang=zh)
+
+**使用已有云端音色。** 在提供商处制作并保存音色，复制返回的 ID。在「默认音色」「试听音色」或「角色音色表」的搜索框粘贴 ID，选择「使用此音色 ID」。角色表保存原始 ID，由当前配音连接调用。
+
+- **Google AI Studio** 的 Gemini 3.8 Flash TTS 和 Flash-Lite TTS 可以调用同项目保存的 `voice_…`，包括设计音色和复刻音色。本地反代需要将请求转给有权使用该音色的 Google 项目。使用 2.5 或 3.1 的模型别名时，在「演绎指令格式」选择「台词前的提示词」，音色菜单会使用旧版预设。3.8 的别名选「独立样式」即可使用项目音色。[Google 云端音色](https://aistudio.google.com/docs/voice-design)
+- **OpenAI 官方**的 Speech 和 Realtime 可使用有权限的项目中由录音创建的 `voice_…`。通过「普通 API」直连 `api.openai.com` 时也使用官方音色格式。第三方普通兼容接口按字符串接收提供商自己的音色 ID。文字设计的音色适用于 GPT-Live。[OpenAI 自定义音色](https://developers.openai.com/api/docs/guides/custom-voices)
+- **豆包声音复刻 2.0** 使用已开通复刻的语音服务连接，API 路径填 `api/v3`，语音资源选 `seed-icl-2.0`。切换资源后，请将默认音色和该资源下仍使用普通音色的角色绑定改为复刻音色 ID。此资源默认使用复刻标准版，服务会忽略演绎指令。方舟 Agent Plan 文档列出的合成资源为 `seed-tts-2.0`。[豆包 HTTP 合成协议](https://docs.volcengine.com/docs/doubao-voice/http-chunked-sse-unidirectional-streaming-v3?lang=zh) · [方舟套餐接入](https://docs.volcengine.com/docs/ark/agent-plan-personal-voice-model?lang=zh)
+
+豆包的「生成试听」和剧情配音都会调用正式合成接口。对尚未转正的后付费 `custom_speaker_id`，首次合成会使音色转正，并收取音色槽位费。[火山引擎声音复刻 API](https://docs.volcengine.com/docs/doubao-voice/sound-replica-api-v3?lang=zh)
 
 - 配音工具直接接收模型选择的文本、角色和演绎要求，不改造正文交付，不提供台词编号，不与正文做匹配、来源或逐字校验。实际文本、声线和完整语音指令都可在任务详情中查看。语音基础指令可在媒体设置中编辑；服务输出可能读错，可手动重做。
 - 「角色音色表」属于当前故事、剧情模型和配音模型，每个模型都按提供商和模型名区分。剧情模型只登记角色、台词与演绎要求。新角色在配音计划首次提交时绑定当时的默认音色。你可以为角色预设音色，也可以修改已有绑定。切回原模型组合会恢复该表，分支继承后独立保存。

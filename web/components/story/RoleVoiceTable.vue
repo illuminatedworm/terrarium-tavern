@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue';
 import {
   modelKey,
   sameModel,
-  voiceOptions,
+  voiceError,
   type ModelKey,
   type SpeechProfile,
   type VoiceTable,
@@ -40,7 +40,6 @@ watch(
   },
   { immediate: true },
 );
-const available = computed(() => voiceOptions(props.speech, props.catalog));
 function describe(key: ModelKey, providerName?: string) {
   return (
     [
@@ -94,13 +93,6 @@ function add() {
       >
         移除
       </button>
-      <small
-        v-if="
-          !['openai_speech', 'seed_tts'].includes(speech.adapter) && !available.some((v) => v.value === id)
-        "
-        role="alert"
-        >当前协议不支持此音色，请重新选择。</small
-      >
     </div>
     <div class="role-add">
       <label class="role-add-field">
@@ -123,7 +115,7 @@ function add() {
           disabled ||
           !name.trim() ||
           !story.model ||
-          !voice.trim() ||
+          !!voiceError(speech, catalog, voice) ||
           !speech.provider_id ||
           !speech.model ||
           Object.hasOwn(table?.voices || {}, name.trim())
@@ -165,10 +157,6 @@ function add() {
 }
 .role-voice strong {
   overflow-wrap: anywhere;
-}
-.role-voice small {
-  grid-column: 1/-1;
-  color: var(--danger);
 }
 .role-add {
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -57,6 +57,8 @@ SPEECH_VOICES = {
     "seed_tts": tuple(SEED_VOICES.values()),
 }
 GEMINI_PROMPT_MODELS = ("gemini-2.5-", "gemini-3.1-")
+GEMINI_CLOUD_VOICE_MODELS = ("gemini-3.8-",)
+SEED_CLONE_RESOURCE = "seed-icl-2.0"
 GEMINI_METADATA_VOICES = GEMINI_VOICES + tuple(
     "Arlo Bodi Brio Cleo Cruz Daro Elio Enya Enzo Finn Fola Gero Hali Jett Jori Kira Knox Koda Lora Ludo "
     "Lumi Mako Milo Neno Nika Nyla Olin Rami Riko Rina Sami Sola Tari Tavi Tova Varo Veda Zali Zeno Zuri".split()
@@ -121,13 +123,20 @@ class GeminiSpeechProfile(SpeechConnection):
     temperature: float | None = Field(None, ge=0, le=2, allow_inf_nan=False)
     language_code: str = Field(default="", pattern=r"^(?:[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*)?$")
 
+    def legacy_model(self) -> bool:
+        return self.model.removeprefix("models/").startswith(GEMINI_PROMPT_MODELS)
+
     def effective_format(self) -> str:
         if self.instruction_format != "auto":
             return self.instruction_format
-        return (
-            "prompt"
-            if self.model.removeprefix("models/").startswith(GEMINI_PROMPT_MODELS)
-            else "speech_metadata"
+        return "prompt" if self.legacy_model() else "speech_metadata"
+
+    def preset_voices_only(self) -> bool:
+        # A known model keeps its voice capabilities when the user changes how
+        # instructions are sent. For a relay alias, prompt selects the older TTS protocol.
+        model = self.model.removeprefix("models/")
+        return self.legacy_model() or (
+            self.instruction_format == "prompt" and not model.startswith(GEMINI_CLOUD_VOICE_MODELS)
         )
 
 
@@ -223,9 +232,12 @@ ImageOptions = Annotated[
 _OPTION_TYPES = {"speech": TypeAdapter(SpeechProfile), "image": TypeAdapter(ImageProfile)}
 
 
-def available_voices(speech: SpeechProfile) -> tuple[str, ...]:
-    if isinstance(speech, GeminiSpeechProfile) and speech.effective_format() == "speech_metadata":
-        return GEMINI_METADATA_VOICES
+def available_voices(speech: SpeechProfile, *, legacy_catalog: bool = False) -> tuple[str, ...]:
+    if isinstance(speech, GeminiSpeechProfile):
+        preset_only = speech.effective_format() == "prompt" if legacy_catalog else speech.preset_voices_only()
+        return GEMINI_VOICES if preset_only else GEMINI_METADATA_VOICES
+    if isinstance(speech, SeedSpeechProfile) and speech.model == SEED_CLONE_RESOURCE:
+        return ()
     return SPEECH_VOICES[speech.adapter]
 
 
@@ -234,16 +246,24 @@ def canonical_voice(adapter: str, voice: str) -> str:
     return SEED_VOICES.get(voice, voice) if adapter == "seed_tts" else voice
 
 
-def validate_voice(speech: SpeechProfile, voice: str) -> None:
+def validate_voice(speech: SpeechProfile, voice: str, *, stored: bool = False) -> None:
+    if not isinstance(voice, str) or not voice.strip():
+        raise ValueError("请选择音色或填写音色 ID")
+    if isinstance(speech, GeminiSpeechProfile):
+        # v26 could save cloud IDs for prompt-format aliases. Keep the original
+        # settings and archived jobs readable so the user can inspect and correct them.
+        preset_only = speech.legacy_model() if stored else speech.preset_voices_only()
+        if preset_only and voice not in available_voices(speech, legacy_catalog=stored):
+            raise ValueError("当前 Gemini 配音模型或别名配置仅支持旧版预设音色，请重新选择")
+        if voice.startswith("voicekey_"):
+            raise ValueError("请在 Google 项目中保存音色，并填写返回的 voice_… 音色 ID")
     if (
-        not isinstance(voice, str)
-        or not voice.strip()
-        or (
-            not isinstance(speech, (HTTPSpeechProfile, SeedSpeechProfile))
-            and voice not in available_voices(speech)
-        )
+        not stored
+        and isinstance(speech, SeedSpeechProfile)
+        and speech.model == SEED_CLONE_RESOURCE
+        and canonical_voice(speech.adapter, voice) in SPEECH_VOICES["seed_tts"]
     ):
-        raise ValueError("请为该配音模型选择可用音色")
+        raise ValueError("当前音色属于豆包普通语音合成，请为复刻资源填写专属音色 ID")
 
 
 def snapshot_options(kind, connection):
@@ -251,6 +271,10 @@ def snapshot_options(kind, connection):
     if "enabled" in fields:
         raise ValueError("媒体任务连接不能包含故事开关")
     return _OPTION_TYPES[kind].validate_python(fields)
+
+
+def validate_frozen_voice(request: dict) -> None:
+    validate_voice(snapshot_options("speech", request["connection"]), request["voice"])
 
 
 def image_sizes(image: ImageProfile) -> dict[str, str]:

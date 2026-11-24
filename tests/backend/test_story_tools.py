@@ -407,6 +407,43 @@ async def test_preview_bills_only_the_edited_connection_without_changing_story_o
         assert db.execute("SELECT count(*) FROM media_assets").fetchone()[0] == 0
 
 
+async def test_realtime_sends_the_selected_cloud_voice_before_the_first_audio_response(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tavern.media import providers
+    from tavern.media.config import RealtimeProfile, validate_voice
+
+    voice = "voice_7eafa488abc9430db89d986381420345"
+    profile = RealtimeProfile(default_voice=voice)
+    validate_voice(profile, voice)
+    socket = AsyncMock()
+    socket.__aiter__.return_value = [
+        json.dumps({"type": "session.updated"}),
+        json.dumps({"type": "response.output_audio.delta", "delta": "AAE="}),
+        json.dumps({"type": "response.done", "response": {"status": "completed"}}),
+    ]
+    connect = MagicMock()
+    connect.return_value.__aenter__.return_value = socket
+    monkeypatch.setattr(providers, "connect", connect)
+    for auth, endpoint, expected in [
+        ("openai_api_key", "https://relay.example", {"id": voice}),
+        ("api_key", "https://api.openai.com:443", {"id": voice}),
+        ("api_key", "https://relay.example", voice),
+    ]:
+        socket.send.reset_mock()
+        conn = {**profile.model_dump(), "base_url": endpoint, "auth_mode": auth}
+        request = {"text": "我在这里。", "voice": voice, "delivery": "", "connection": conn}
+        await providers.ADAPTERS["openai_realtime"].generate(
+            request, key="fixture", proxy=None, references=[]
+        )
+        update, transcript, start = [json.loads(call.args[0]) for call in socket.send.await_args_list]
+        assert (
+            update["type"] == "session.update" and update["session"]["audio"]["output"]["voice"] == expected
+        )
+        assert transcript["item"]["content"] == [{"type": "input_text", "text": request["text"]}]
+        assert start == {"type": "response.create"}
+
+
 async def test_gemini_clip_keeps_transcript_and_rejects_unfinished_audio(monkeypatch):
     import base64
     import wave
@@ -414,16 +451,18 @@ async def test_gemini_clip_keeps_transcript_and_rejects_unfinished_audio(monkeyp
 
     import httpx
 
-    from tavern.media.config import GeminiSpeechSettings, MediaConfig, SpeechArguments
+    from tavern.media.config import GeminiSpeechSettings, MediaConfig, SpeechArguments, validate_voice
     from tavern.media.providers import ADAPTERS
     from tavern.media.tools import MediaDraft
     from tavern.search.retrieval_config import Provider
 
     provider = Provider(id="loopback", base_url="http://127.0.0.1:2048")
+    cloud_voice = "voice_92c3fb101014437a897c81870a989a7f"
     config = MediaConfig(
         speech=GeminiSpeechSettings(
             provider_id=provider.id, enabled=True, instructions="轻声", default_voice="Lumi"
-        )
+        ),
+        voices={"守灯人": cloud_voice},
     )
     owner = SimpleNamespace(
         session={
@@ -436,20 +475,19 @@ async def test_gemini_clip_keeps_transcript_and_rejects_unfinished_audio(monkeyp
     )
     draft = MediaDraft(owner)
     assert "Lumi" not in json.dumps(draft.catalog()) and "voice" not in SpeechArguments.model_fields
+    assert cloud_voice not in draft.context_frame()["content"]
     text = "  一段台词。\n原样保留尾部空白  "
     draft.execute("generate_speech", SpeechArguments(text=text, speaker="角色", delivery="愉快"))
     request = draft.plans[0]["request"]
     finish = "MAX_TOKENS"
+    voice_configs = []
 
     def respond(wire):
         assert wire.url.path == "/v1beta/models/gemini-3.8-flash-tts:generateContent"
         assert "x-goog-api-key" not in wire.headers and "authorization" not in wire.headers
         body = json.loads(wire.content)
         assert body["contents"][0]["parts"] == [{"text": text, "speechMetadata": {"style": "轻声\n\n愉快"}}]
-        assert (
-            body["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"]
-            == "Lumi"
-        )
+        voice_configs.append(body["generationConfig"]["speechConfig"]["voiceConfig"])
         audio = {"mimeType": "audio/L16;rate=24000", "data": base64.b64encode(b"\x01\x00" * 8).decode()}
         return httpx.Response(
             200,
@@ -463,7 +501,15 @@ async def test_gemini_clip_keeps_transcript_and_rejects_unfinished_audio(monkeyp
     with pytest.raises(ValueError, match="MAX_TOKENS"):
         await adapter.generate(request, key="", proxy=None, references=[])
     finish = "STOP"
-    clip = await adapter.generate(request, key="", proxy=None, references=[])
+    draft.execute("generate_speech", SpeechArguments(text=text, speaker="守灯人", delivery="愉快"))
+    clip = await adapter.generate(draft.plans[-1]["request"], key="", proxy=None, references=[])
+    assert voice_configs == [{"prebuiltVoiceConfig": {"voiceName": "Lumi"}}, {"voice": cloud_voice}]
+    with pytest.raises(ValueError, match="预设音色"):
+        validate_voice(GeminiSpeechSettings(model="models/gemini-3.1-flash-tts-preview"), cloud_voice)
+    alias = GeminiSpeechSettings(model="relay-tts", instruction_format="prompt")
+    with pytest.raises(ValueError, match="预设音色"):
+        validate_voice(alias, cloud_voice)
+    validate_voice(GeminiSpeechSettings(instruction_format="prompt"), cloud_voice)
     with wave.open(io.BytesIO(clip.data)) as wav:
         assert (wav.getframerate(), wav.getnframes()) == (24000, 8)
 
@@ -562,12 +608,14 @@ async def test_seed_speech_requires_terminal_success_before_publishing_pcm(monke
 
     connection = SeedSpeechSettings(speech_rate=20, sample_rate=16000, instructions="").model_dump()
     request = {"connection": connection, "text": "  台词。 ", "voice": "云舟", "delivery": "慢慢地"}
+    sent = []
     response = b'{"code":0,"data":"AQACAA=="}\n'
 
     async def post(saved, path, *, headers, json: dict, proxy):
-        assert path == "/tts/unidirectional" and headers["X-Api-Resource-Id"] == "seed-tts-2.0"
+        assert path == "/tts/unidirectional"
         params = json["req_params"]
-        assert params["text"] == request["text"] and params["speaker"] == "zh_male_m191_uranus_bigtts"
+        sent.append((saved["api_path"], headers["X-Api-Resource-Id"], params["speaker"]))
+        assert params["text"] == request["text"]
         assert params["audio_params"] == {
             "format": "pcm",
             "sample_rate": 16000,
@@ -582,9 +630,70 @@ async def test_seed_speech_requires_terminal_success_before_publishing_pcm(monke
     with pytest.raises(ValueError, match="完成标记"):
         await adapter.generate(request, key="fixture", proxy=None, references=[])
     response += b'{"code":20000000}\n'
-    result = await adapter.generate(request, key="fixture", proxy=None, references=[])
+    clone = {
+        **request,
+        "voice": "S_actor012345",
+        "connection": {**connection, "api_path": "api/v3", "model": "seed-icl-2.0"},
+    }
+    result = await adapter.generate(clone, key="fixture", proxy=None, references=[])
+    assert sent == [
+        ("api/v3/plan", "seed-tts-2.0", "zh_male_m191_uranus_bigtts"),
+        ("api/v3", "seed-icl-2.0", "S_actor012345"),
+    ]
     with wave.open(io.BytesIO(result.data)) as wav:
         assert wav.getframerate() == 16000 and wav.readframes(2) == b"\x01\x00\x02\x00"
+
+
+def test_old_seed_clone_default_can_be_repaired_without_binding_its_invalid_voice(story):
+    from types import SimpleNamespace
+
+    from tavern.media import storage
+    from tavern.media.config import SeedSpeechProfile, SpeechArguments
+    from tavern.media.routing import StoryMediaSettings
+    from tavern.media.tools import MediaDraft
+    from tavern.story.protocol import ToolError
+
+    store, session = story
+    sid = session["id"]
+    document = store.settings_document()
+    provider = document.shared.providers[0]
+    provider.api_key = "fixture"
+    profile = SeedSpeechProfile(provider_id=provider.id, model="seed-icl-2.0", api_path="api/v3")
+    document.story.media.speech.standard = profile
+    with pytest.raises(ValueError, match="复刻资源"):
+        store.save_settings(document)
+
+    # Reopen the same choice saved before validation, with a clip already awaiting review.
+    selection = StoryMediaSettings()
+    selection.speech.enabled = True
+    with store.connection() as db:
+        db.execute("UPDATE meta SET value=? WHERE key='settings'", (document.model_dump_json(),))
+        db.execute("UPDATE sessions SET media_config=? WHERE id=?", (selection.model_dump_json(), sid))
+    current = store.session(sid)
+    args = SpeechArguments(text="我在这里。", speaker="向导")
+    owner = SimpleNamespace(session=current, history=[], settings=document.shared)
+    draft = MediaDraft(owner)
+    with pytest.raises(ToolError, match="配音设置"):
+        draft.execute("generate_speech", args)
+    assert not draft.plans
+    frozen = {
+        **args.model_dump(),
+        "voice": profile.default_voice,
+        "connection": storage.connection_snapshot(document.shared, profile),
+        "story_model": current["media_story_model"],
+    }
+    repaired = store.settings_document()
+    repaired.story.media.speech.standard.default_voice = "custom_narrator"
+    store.save_settings(repaired)
+    owner.session = store.session(sid)
+    resumed = MediaDraft(owner, {"plans": [{"kind": "speech", "request": frozen}]})
+    resumed.execute("generate_speech", args)
+    with store.connection() as db:
+        storage.commit(db, sid, session["head"], resumed.saved())
+    old, new = storage.jobs(store, sid, [session["head"]])
+    assert old["status"] == "failed" and old["request"] == frozen
+    assert new["status"] == "queued" and new["request"]["voice"] == "custom_narrator"
+    assert storage.config(store, sid).voices == {"向导": "custom_narrator"}
 
 
 async def test_media_recovery_and_manual_operations_do_not_duplicate_paid_work(story, monkeypatch):

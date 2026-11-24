@@ -492,7 +492,11 @@ class Store(MessageAdapters):
                     document.revisions[scope] = current.revisions[scope] + 1
             self.write_settings(db, current, document)
 
-    def write_settings(self, db, previous: SettingsDocument, document: SettingsDocument) -> None:
+    def write_settings(
+        self, db, previous: SettingsDocument, document: SettingsDocument, *, restoring: bool = False
+    ) -> None:
+        if not restoring:
+            document.story.media.speech.validate_voice_edits(previous.story.media.speech)
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (document.model_dump_json(),))
         if (
             previous.story.model != document.story.model

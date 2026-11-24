@@ -239,6 +239,8 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 `story.media` 保存全局配音、生图参数及每轮额度，通过游玩设置的修订号、局部更新和页面撤销接口编辑。`GET /api/media/protocols` 可在没有故事时读取协议预设与声音目录。全局 `speech` 与 `image` 各含 `active_channel`、`standard`、`chatgpt` 和其他提供商的 `remembered` 配置。每轮额度单独保存在对应用途下。媒体编辑器通过 `POST /api/settings/models?media=true` 更新当前提供商的模型目录，`api_path` 留空时请求 `/models`。`POST /api/media/preview` 接受 `kind`、`channel`、当前编辑的 `profile`，以及配音的 `text` 和 `voice` 或生图的 `prompt`。成功返回媒体字节，预览使用所选渠道的额度，只在当前面板临时展示。下表路径位于 `/api/sessions/{sid}/media`。任务冻结生成参数，凭据仅从已选提供商连接读取。
 
+`gemini_speech.prompt_prefixes` 和 `cloud_voice_prefixes` 分别标识旧版预设型号与已知支持项目音色的型号。对其他模型名，显式选择 `instruction_format: prompt` 时使用旧版预设音色。编辑或启用配音配置时会校验音色，旧设置和历史任务可按原值读取。修正角色绑定或默认音色后，可用「按当前设置重新生成」重做旧片段。
+
 | 方法与后缀 | 用途 |
 |---|---|
 | `GET /` | 返回生效配置 `config`、原始 `selection`、`selection_token`、当前 `story_model`、来源 `source`（global / story / mixed）、全局参数 `defaults`、修订号、无密钥的连接信息、协议与声音目录及参考图库。完整会话接口的 `media_source` 和 `media_config` 使用同一口径。`?library=false` 仅读取设置。 |
@@ -262,9 +264,9 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 | 格式 | 当前版本 |
 |---|---|
 | 数据库 schema | **40** |
-| 设置文档 | **25** |
+| 设置文档 | **26** |
 | 剧情快照 `story.version` | **4**（handoff 由模型维护，不含章节手工标记） |
-| 个人数据包 | **24** |
+| 个人数据包 | **25** |
 | 剧情回合续接进度 | **13** |
 
 整轮重试从 schema 9 开始。缺少可恢复回合结构的旧数据库会在写入前给出处理说明。对可升级的数据库，程序先备份，再迁移已有的分支、回合及快照。旧数据包预览会列出格式过旧的故事，并提供同包可导入的资料。
@@ -318,6 +320,8 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 - **38** 设置文档 version 25 将配音和生图分别按普通 API 与 OpenAI 官方保存，保留原连接、原生协议和额度。已保存角色声线归入升级时的故事、剧情模型和配音模型组合。个人数据包 version 23 携带分用途来源与角色表，续接进度 version 12 保存配音计划所属剧情模型。
 - **39** 修复 schema 38 中导入早期故事包时误写旧列默认值的记录。这些故事恢复为跟随全局，媒体授权保持关闭。续接进度 version 13 记录尚在补执行的旧配音批次，再次中断后可继续使用当时选定的音色。
 - **40** 自动世界书的入选记录按回合保存，在提交事务中归属回复版本。升级从尚存的入选事件恢复，旧消息保留快照读取。个人数据包 version 24 携带已提交的入选记录和原剧情锚点。
+
+设置文档 **version 26** 与个人数据包 **version 25** 支持在 Gemini 3.8 和 OpenAI Realtime 的默认音色、角色绑定和配音任务中保存云端音色 ID。这些 ID 沿用音色字符串字段，升级保留已有选择。旧版读取器可按版本识别其无法校验的音色配置。
 
 ### 设置格式变更
 
