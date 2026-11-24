@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
 import { api } from '../../lib/api';
 import { channelLabels } from '../../lib/channels';
+import { notify } from '../../lib/notifications';
 import { clone, type Provider } from '../../lib/settingsDocument';
 import {
   mediaUrl,
@@ -26,25 +27,35 @@ type Catalog = MediaProtocols & {
   story_model: ModelKey;
   story_provider_name: string;
   revision: number;
+};
+type Library = {
+  revision: number;
   references: MediaAsset[];
   card_images: string[];
 };
+type ReferenceText = Pick<MediaAsset, 'name' | 'description'>;
+type LoadScope = 'all' | 'settings';
 const catalog = ref<Catalog>();
+const library = shallowRef<Library>();
+const libraryOpen = ref(false);
+const selectedCount = computed(() => library.value?.references.filter((item) => item.selected).length ?? 0);
 const draft = ref<MediaSelection>();
 const baseline = ref('');
 const revision = ref(0);
 const token = ref('');
 const conflict = ref(false);
 const dirty = computed(() => !!draft.value && JSON.stringify(draft.value) !== baseline.value);
-const busy = ref(false),
-  loading = ref(false),
-  error = ref(''),
-  loadError = ref(''),
-  notice = ref('');
+const busy = ref(false);
+const loadingScope = ref<LoadScope>();
+const loading = computed(() => loadingScope.value !== undefined);
+const error = ref(''),
+  loadError = ref('');
 const selectedCard = ref(''),
   referenceName = ref(''),
   referenceDescription = ref('');
 const file = ref<HTMLInputElement>();
+const chosenFile = shallowRef<File>();
+const referenceEdits = reactive(new Map<string, Partial<ReferenceText>>());
 const scratch: Partial<MediaDefaults> = {};
 const routes = computed<MediaDefaults | undefined>(
   () =>
@@ -67,19 +78,21 @@ function changeSource(kind: MediaKind, custom: boolean) {
   }
 }
 let loadRequest = 0;
-async function load(scope: 'all' | 'settings' = 'all', discard = false) {
+let disposed = false;
+async function load(scope: LoadScope = 'all', discard = false) {
   const request = ++loadRequest;
-  loading.value = true;
+  // A revision or focus refresh can supersede a library read, so it must also fetch the library.
+  const includeLibrary = scope === 'all' || !library.value || loadingScope.value === 'all';
+  loadingScope.value = includeLibrary ? 'all' : 'settings';
   loadError.value = '';
   try {
-    const settingsOnly = scope === 'settings' && !!catalog.value;
-    const result: Catalog = await api(
-      '/sessions/' + props.session.id + '/media' + (settingsOnly ? '?library=false' : ''),
+    const { references, card_images, ...result }: Catalog & Library = await api(
+      `/sessions/${props.session.id}/media${includeLibrary ? '' : '?library=false'}`,
     );
-    if (request !== loadRequest) return;
-    if (settingsOnly && catalog.value) {
-      result.references = catalog.value.references;
-      result.card_images = catalog.value.card_images;
+    if (request !== loadRequest) return false;
+    if (includeLibrary) {
+      library.value = { references, card_images, revision: result.revision };
+      if (!card_images.includes(selectedCard.value)) selectedCard.value = '';
     }
     const incoming = JSON.stringify(result.selection);
     // Other tabs and committed turns can add bindings while this editor is open.
@@ -95,42 +108,72 @@ async function load(scope: 'all' | 'settings' = 'all', discard = false) {
       token.value = result.selection_token;
     }
     catalog.value = result;
+    return true;
   } catch (e) {
     if (request === loadRequest) loadError.value = String(e);
+    return false;
   } finally {
-    if (request === loadRequest) loading.value = false;
+    if (request === loadRequest) loadingScope.value = undefined;
   }
 }
 function refreshSettings() {
-  if (props.active && !busy.value) void load('settings');
+  if (props.active && !busy.value) void load(libraryOpen.value ? 'all' : 'settings');
 }
-watch(() => [props.active, props.session.revision, props.session.media_story_model], refreshSettings);
+function toggleLibrary(event: Event) {
+  libraryOpen.value = (event.currentTarget as HTMLDetailsElement).open;
+  if (libraryOpen.value && !busy.value) void load();
+}
+watch(
+  [
+    () => props.active,
+    () => props.session.revision,
+    () => props.session.media_story_model.provider_id,
+    () => props.session.media_story_model.model,
+  ],
+  ([active], [wasActive]) => {
+    if (active && !wasActive && !busy.value) void load();
+    else refreshSettings();
+  },
+);
 onMounted(() => {
   window.addEventListener('focus', refreshSettings);
   void load();
 });
 onBeforeUnmount(() => {
+  disposed = true;
   ++loadRequest;
   window.removeEventListener('focus', refreshSettings);
 });
 async function saveRequest(path: string, body: unknown, method = 'POST') {
+  if (busy.value) return false;
   busy.value = true;
   error.value = '';
-  notice.value = '';
   try {
     const updated: Session = await api('/sessions/' + props.session.id + '/media' + path, body, method);
+    if (disposed) return false;
     emit('saved', updated);
     if (!path) {
       baseline.value = JSON.stringify(draft.value);
       revision.value = updated.revision;
     }
-    await load(path ? 'all' : 'settings', !path);
-    notice.value = '已保存';
-    return true;
+    const refreshed = await load(path || libraryOpen.value ? 'all' : 'settings', !path);
+    if (disposed) return false;
+    if (refreshed) notify('已保存');
+    else loadError.value = `已保存，但刷新失败。${loadError.value}`;
+    return true; // The write succeeded even if reloading its result failed.
   } catch (e) {
+    if (disposed) return false;
     error.value = String(e);
-    await load('settings');
+    await load(path ? 'all' : 'settings');
     return false;
+  } finally {
+    busy.value = false;
+  }
+}
+async function discardDraft() {
+  busy.value = true;
+  try {
+    await load(libraryOpen.value ? 'all' : 'settings', true);
   } finally {
     busy.value = false;
   }
@@ -143,7 +186,7 @@ function save() {
   );
 }
 async function upload() {
-  const chosen = file.value?.files?.[0];
+  const chosen = chosenFile.value;
   if (!chosen) return;
   if (chosen.size > 32 * 1024 * 1024) {
     error.value = '参考图不能超过 32 MiB';
@@ -151,31 +194,53 @@ async function upload() {
   }
   const body = new FormData();
   body.append('file', chosen);
-  body.append('expected_revision', String(props.session.revision));
-  body.append('name', referenceName.value || chosen.name);
+  body.append('expected_revision', String(library.value!.revision));
+  body.append('name', referenceName.value.trim() || chosen.name);
   body.append('description', referenceDescription.value);
-  if ((await saveRequest('/references', body)) && file.value) file.value.value = '';
+  if (await saveRequest('/references', body)) {
+    file.value!.value = '';
+    chosenFile.value = undefined;
+    referenceName.value = '';
+    referenceDescription.value = '';
+  }
 }
-function addCardImage() {
-  return saveRequest('/card-reference', {
-    expected_revision: props.session.revision,
-    key: selectedCard.value,
-    name: referenceName.value || selectedCard.value,
-    description: referenceDescription.value,
-    selected: true,
-  });
+async function addCardImage() {
+  if (
+    await saveRequest('/card-reference', {
+      expected_revision: library.value!.revision,
+      key: selectedCard.value,
+      name: referenceName.value.trim() || selectedCard.value,
+      description: referenceDescription.value,
+      selected: true,
+    })
+  ) {
+    selectedCard.value = '';
+    referenceName.value = '';
+    referenceDescription.value = '';
+  }
 }
-function saveReference(reference: MediaAsset, selected: boolean) {
+function editReference(reference: MediaAsset, field: keyof ReferenceText, value: string) {
+  const edits = referenceEdits.get(reference.id) ?? {};
+  if (value === reference[field]) delete edits[field];
+  else edits[field] = value;
+  if (edits.name === undefined && edits.description === undefined) referenceEdits.delete(reference.id);
+  else referenceEdits.set(reference.id, edits);
+}
+function saveReference(reference: MediaAsset, change: Partial<ReferenceText & { selected: boolean }>) {
   return saveRequest(
     `/references/${reference.id}`,
     {
-      expected_revision: props.session.revision,
+      expected_revision: library.value!.revision,
       name: reference.name,
       description: reference.description,
-      selected,
+      selected: !!reference.selected,
+      ...change,
     },
     'PUT',
   );
+}
+async function saveReferenceText(reference: MediaAsset) {
+  if (await saveReference(reference, referenceEdits.get(reference.id)!)) referenceEdits.delete(reference.id);
 }
 </script>
 
@@ -193,12 +258,7 @@ function saveReference(reference: MediaAsset, selected: boolean) {
       <Icon name="info" :size="14" />配音和生图在正文提交后开始，可能产生 API 费用。
     </p>
     <p v-if="loading && !catalog" role="status" class="muted">正在加载媒体设置…</p>
-    <div v-if="loadError" class="media-load-error">
-      <p role="alert" class="media-settings-error">{{ loadError }}</p>
-      <button type="button" class="quiet" @click="load()">重新加载</button>
-    </div>
-
-    <template v-if="catalog && draft && routes">
+    <template v-if="catalog && draft && routes && library">
       <section
         v-for="kind in ['speech', 'image'] as const"
         :key="kind"
@@ -270,15 +330,12 @@ function saveReference(reference: MediaAsset, selected: boolean) {
           </details>
         </fieldset>
       </section>
-      <details
-        class="media-card media-disclosure media-library"
-        @toggle="($event.target as HTMLDetailsElement).open && load()"
-      >
+      <details class="media-card media-disclosure media-library" @toggle="toggleLibrary">
         <summary>
           <span class="media-library-cover"><Icon name="layers" :size="20" /></span>
           <span class="media-library-title">
             <strong>参考图库</strong>
-            <small>{{ catalog.references.length }} 张 · 只发送你选定的图片</small>
+            <small>{{ library.references.length }} 张 · {{ selectedCount }} 张常驻参考</small>
           </span>
           <Icon name="chevron-right" :size="14" />
         </summary>
@@ -296,23 +353,32 @@ function saveReference(reference: MediaAsset, selected: boolean) {
             </label>
             <label>
               上传 PNG / JPEG / 静态 WebP（最多 32 MiB）
-              <input ref="file" type="file" accept="image/png,image/jpeg,image/webp" />
+              <input
+                ref="file"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                @change="chosenFile = ($event.target as HTMLInputElement).files?.[0]"
+              />
             </label>
-            <button type="button" class="quiet" @click="upload">上传并授权</button>
+            <button type="button" class="quiet" :disabled="!chosenFile || loading" @click="upload">
+              上传并授权
+            </button>
             <label>
               当前角色卡图片
-              <select v-model="selectedCard">
-                <option value="">选择卡片图片</option>
-                <option v-for="name in catalog.card_images" :key="name">{{ name }}</option>
+              <select v-model="selectedCard" :disabled="!library.card_images.length">
+                <option value="">
+                  {{ library.card_images.length ? '选择卡片图片' : '当前角色卡没有可用图片' }}
+                </option>
+                <option v-for="name in library.card_images" :key="name">{{ name }}</option>
               </select>
             </label>
-            <button type="button" class="quiet" :disabled="!selectedCard" @click="addCardImage">
+            <button type="button" class="quiet" :disabled="!selectedCard || loading" @click="addCardImage">
               加入参考图库
             </button>
           </fieldset>
 
           <details
-            v-for="reference in catalog.references"
+            v-for="reference in library.references"
             :key="reference.id"
             class="media-disclosure media-reference"
           >
@@ -329,12 +395,40 @@ function saveReference(reference: MediaAsset, selected: boolean) {
               :aria-label="'编辑参考图 ' + reference.name"
             >
               <img :src="mediaUrl(reference)" :alt="reference.name" loading="lazy" />
-              <label>名称<input v-model="reference.name" maxlength="120" /></label>
-              <label>说明<textarea v-model="reference.description" rows="2" /></label>
-              <button type="button" class="quiet" @click="saveReference(reference, !!reference.selected)">
+              <label>
+                名称<input
+                  :value="referenceEdits.get(reference.id)?.name ?? reference.name"
+                  maxlength="120"
+                  @input="editReference(reference, 'name', ($event.target as HTMLInputElement).value)"
+                />
+              </label>
+              <label>
+                说明<textarea
+                  :value="referenceEdits.get(reference.id)?.description ?? reference.description"
+                  rows="2"
+                  @input="
+                    editReference(reference, 'description', ($event.target as HTMLTextAreaElement).value)
+                  "
+                />
+              </label>
+              <button
+                type="button"
+                class="quiet"
+                :disabled="
+                  loading ||
+                  !referenceEdits.has(reference.id) ||
+                  !(referenceEdits.get(reference.id)?.name ?? reference.name).trim()
+                "
+                @click="saveReferenceText(reference)"
+              >
                 保存名称与说明
               </button>
-              <button type="button" class="quiet" @click="saveReference(reference, !reference.selected)">
+              <button
+                type="button"
+                class="quiet"
+                :disabled="loading"
+                @click="saveReference(reference, { selected: !reference.selected })"
+              >
                 {{ reference.selected ? '取消常驻参考' : '设为常驻参考' }}
               </button>
               <small>当前剧情中的已生成图片仍可查看；已经送入模型的历史图片记录保留。</small>
@@ -344,11 +438,18 @@ function saveReference(reference: MediaAsset, selected: boolean) {
       </details>
     </template>
 
-    <div v-if="dirty || error || notice" class="media-settings-feedback">
+    <div v-if="dirty || busy || error || loadError" class="media-settings-feedback">
       <p v-if="error" role="alert" class="media-settings-error">{{ error }}</p>
+      <div v-if="loadError" class="media-load-error">
+        <p role="alert" class="media-settings-error">{{ loadError }}</p>
+        <button type="button" class="quiet" :disabled="busy || loading" @click="load()">重新加载</button>
+      </div>
+      <p v-if="busy" role="status">{{ loading ? '正在刷新媒体数据…' : '正在保存…' }}</p>
       <div v-if="dirty" class="media-settings-save">
         <span>{{ conflict ? '故事中的媒体设置已更新。重新载入会舍弃本页草稿。' : '有未保存修改' }}</span>
-        <button v-if="conflict" type="button" @click="load('settings', true)">重新载入</button>
+        <button v-if="conflict" type="button" :disabled="busy || loading" @click="discardDraft">
+          重新载入
+        </button>
         <button
           type="button"
           class="primary"
@@ -358,7 +459,6 @@ function saveReference(reference: MediaAsset, selected: boolean) {
           保存媒体设置
         </button>
       </div>
-      <p v-else-if="notice && !error" role="status" class="media-settings-saved">{{ notice }}</p>
     </div>
   </section>
 </template>
@@ -581,16 +681,6 @@ function saveReference(reference: MediaAsset, selected: boolean) {
   padding: 12px;
   border-top: 1px solid var(--border-subtle);
 }
-.media-voice {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  overflow-wrap: anywhere;
-}
-.media-voice select {
-  width: auto;
-}
 .media-reference {
   padding-top: 10px;
   border-top: 1px solid var(--border-subtle);
@@ -623,9 +713,6 @@ function saveReference(reference: MediaAsset, selected: boolean) {
   align-items: center;
   gap: 8px;
   color: var(--warning);
-}
-.media-settings-saved {
-  color: var(--success);
 }
 .media-settings-error {
   color: var(--danger);

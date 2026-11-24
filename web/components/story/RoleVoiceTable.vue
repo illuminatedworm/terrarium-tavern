@@ -103,10 +103,13 @@ function add() {
       >
     </div>
     <div class="role-add">
-      <label>角色名<input v-model="name" placeholder="角色或旁白" :disabled="disabled" /></label>
-      <div>
-        <span>音色</span
-        ><MediaVoiceSelect
+      <label class="role-add-field">
+        <span>角色名</span>
+        <input v-model="name" placeholder="角色或旁白" :disabled="disabled" />
+      </label>
+      <div class="role-add-field">
+        <span>音色</span>
+        <MediaVoiceSelect
           v-model="voice"
           label="新增角色的音色"
           :profile="speech"
@@ -172,18 +175,30 @@ function add() {
   border-top: 1px solid var(--border-subtle);
   padding-top: 8px;
 }
-.role-add > :is(label, div) {
+.role-add-field {
   display: grid;
+  align-content: start;
   gap: 4px;
   min-width: 0;
+  margin: 0;
   color: var(--text-secondary);
+  font-size: var(--fs-sm);
 }
-.role-add input {
+.role-add-field > input {
   min-width: 0;
-  width: 100%;
+  min-height: 36px;
+  margin: 0;
+  padding: 7px 10px;
+  color: var(--text-secondary);
+  font: var(--fs-md) / 1.5 var(--font-ui);
 }
-.role-add button {
+.role-add > button {
   grid-column: 1/-1;
   justify-self: start;
+}
+@media (pointer: coarse) {
+  .role-add-field > input {
+    min-height: 40px;
+  }
 }
 </style>
