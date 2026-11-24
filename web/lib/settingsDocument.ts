@@ -93,10 +93,11 @@ export interface PromptChoices {
   options: [PromptChoice, PromptChoice, PromptChoice, PromptChoice];
 }
 export interface SettingsDocument {
-  version: 23;
+  version: 25;
   story: SettingsObject & {
     system_prompt: PromptChoices;
     novel_research: NovelConfig;
+    media: import('./media').MediaDefaults;
     model: ModelProfile;
     official_model: ModelProfile | null;
     default_channel: 'standard' | 'chatgpt';
@@ -157,6 +158,8 @@ export function difference(before: SettingsObject, after: SettingsObject, prefix
       !Array.isArray(before[key]) &&
       !(prefix.endsWith('cache') && (key === 'value' || key === 'request')) &&
       key !== 'message_adapter' &&
+      // Moving a provider replaces its profile and removes it from remembered connections together.
+      prefix !== 'media' &&
       // Provider IDs can contain dots, and switching removes the active entry.
       key !== 'provider_connections'
     ) {

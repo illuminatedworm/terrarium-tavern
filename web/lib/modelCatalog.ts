@@ -21,7 +21,7 @@ const generations = new Map<string, number>();
 const refreshes = new Map<string, Promise<Catalog>>();
 
 export function useModelCatalog(
-  profile: () => ModelProfile,
+  profile: () => Pick<ModelProfile, 'provider_id' | 'api_mode' | 'api_path'>,
   provider: () => Provider | undefined,
   beforeRefresh?: () => Promise<unknown>,
   enabled: () => boolean = () => true,
@@ -51,7 +51,7 @@ export function useModelCatalog(
   );
   const catalog = computed(() => catalogs[key.value]);
   const error = reactive({ message: '' });
-  async function load(refresh = false) {
+  async function load(refresh = false, mediaPath?: string) {
     const target = key.value;
     const pending = refreshes.get(target);
     if (pending) return pending;
@@ -60,7 +60,10 @@ export function useModelCatalog(
     error.message = '';
     const fetchCatalog = async (): Promise<Catalog> => {
       const result = refresh
-        ? await api('/settings/models', request.value)
+        ? await api(
+            mediaPath === undefined ? '/settings/models' : '/settings/models?media=true',
+            mediaPath === undefined ? request.value : { ...request.value, api_path: mediaPath },
+          )
         : await api('/settings/models?' + new URLSearchParams(request.value));
       if (generations.get(target) === generation) catalogs[target] = result;
       return result;
@@ -98,5 +101,10 @@ export function useModelCatalog(
     },
     { immediate: true },
   );
-  return { catalog, error, refresh: () => load(true) };
+  return {
+    catalog,
+    error,
+    refresh: () => load(true),
+    refreshMedia: (apiPath: string) => load(true, apiPath),
+  };
 }

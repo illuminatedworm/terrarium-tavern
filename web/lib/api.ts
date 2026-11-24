@@ -4,6 +4,17 @@ function detailError(detail: unknown) {
   return Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
 }
 
+export async function mediaPreview(data: unknown, signal: AbortSignal) {
+  const response = await fetch('/api/media/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+    signal,
+  });
+  if (!response.ok) throw await failure(response);
+  return response.blob();
+}
+
 async function failure(response: Response) {
   const error = await response.json().catch(() => ({ detail: response.statusText }));
   return detailError(error.detail);

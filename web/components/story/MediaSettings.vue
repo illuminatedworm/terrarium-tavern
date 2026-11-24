@@ -1,88 +1,146 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { api } from '../../lib/api';
-import { clone } from '../../lib/settingsDocument';
-import { mediaUrl, type MediaAsset, type MediaConfig } from '../../lib/media';
+import { channelLabels } from '../../lib/channels';
+import { clone, type Provider } from '../../lib/settingsDocument';
+import {
+  mediaUrl,
+  type MediaProtocols,
+  type MediaDefaults,
+  type MediaSelection,
+  type MediaKind,
+  type MediaAsset,
+  type ModelKey,
+} from '../../lib/media';
 import type { Session } from '../../lib/types';
 import Icon from '../common/Icon.vue';
-
-const props = defineProps<{ session: Session; disabled: boolean; providerSettingsOpen: boolean }>();
-const emit = defineEmits<{ saved: [session: Session]; providers: [] }>();
-const draft = ref<MediaConfig>(clone(props.session.media_config));
-const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(props.session.media_config));
-const busy = ref(false);
-const loading = ref(false);
-const loadError = ref('');
-const error = ref('');
-const notice = ref('');
-const speaker = ref('');
-const newVoice = ref('marin');
-const selectedCard = ref('');
-const referenceName = ref('');
-const referenceDescription = ref('');
-const file = ref<HTMLInputElement>();
-type Catalog = {
-  voices: string[];
-  providers: Array<{ id: string; name: string; base_url: string }>;
+import MediaGenerationFields from '../settings/MediaGenerationFields.vue';
+import RoleVoiceTable from './RoleVoiceTable.vue';
+const props = defineProps<{ session: Session; disabled: boolean; active: boolean }>();
+const emit = defineEmits<{ saved: [session: Session]; settings: [] }>();
+type Catalog = MediaProtocols & {
+  providers: Provider[];
+  defaults: MediaDefaults;
+  selection: MediaSelection;
+  selection_token: string;
+  story_model: ModelKey;
+  story_provider_name: string;
+  revision: number;
   references: MediaAsset[];
   card_images: string[];
 };
 const catalog = ref<Catalog>();
+const draft = ref<MediaSelection>();
+const baseline = ref('');
+const revision = ref(0);
+const token = ref('');
+const conflict = ref(false);
+const dirty = computed(() => !!draft.value && JSON.stringify(draft.value) !== baseline.value);
+const busy = ref(false),
+  loading = ref(false),
+  error = ref(''),
+  loadError = ref(''),
+  notice = ref('');
+const selectedCard = ref(''),
+  referenceName = ref(''),
+  referenceDescription = ref('');
+const file = ref<HTMLInputElement>();
+const scratch: Partial<MediaDefaults> = {};
+const routes = computed<MediaDefaults | undefined>(
+  () =>
+    draft.value &&
+    catalog.value && {
+      speech: draft.value.speech.custom ?? catalog.value.defaults.speech,
+      image: draft.value.image.custom ?? catalog.value.defaults.image,
+    },
+);
+function changeSource(kind: MediaKind, custom: boolean) {
+  if (!draft.value || !catalog.value) return;
+  if (kind === 'speech') {
+    const s = draft.value.speech;
+    if (s.custom) scratch.speech = s.custom;
+    s.custom = custom ? clone(scratch.speech ?? catalog.value.defaults.speech) : null;
+  } else {
+    const i = draft.value.image;
+    if (i.custom) scratch.image = i.custom;
+    i.custom = custom ? clone(scratch.image ?? catalog.value.defaults.image) : null;
+  }
+}
 let loadRequest = 0;
-watch(
-  () => JSON.stringify(props.session.media_config),
-  () => {
-    draft.value = clone(props.session.media_config);
-  },
-);
-watch(
-  () => props.providerSettingsOpen,
-  (open) => {
-    if (!open) void load('providers');
-  },
-);
-onMounted(load);
-
-async function load(scope: 'all' | 'providers' = 'all') {
+async function load(scope: 'all' | 'settings' = 'all', discard = false) {
   const request = ++loadRequest;
   loading.value = true;
   loadError.value = '';
   try {
-    const result: Catalog = await api(`/sessions/${props.session.id}/media`);
+    const settingsOnly = scope === 'settings' && !!catalog.value;
+    const result: Catalog = await api(
+      '/sessions/' + props.session.id + '/media' + (settingsOnly ? '?library=false' : ''),
+    );
     if (request !== loadRequest) return;
-    // Returning from provider settings must not replace edits to reference names and descriptions.
-    if (scope === 'providers' && catalog.value) catalog.value.providers = result.providers;
-    else catalog.value = result;
-  } catch (failure) {
-    if (request === loadRequest) loadError.value = String(failure);
+    if (settingsOnly && catalog.value) {
+      result.references = catalog.value.references;
+      result.card_images = catalog.value.card_images;
+    }
+    const incoming = JSON.stringify(result.selection);
+    // Other tabs and committed turns can add bindings while this editor is open.
+    if (discard || !dirty.value) {
+      draft.value = clone(result.selection);
+      baseline.value = incoming;
+      conflict.value = false;
+      delete scratch.speech;
+      delete scratch.image;
+    } else conflict.value = incoming !== baseline.value;
+    if (!conflict.value) {
+      revision.value = result.revision;
+      token.value = result.selection_token;
+    }
+    catalog.value = result;
+  } catch (e) {
+    if (request === loadRequest) loadError.value = String(e);
   } finally {
     if (request === loadRequest) loading.value = false;
   }
 }
+function refreshSettings() {
+  if (props.active && !busy.value) void load('settings');
+}
+watch(() => [props.active, props.session.revision, props.session.media_story_model], refreshSettings);
+onMounted(() => {
+  window.addEventListener('focus', refreshSettings);
+  void load();
+});
+onBeforeUnmount(() => {
+  ++loadRequest;
+  window.removeEventListener('focus', refreshSettings);
+});
 async function saveRequest(path: string, body: unknown, method = 'POST') {
   busy.value = true;
   error.value = '';
   notice.value = '';
   try {
-    const updated: Session = await api(`/sessions/${props.session.id}/media${path}`, body, method);
+    const updated: Session = await api('/sessions/' + props.session.id + '/media' + path, body, method);
     emit('saved', updated);
+    if (!path) {
+      baseline.value = JSON.stringify(draft.value);
+      revision.value = updated.revision;
+    }
+    await load(path ? 'all' : 'settings', !path);
     notice.value = '已保存';
-    await load();
     return true;
-  } catch (failure) {
-    error.value = String(failure);
+  } catch (e) {
+    error.value = String(e);
+    await load('settings');
     return false;
   } finally {
     busy.value = false;
   }
 }
 function save() {
-  return saveRequest('', { expected_revision: props.session.revision, config: draft.value }, 'PUT');
-}
-function addSpeaker() {
-  if (!speaker.value.trim()) return;
-  draft.value.voices[speaker.value.trim()] = newVoice.value;
-  speaker.value = '';
+  return saveRequest(
+    '',
+    { expected_revision: revision.value, expected_selection: token.value, config: draft.value },
+    'PUT',
+  );
 }
 async function upload() {
   const chosen = file.value?.files?.[0];
@@ -125,15 +183,10 @@ function saveReference(reference: MediaAsset, selected: boolean) {
   <section class="media-settings" aria-labelledby="media-settings-title">
     <header class="media-settings-head">
       <h2 id="media-settings-title"><Icon name="media" :size="20" />配音与生图</h2>
-      <button
-        type="button"
-        aria-label="管理 API 连接与密钥"
-        title="管理 API 连接与密钥"
-        @click="emit('providers')"
-      >
-        <Icon name="external" :size="14" />API 连接
+      <button type="button" aria-label="编辑全局媒体设置" title="编辑全局媒体设置" @click="emit('settings')">
+        <Icon name="external" :size="14" />全局设置
       </button>
-      <p>仅影响当前故事 · 保存后生效</p>
+      <p>本故事的开关、角色声线和参考图库在此保存。</p>
     </header>
 
     <p class="media-cost-note">
@@ -145,134 +198,78 @@ function saveReference(reference: MediaAsset, selected: boolean) {
       <button type="button" class="quiet" @click="load()">重新加载</button>
     </div>
 
-    <template v-if="catalog">
-      <section class="media-card" aria-labelledby="media-speech-title">
+    <template v-if="catalog && draft && routes">
+      <section
+        v-for="kind in ['speech', 'image'] as const"
+        :key="kind"
+        class="media-card"
+        :aria-label="kind === 'speech' ? '角色配音' : '剧情插图'"
+      >
         <header class="media-card-head">
-          <h3 id="media-speech-title"><Icon name="activity" :size="16" />角色配音</h3>
-          <small>OpenAI Realtime</small>
+          <h3>
+            <Icon :name="kind === 'speech' ? 'activity' : 'sparkle'" :size="16" />{{
+              kind === 'speech' ? '角色配音' : '剧情插图'
+            }}
+          </h3>
+          <small
+            >{{ draft[kind].custom ? '本故事' : '跟随全局' }} ·
+            {{ channelLabels[routes[kind].active_channel] }}</small
+          >
         </header>
-        <fieldset
-          class="media-fields media-card-body"
-          :disabled="disabled || busy"
-          aria-labelledby="media-speech-title"
-        >
-          <label class="media-check">
-            <span>允许模型安排角色配音</span>
-            <input v-model="draft.speech.enabled" type="checkbox" />
-          </label>
+        <fieldset class="media-fields media-card-body" :disabled="disabled || busy">
+          <label class="media-check"
+            ><span>{{ kind === 'speech' ? '允许模型安排角色配音' : '允许模型安排生图' }}</span
+            ><input v-model="draft[kind].enabled" type="checkbox"
+          /></label>
+          <template v-if="kind === 'image'">
+            <label class="media-check"
+              ><span>允许剧情模型查看授权图片</span><input v-model="draft.view_images" type="checkbox"
+            /></label>
+            <small class="media-view-hint">看图使用剧情模型额度，需支持图片输入。</small>
+          </template>
           <details class="media-disclosure media-config">
-            <summary>连接、额度与声线<Icon name="chevron-right" :size="14" /></summary>
+            <summary>渠道与生成设置<Icon name="chevron-right" :size="14" /></summary>
             <div class="media-fields">
-              <label>
-                连接
-                <select v-model="draft.speech.provider_id">
-                  <option value="">请选择 API Key 连接</option>
-                  <option v-for="provider in catalog.providers" :key="provider.id" :value="provider.id">
-                    {{ provider.name }} · {{ provider.base_url }}
-                  </option>
-                </select>
-              </label>
-              <label>语音模型<input v-model="draft.speech.model" /></label>
-              <label>语音基础指令<textarea v-model="draft.speech.instructions" rows="3" /></label>
-              <small>实际语音指令由这份已保存文本与模型本次的演绎要求组成，可在任务详情查看。</small>
-              <label>API 路径<input v-model="draft.speech.api_path" placeholder="v1" /></label>
-              <label>
-                单段生成超时（秒）
-                <input v-model.number="draft.speech.timeout_seconds" type="number" min="5" max="3600" />
-              </label>
-              <label>
-                每轮最多片段数
-                <input v-model.number="draft.max_speech_segments" type="number" min="1" max="100" />
-              </label>
-              <label>
-                每轮最多配音字符
-                <input v-model.number="draft.max_speech_characters" type="number" min="1" max="100000" />
-              </label>
-              <small>按 Unicode 字符计数，包含空格和标点。配音文本由模型直接提供，不与正文核对。</small>
-
-              <details class="media-disclosure">
-                <summary>角色声线<Icon name="chevron-right" :size="14" /></summary>
-                <div class="media-fields">
-                  <small>已有绑定由你修改，新角色可由模型首次分配。</small>
-                  <div v-for="(_, name) in draft.voices" :key="name" class="media-voice">
-                    <span>{{ name }}</span>
-                    <select v-model="draft.voices[name]" :aria-label="name + ' 的声音'">
-                      <option v-for="voice in catalog.voices" :key="voice">{{ voice }}</option>
-                    </select>
-                    <button type="button" class="quiet" @click="delete draft.voices[name]">移除绑定</button>
-                  </div>
-                  <label>新增角色<input v-model="speaker" placeholder="角色名或旁白" /></label>
-                  <label>
-                    声音
-                    <select v-model="newVoice">
-                      <option v-for="voice in catalog.voices" :key="voice">{{ voice }}</option>
-                    </select>
-                  </label>
-                  <button type="button" class="quiet" :disabled="!speaker.trim()" @click="addSpeaker">
-                    加入配音表
-                  </button>
-                </div>
-              </details>
+              <label
+                >设置来源<select
+                  :value="draft[kind].custom ? 'story' : 'global'"
+                  @change="changeSource(kind, ($event.target as HTMLSelectElement).value === 'story')"
+                >
+                  <option value="global">跟随全局设置</option>
+                  <option value="story">本故事自定义</option>
+                </select></label
+              >
+              <small v-if="catalog.selection[kind].custom && !draft[kind].custom"
+                >保存后将移除这一项的故事自定义设置。</small
+              >
+              <MediaGenerationFields
+                :key="kind + !!draft[kind].custom"
+                :kind="kind"
+                :route="routes[kind]"
+                :catalog="catalog"
+                :providers="catalog.providers"
+                :disabled="disabled || busy || !draft[kind].custom"
+                compact
+              />
+            </div>
+          </details>
+          <details v-if="kind === 'speech'" class="media-disclosure media-config">
+            <summary>角色音色表<Icon name="chevron-right" :size="14" /></summary>
+            <div class="media-fields">
+              <RoleVoiceTable
+                :tables="draft.voice_tables"
+                :story="catalog.story_model"
+                :story-provider-name="catalog.story_provider_name"
+                :speech="routes.speech[routes.speech.active_channel]"
+                :catalog="catalog"
+                :providers="catalog.providers"
+                :disabled="disabled || busy"
+                @change="draft.voice_tables = $event"
+              />
             </div>
           </details>
         </fieldset>
       </section>
-
-      <section class="media-card" aria-labelledby="media-image-title">
-        <header class="media-card-head">
-          <h3 id="media-image-title"><Icon name="sparkle" :size="16" />剧情插图</h3>
-          <small>OpenAI Images</small>
-        </header>
-        <fieldset
-          class="media-fields media-card-body"
-          :disabled="disabled || busy"
-          aria-labelledby="media-image-title"
-        >
-          <label class="media-check">
-            <span>允许模型安排生图</span>
-            <input v-model="draft.image.enabled" type="checkbox" />
-          </label>
-          <label class="media-check">
-            <span>允许当前游玩模型主动查看授权图片</span>
-            <input v-model="draft.view_images" type="checkbox" />
-          </label>
-          <small class="media-view-hint">看图占用当前游玩模型额度，需支持图片输入。</small>
-          <details class="media-disclosure media-config">
-            <summary>连接、画质与额度<Icon name="chevron-right" :size="14" /></summary>
-            <div class="media-fields">
-              <label>
-                连接
-                <select v-model="draft.image.provider_id">
-                  <option value="">请选择 API Key 连接</option>
-                  <option v-for="provider in catalog.providers" :key="provider.id" :value="provider.id">
-                    {{ provider.name }} · {{ provider.base_url }}
-                  </option>
-                </select>
-              </label>
-              <label>生图模型<input v-model="draft.image.model" /></label>
-              <label>API 路径<input v-model="draft.image.api_path" placeholder="v1" /></label>
-              <label>
-                画质（由你控制）
-                <select v-model="draft.image.quality">
-                  <option value="low">低</option>
-                  <option value="medium">中</option>
-                  <option value="high">高</option>
-                  <option value="auto">由生图服务自动选择</option>
-                </select>
-              </label>
-              <label>
-                单张生成超时（秒）
-                <input v-model.number="draft.image.timeout_seconds" type="number" min="5" max="3600" />
-              </label>
-              <label>
-                每轮最多图片数<input v-model.number="draft.max_images" type="number" min="1" max="20" />
-              </label>
-              <small>尺寸、横竖比例与构图由剧情模型选择；实际参数可在产物详情中查看。</small>
-            </div>
-          </details>
-        </fieldset>
-      </section>
-
       <details
         class="media-card media-disclosure media-library"
         @toggle="($event.target as HTMLDetailsElement).open && load()"
@@ -350,8 +347,16 @@ function saveReference(reference: MediaAsset, selected: boolean) {
     <div v-if="dirty || error || notice" class="media-settings-feedback">
       <p v-if="error" role="alert" class="media-settings-error">{{ error }}</p>
       <div v-if="dirty" class="media-settings-save">
-        <span>有未保存修改</span>
-        <button type="button" class="primary" :disabled="disabled || busy" @click="save">保存媒体设置</button>
+        <span>{{ conflict ? '故事中的媒体设置已更新。重新载入会舍弃本页草稿。' : '有未保存修改' }}</span>
+        <button v-if="conflict" type="button" @click="load('settings', true)">重新载入</button>
+        <button
+          type="button"
+          class="primary"
+          :disabled="disabled || busy || loading || conflict"
+          @click="save"
+        >
+          保存媒体设置
+        </button>
       </div>
       <p v-else-if="notice && !error" role="status" class="media-settings-saved">{{ notice }}</p>
     </div>

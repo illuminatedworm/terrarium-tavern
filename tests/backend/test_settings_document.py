@@ -176,7 +176,10 @@ def test_removed_reply_locate_switch_is_dropped_from_strict_v17_settings():
     raw["version"] = 17
     raw["shared"]["reply_locate_start"] = False
     migrated = migrate_settings(raw)
-    assert migrated.version == 23 and "reply_locate_start" not in migrated.shared.model_dump()
+    assert (
+        migrated.version == SettingsDocument().version
+        and "reply_locate_start" not in migrated.shared.model_dump()
+    )
     assert migrated.revisions["shared"] == raw["revisions"]["shared"] + 1
 
 
@@ -219,7 +222,7 @@ def test_upgrade_keeps_custom_prompt_wording_and_story_data_verbatim(tmp_path):
     raw["story"]["local_runtime"]["instruction_prompt"] = "Retrieve the player's setting."
     original = deepcopy(raw)
     migrated = migrate_settings(raw)
-    assert migrated.version == 23 and migrated.story.tools.max_duration_seconds == 900
+    assert migrated.version == SettingsDocument().version and migrated.story.tools.max_duration_seconds == 900
     assert migrated.story.retrieval.index_timeout == 60
     assert raw == original
     assert migrated.revisions == {"story": 4, "shared": 8}

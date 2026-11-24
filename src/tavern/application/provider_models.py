@@ -108,9 +108,16 @@ def register_model_routes(app, store):
         return result
 
     @app.post("/api/settings/models")
-    async def refresh_models(profile: ModelProfile):
+    async def refresh_models(profile: ModelProfile, media: bool = False):
         document, provider, url, key = connection(profile)
         config = document.shared
+        if media:
+            from tavern.media.transport import api_root
+
+            if provider.auth_mode == "chatgpt_subscription":
+                raise ValueError("媒体服务需要 API Key 连接")
+            # Media profiles use the literal API prefix, including an empty one for /models.
+            url = api_root({"base_url": provider.base_url, "api_path": profile.api_path}) + "/models"
         if provider.auth_mode == "chatgpt_subscription":
             result = await subscription_models(store.chatgpt, provider, url)
             # Reauthorization/exit while listing must not publish an obsolete account catalogue.
@@ -135,9 +142,13 @@ def register_model_routes(app, store):
         proxy = (config.network.proxy or None) if config.network.api_proxy and provider.use_proxy else None
         try:
             async with httpx.AsyncClient(proxy=proxy, trust_env=False, timeout=30) as client:
-                if mode == "gemini":
+                if mode == "gemini" and (media or not provider.api_key and provider.is_loopback):
+                    if not provider.api_key and not provider.is_loopback:
+                        raise ValueError("远程 Google GenAI 连接需要 API Key")
+                    payload = await gemini_http_models(client, url, provider.api_key)
+                elif mode == "gemini":
                     if not provider.api_key:
-                        raise ValueError("Google GenAI 需要 API Key；本地免密端点请在提供商设置中填写 local")
+                        raise ValueError("远程 Google GenAI 连接需要 API Key")
                     sdk = GenAITransport(provider.base_url, profile.api_path, provider.api_key, client)
                     try:
                         names = await sdk.list_models()
@@ -183,6 +194,24 @@ def register_model_routes(app, store):
                 (key, json.dumps(result, ensure_ascii=False)),
             )
         return result
+
+
+async def gemini_http_models(client, url, key):
+    models, params = [], {"pageSize": 1000}
+    for _ in range(100):
+        response = await client.get(url, params=params, headers={"x-goog-api-key": key} if key else {})
+        response.raise_for_status()
+        page = response.json()
+        if not isinstance(page, dict) or page.get("error") or not isinstance(page.get("models"), list):
+            raise ValueError(upstream_message("模型接口未返回有效的模型列表", page, secret=key))
+        models.extend(page["models"])
+        if len(models) > 10000:
+            break
+        token = page.get("nextPageToken")
+        if not token:
+            return {"models": models}
+        params["pageToken"] = token
+    raise ValueError("模型列表超过 100 页或 10000 项，未更新本地列表")
 
 
 async def subscription_models(accounts, provider, url):

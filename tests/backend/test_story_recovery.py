@@ -13,6 +13,7 @@ from tavern.storage.legacy_story import OLD_STORY_KEY
 from tavern.storage.store import Store
 from tavern.story.activity import turn_items
 from tavern.story.context import load_trace
+from tavern.story.recovery import PROGRESS_VERSION
 from tavern.story.tools import AgentTools, Story
 from tests.backend.test_story import (
     Model,
@@ -341,7 +342,7 @@ async def test_unicode_story_resume_decodes_unfinished_call_with_saved_format(
             failed, _ = await turn(service, session, initial)
         assert failed["status"] == "error"
         progress = store.story_progress(failed["id"])
-        assert progress["story"]["content"] == first and progress["version"] == 7
+        assert progress["story"]["content"] == first and progress["version"] == PROGRESS_VERSION
         assert progress["story_format"] == ("unicode_full" if old_checkpoint else "unicode_partial")
         assert next(item["message"] for item in progress["new_trace"] if item["message"].get("tool_calls"))[
             "tool_calls"

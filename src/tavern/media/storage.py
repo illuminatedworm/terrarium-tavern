@@ -1,11 +1,27 @@
 """Durable media intents and assets. Only the story commit publishes new intents."""
 
+import hashlib
 import json
 import time
 
 from tavern.character.cards import strip_card_png_data
 from tavern.core.errors import NotFound
-from tavern.media.config import MediaConfig
+from tavern.media.config import (
+    GeminiSpeechProfile,
+    MediaConfig,
+    canonical_voice,
+    image_reference_limit,
+    regenerate_image_size,
+    validate_voice,
+)
+from tavern.media.routing import (
+    ModelKey,
+    StoryMediaSettings,
+    VoiceTable,
+    story_key,
+    upgrade_selection,
+    validate_channels,
+)
 
 
 def initialize(store):
@@ -40,16 +56,22 @@ def next_sequence(db, sid):
     ).fetchone()[0]
 
 
-def _config(db, sid):
-    row = db.execute("SELECT media_config FROM sessions WHERE id=?", (sid,)).fetchone()
+def selection_row(db, sid):
+    row = db.execute(
+        "SELECT media_config,model_selection,channel_origin FROM sessions WHERE id=?", (sid,)
+    ).fetchone()
     if row is None:
         raise NotFound("会话不存在")
-    return MediaConfig.model_validate_json(row[0])
+    return row
 
 
 def config(store, sid):
     with store.connection() as db:
-        return _config(db, sid)
+        row = selection_row(db, sid)
+        document = store.settings_document(db=db)
+        return StoryMediaSettings.model_validate_json(row["media_config"]).resolve(
+            document.story.media, story_key(row, document)
+        )
 
 
 def editable(db, sid, revision):
@@ -73,33 +95,69 @@ def editable(db, sid, revision):
         raise Conflict("会话已改变，请刷新后重试")
 
 
-def connection_snapshot(settings, options):
-    provider = next((p for p in settings.providers if p.id == options.provider_id), None)
-    if provider is None or not options.model:
-        raise ValueError("请先在会话的媒体设置中选择连接和模型")
+LOCAL_HTTP_ADAPTERS = ("gemini_tts", "gemini_image", "openai_speech", "openai_images")
+
+
+def check_media_key(provider, adapter):
     if provider.auth_mode == "chatgpt_subscription":
         raise ValueError("媒体服务需要 API Key 连接，不能使用 ChatGPT 登录订阅")
     if not provider.api_key:
-        raise ValueError("媒体连接尚未填写 API Key；本地免密服务可填 local")
+        if provider.is_loopback and adapter in LOCAL_HTTP_ADAPTERS:
+            return
+        raise ValueError("媒体连接尚未填写 API Key；本机免密 HTTP 服务可留空")
+
+
+def connection_snapshot(settings, options):
+    provider = next((p for p in settings.providers if p.id == options.provider_id), None)
+    if provider is None or not options.model.strip():
+        raise ValueError("请先在当前生效的媒体设置中选择连接并填写模型")
+    check_media_key(provider, options.adapter)
+    parameters = options.model_dump(exclude={"enabled", "voice_names"})
+    if isinstance(options, GeminiSpeechProfile):
+        parameters["instruction_format"] = options.effective_format()
     return {
-        **options.model_dump(exclude={"enabled"}),
+        **parameters,
         "provider_name": provider.name,
         "base_url": provider.base_url,
         "auth_mode": provider.auth_mode,
     }
 
 
-def save_config(store, sid, revision, value):
-    from tavern.storage.store import dump
+def selection_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def save_config(
+    store, sid, revision, value: StoryMediaSettings | MediaConfig | dict, *, expected_selection=None
+):
+    from tavern.storage.store import Conflict, dump
 
     # Credentials remain in the existing provider settings, never in media jobs or exports.
-    settings = store.settings()
-    for options in (value.speech, value.image):
-        if options.enabled:
-            connection_snapshot(settings, options)
     with store.connection() as db:
         db.execute("BEGIN IMMEDIATE")
         editable(db, sid, revision)
+        document = store.settings_document(db=db)
+        row = selection_row(db, sid)
+        # Manual regeneration can bind a new voice while a story turn owns its revision.
+        if expected_selection is not None and expected_selection != selection_token(row["media_config"]):
+            raise Conflict("角色表或媒体设置已改变，请重新载入")
+        text_model = story_key(row, document)
+        if not isinstance(value, StoryMediaSettings):
+            raw = value.model_dump() if isinstance(value, MediaConfig) else value
+            value = upgrade_selection(
+                raw, row, document, StoryMediaSettings.model_validate_json(row["media_config"])
+            )
+        for part in (value.speech, value.image):
+            if part.custom:
+                validate_channels(part.custom, document.shared.providers, allow_missing=True)
+        effective = value.resolve(document.story.media, text_model)
+        for options in (effective.speech, effective.image):
+            if options.enabled:
+                connection_snapshot(document.shared, options)
+        if effective.speech.enabled:
+            validate_voice(effective.speech, effective.speech.default_voice)
+            for voice in set(effective.voices.values()):
+                validate_voice(effective.speech, voice)
         db.execute("UPDATE sessions SET media_config=? WHERE id=?", (dump(value.model_dump()), sid))
         sequence = next_sequence(db, sid)
         for kind, enabled in (("speech", value.speech.enabled), ("image", value.image.enabled)):
@@ -110,6 +168,7 @@ def save_config(store, sid, revision, value):
                     (time.time(), sequence, sid, kind),
                 )
     store.notify_media(sid)
+    return value
 
 
 def asset_view(row):
@@ -238,24 +297,54 @@ def create_job(db, sid, mid, kind, request, *, previous=None):
     return identity
 
 
-def commit(db, sid, mid, draft):
-    from tavern.storage.store import dump
+def bind_speaker(selection, tables, story, request):
+    conn = request["connection"]
+    speech = ModelKey(provider_id=conn["provider_id"], model=conn["model"])
+    key = (story, speech)
+    table = tables.get(key)
+    if table is None:
+        table = VoiceTable(story_model=story, speech_model=speech, voices={})
+        selection.voice_tables.append(table)
+        tables[key] = table
+    if request["speaker"] in table.voices:
+        return False
+    table.voices[request["speaker"]] = canonical_voice(conn["adapter"], request["voice"])
+    return True
 
-    if not draft:
+
+def commit(db, sid, mid, draft):
+    if not draft or not draft["plans"]:
         return
-    # These inserts and new speaker bindings share the story/state transaction.
-    value = json.loads(db.execute("SELECT media_config FROM sessions WHERE id=?", (sid,)).fetchone()[0])
+    # Freeze the first voice in the transaction that accepts the story and its media jobs.
+    row = selection_row(db, sid)
+    selection = StoryMediaSettings.model_validate_json(row["media_config"])
+    tables = {(t.story_model, t.speech_model): t for t in selection.voice_tables}
+    changed = False
+    legacy_story = None
     for plan in draft["plans"]:
-        jid = create_job(db, sid, mid, plan["kind"], plan["request"])
-        if not value[plan["kind"]]["enabled"]:
+        kind, request = plan["kind"], plan["request"]
+        jid = create_job(db, sid, mid, kind, request)
+        if not getattr(selection, kind).enabled:
             db.execute(
                 "UPDATE media_jobs SET status='cancelled',error='此故事已关闭生成，未发起请求' WHERE id=?",
                 (jid,),
             )
-    if draft["new_voices"]:
-        for speaker, voice in draft["new_voices"].items():
-            value["voices"].setdefault(speaker, voice)
-        db.execute("UPDATE sessions SET media_config=? WHERE id=?", (dump(value), sid))
+        if kind == "speech":
+            if "story_model" in request:
+                story = ModelKey.model_validate(request["story_model"])
+            else:
+                # Only pending turns saved before v12 lack a text-model identity.
+                if legacy_story is None:
+                    from tavern.core.settings import SettingsDocument
+
+                    doc = SettingsDocument.model_validate_json(
+                        db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
+                    )
+                    legacy_story = story_key(row, doc)
+                story = legacy_story
+            changed |= bind_speaker(selection, tables, story, request)
+    if changed:
+        db.execute("UPDATE sessions SET media_config=? WHERE id=?", (selection.model_dump_json(), sid))
 
 
 def _job_view(db, row):
@@ -384,18 +473,35 @@ def retry(store, sid, jid, regenerate=False, operation_id=None):
             raise Conflict("此媒体任务仍在进行")
         # The feature switch and job status must be read under the same lock
         # that saves configuration and enqueues manual operations.
-        value = _config(db, sid)
+        row = selection_row(db, sid)
+        selection = StoryMediaSettings.model_validate_json(row["media_config"])
+        document = store.settings_document(db=db)
+        request = json.loads(original["request"])
+        text_model = (
+            ModelKey.model_validate(request["story_model"])
+            if "story_model" in request
+            else story_key(row, document)
+        )
+        value = selection.resolve(document.story.media, text_model)
         options = getattr(value, original["kind"])
         if not options.enabled:
             raise ValueError("请先开启此故事的媒体功能")
         if regenerate:
-            request = json.loads(original["request"])
-            request["connection"] = connection_snapshot(store.settings(), options)
             if original["kind"] == "speech":
-                speaker = request["speaker"]
-                if speaker not in value.voices:
-                    raise ValueError("此角色没有声线绑定，请先在媒体设置中选择声音")
-                request["voice"] = value.voices[speaker]
+                request["story_model"] = text_model.model_dump()
+                request["voice"] = value.voices.get(request["speaker"], options.default_voice)
+                validate_voice(options, request["voice"])
+            else:
+                if len(request["references"]) > image_reference_limit(options):
+                    raise ValueError("原任务的参考图数量超过当前生图模型上限")
+                request["size"] = regenerate_image_size(request, options)
+            request["connection"] = connection_snapshot(document.shared, options)
+            if original["kind"] == "speech" and request["speaker"] not in value.voices:
+                tables = {(t.story_model, t.speech_model): t for t in selection.voice_tables}
+                bind_speaker(selection, tables, text_model, request)
+                db.execute(
+                    "UPDATE sessions SET media_config=? WHERE id=?", (selection.model_dump_json(), sid)
+                )
             new_id = create_job(db, sid, original["message"], original["kind"], request, previous=jid)
         else:
             if original["status"] == "completed":

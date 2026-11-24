@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tavern.core.settings import SettingsDocument, migrate_settings
-from tavern.media.config import MediaConfig
+from tavern.media.routing import StoryMediaSettings, upgrade_selection
 from tavern.storage.legacy_lore import upgrade_stored_lore_purposes
 from tavern.storage.legacy_story import (
     discard_unsupported_stories,
@@ -22,8 +22,8 @@ if TYPE_CHECKING:
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 35
-SETTINGS_VERSIONS = range(2, 24)
+SCHEMA_VERSION = 39
+SETTINGS_VERSIONS = range(2, 26)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
 SESSION_COLUMNS = {
@@ -44,7 +44,9 @@ SESSION_COLUMNS = {
     # Old stories have no durable first-request fact; never infer it from prunable logs.
     "opening_locked": "INTEGER NOT NULL DEFAULT 1",
     "unicode_story": "INTEGER NOT NULL DEFAULT 0",
-    "media_config": "TEXT NOT NULL DEFAULT '" + MediaConfig().model_dump_json().replace("'", "''") + "'",
+    "media_config": "TEXT NOT NULL DEFAULT '"
+    + StoryMediaSettings().model_dump_json().replace("'", "''")
+    + "'",
     "media_sequence": "INTEGER NOT NULL DEFAULT 0",
     "empty_window_id": "TEXT",
 }
@@ -256,6 +258,24 @@ def _migrate_data(db: sqlite3.Connection, previous_schema: int) -> None:
         upgrade_story_records(db)
     if previous_schema < 28:
         upgrade_stored_lore_purposes(db)
+    if previous_schema < 38:
+        document = SettingsDocument.model_validate_json(
+            db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
+        )
+        for session in db.execute("SELECT id,media_config,channel_origin,model_selection FROM sessions"):
+            selection = upgrade_selection(json.loads(session["media_config"]), session, document)
+            db.execute(
+                "UPDATE sessions SET media_config=? WHERE id=?", (selection.model_dump_json(), session["id"])
+            )
+    elif previous_schema == 38:
+        # Imports without media settings could inherit the pre-upgrade SQL DEFAULT.
+        # Match that exact default so saved story overrides and voice tables survive.
+        db.execute(
+            "UPDATE sessions SET media_config=? WHERE json_type(media_config,'$.voice_tables') IS NULL "
+            "AND quote(media_config)=(SELECT dflt_value FROM pragma_table_info('sessions') "
+            "WHERE name='media_config')",
+            (StoryMediaSettings().model_dump_json(),),
+        )
     if previous_schema < 16:
         from tavern.core.context_usage import retire_estimated_pressure
 

@@ -15,7 +15,14 @@ from tavern.core.models import PersonaEdit, SessionCreate, TurnRequest
 from tavern.core.ooc import ooc_block
 from tavern.storage.legacy_story import OLD_STORY_KEY, RETIRED_STORY_KEY
 from tavern.storage.store import Conflict, Store, dump, uid
-from tavern.storage.transfer import ExportSelection, export_package, import_package, preview, read_package
+from tavern.storage.transfer import (
+    PACKAGE_VERSION,
+    ExportSelection,
+    export_package,
+    import_package,
+    preview,
+    read_package,
+)
 from tavern.story.activity import message_items
 from tests.backend.test_story import Model
 
@@ -29,6 +36,38 @@ def seed(store, **fields):
 
 def package(store, **options):
     return read_package(export_package(store, ExportSelection(**options)), store)
+
+
+def test_pre_media_imports_open_with_an_upgraded_sqlite_default(tmp_path, monkeypatch):
+    from tavern.storage import schema
+
+    old_default = dump({"voices": {}, "speech": {"enabled": False, "adapter": "openai_realtime"}})
+    with monkeypatch.context() as old_schema:
+        old_schema.setitem(schema.SESSION_COLUMNS, "media_config", f"TEXT NOT NULL DEFAULT '{old_default}'")
+        store = Store(tmp_path)
+    _, _, session = seed(store)
+    sid = session["id"]
+    legacy, blobs = package(store, settings=False, sessions=[sid])
+    legacy["version"] = 16
+    bundle = legacy["sessions"][0]
+    del bundle["media"], bundle["session"]["media_config"], bundle["session"]["media_sequence"]
+
+    with store.connection() as db:
+        db.execute("UPDATE sessions SET media_config=? WHERE id=?", (old_default, sid))
+        db.execute("UPDATE meta SET value='38' WHERE key='schema_version'")
+    archive = export_package(store, ExportSelection(settings=False, sessions=[sid]))
+    store = Store(tmp_path)
+    assert list(tmp_path.glob("before-upgrade-schema38-*.sqlite3"))
+    reexported, reexported_blobs = read_package(archive, store)
+    for story_id in (
+        sid,
+        *import_package(store, legacy, blobs)["sessions"],
+        *import_package(store, reexported, reexported_blobs)["sessions"],
+    ):
+        restored = store.session(story_id)
+        assert restored["media_source"] == "global"
+        assert restored["media_config"] == session["media_config"]
+        assert restored["messages"][0]["raw"] == session["messages"][0]["raw"]
 
 
 def test_package_round_trip_preserves_list_order(tmp_path):
@@ -191,7 +230,7 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         with pytest.raises(ValueError, match="场外发言与模型消息不一致"):
             import_package(target, inconsistent, blobs)
         assert target.sessions() == []
-        assert payload["version"] == 20
+        assert payload["version"] == PACKAGE_VERSION
         payload["version"] = 14
         previous_story_keys(payload["sessions"][0])
         imported = import_package(target, payload, blobs)

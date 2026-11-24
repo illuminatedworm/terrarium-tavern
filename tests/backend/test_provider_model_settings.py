@@ -278,6 +278,20 @@ async def test_catalog_cache_survives_restart_and_failed_refresh(tmp_path, monke
     assert len(calls) == 2
 
 
+async def test_gemini_media_catalog_redacts_errors_from_later_pages():
+    from tavern.application.provider_models import gemini_http_models
+
+    def page(request):
+        if "pageToken" not in request.url.params:
+            return httpx.Response(200, json={"models": [{"name": "models/a"}], "nextPageToken": "next"})
+        return httpx.Response(200, json={"error": {"message": "invalid fixture-secret"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(page)) as client:
+        with pytest.raises(ValueError, match=r"invalid \[REDACTED\]") as error:
+            await gemini_http_models(client, "https://example.test/models", "fixture-secret")
+    assert "fixture-secret" not in str(error.value)
+
+
 async def test_catalogs_are_provider_isolated_and_shared_across_openai_protocols(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     doc = app.state.store.settings_document()
@@ -364,7 +378,7 @@ async def test_official_api_connection_is_explicit_persistent_and_fixed_protocol
     store.save_settings(doc)
     saved = store.settings_document()
     assert saved.model_dump(exclude={"revisions"}) == doc.model_dump(exclude={"revisions"})
-    assert saved.version == 23
+    assert saved.version == SettingsDocument().version
     assert provider_channel(saved.shared.providers[0]) == "standard"
     assert provider_channel(official) == "chatgpt"
     for role in ("story", "card_author", "advisor", "novel_research"):

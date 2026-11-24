@@ -3176,10 +3176,10 @@ useTimedError(error);
             :key="session.id"
             :session="session"
             :disabled="storyLocked || previewMessagesBusy"
-            :provider-settings-open="panel === 'settings' && settingsInitialPage === 'shared.providers'"
+            :active="inspectorTab === 'media' && !panel"
             @saved="applyFullSession"
-            @providers="
-              settingsInitialPage = 'shared.providers';
+            @settings="
+              settingsInitialPage = 'story.media';
               panel = 'settings';
             "
           />

@@ -30,6 +30,7 @@ from tavern.core.prompts import (
     DEFAULT_RERANKER_PROMPT,
 )
 from tavern.core.update_policy import Policy
+from tavern.media.routing import MediaDefaults, upgrade_defaults, validate_channels
 from tavern.novel.config import NovelConfig
 from tavern.search.retrieval_config import LocalModel, ModelProfile, Network, Provider, RetrievalSettings
 from tavern.storage.legacy_story import (
@@ -124,6 +125,7 @@ class StorySettings(AgentSettings):
     tools: StoryConfig = Field(default_factory=StoryConfig)
     system_prompt: PromptChoices = Field(default_factory=lambda: PromptChoices.from_text(STORY_PROMPT))
     novel_research: NovelConfig = Field(default_factory=NovelConfig)
+    media: MediaDefaults = Field(default_factory=MediaDefaults)
 
     @model_validator(mode="before")
     @classmethod
@@ -187,7 +189,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[23] = 23
+    version: Literal[25] = 25
     story: StorySettings = Field(default_factory=StorySettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
     revisions: dict[str, int] = Field(default_factory=lambda: {"story": 0, "shared": 0})
@@ -207,6 +209,8 @@ class SettingsDocument(StrictSettings):
         ids = [p.id for p in self.shared.providers]
         if not ids or len(ids) != len(set(ids)):
             raise ValueError("提供商不能为空或重复")
+        for route in (self.story.media.speech, self.story.media.image):
+            validate_channels(route, self.shared.providers)
         for scope, key, profile in self.profiles():
             if not profile.provider_id and not profile.model:
                 continue  # An unconfigured channel never borrows another channel's connection.
@@ -281,6 +285,7 @@ class SettingsDocument(StrictSettings):
                 "local_runtime",
                 "system_prompt",
                 "novel_research",
+                "media",
             }
         )
         data.update(
@@ -536,6 +541,16 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             raw["version"] = 22
         if raw["version"] == 22:
             raw["version"] = 23
+            changed_scopes.add("story")
+        if raw["version"] == 23:
+            raw["version"] = 24
+            changed_scopes.add("story")
+        if raw["version"] == 24:
+            story = raw.setdefault("story", {})
+            story["media"] = upgrade_defaults(
+                story.get("media", {}), raw.get("shared", {}).get("providers", [])
+            ).model_dump()
+            raw["version"] = 25
             changed_scopes.add("story")
         doc = SettingsDocument.model_validate(raw)
         # Story and Advisor update the bundled default in slot 1.

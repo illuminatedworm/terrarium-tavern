@@ -15,7 +15,13 @@ from tavern.core.ooc import with_ooc
 from tavern.core.story_segments import MAX_SEGMENTS
 from tavern.core.tokens import count_text
 from tavern.media.config import SPECS as MEDIA_SPECS
-from tavern.media.config import MediaConfig, enabled_tools
+from tavern.media.config import (
+    LegacySpeechArguments,
+    MediaConfig,
+    enabled_tools,
+    image_reference_limit,
+    image_sizes,
+)
 from tavern.novel.tools import MAIN_SPECS
 from tavern.scripting.calculation import CalculationError, calculate
 from tavern.scripting.runtime import RuntimeRollbackError
@@ -444,6 +450,7 @@ def tool_definitions(
     # Per-turn authorization belongs to execution, keeping cached prefixes stable.
     config = config or StoryConfig()
     names = set(SPECS)
+    media = MediaConfig.model_validate(session.get("media_config", {}))
     if not catalog and not session.get("novel_enabled"):
         names.difference_update(MAIN_SPECS)
     if session.get("context_strategy") == "openai_compact":
@@ -451,7 +458,7 @@ def tool_definitions(
     if not catalog:
         names.difference_update(session.get("disabled_tools", []))
         names.difference_update(MEDIA_SPECS)
-        names.update(enabled_tools(MediaConfig.model_validate(session.get("media_config", {}))))
+        names.update(enabled_tools(media))
         # This capability has one player-facing switch, not two conflicting ones.
         if session.get("plot_enabled", False):
             names.add("write_plot")
@@ -492,6 +499,14 @@ def tool_definitions(
         if name not in names:
             continue
         parameters = model.model_json_schema()
+        if name == "generate_image":
+            fields = parameters["properties"]
+            fields["size"]["enum"] = list(image_sizes(media.image))
+            limit = image_reference_limit(media.image)
+            fields["references"].update(
+                maxItems=limit,
+                description=f"Optional authorized I references, at most {limit}; default none.",
+            )
         if name == "submit_story" and story_format != "plain":
             parameters["properties"]["content"]["description"] = ENCODED_STORY_DESCRIPTIONS[story_format]
             if story_format == "unicode_partial":
@@ -514,8 +529,9 @@ def encoded(value):
 
 
 class AgentTools:
-    def __init__(self, owner):
+    def __init__(self, owner, *, replay_speech_voice: bool = False):
         self.owner = owner
+        self.replay_speech_voice = replay_speech_voice
         self.reads = DraftReads(owner)
         self.content = ContentEditor(owner, self.reads)
 
@@ -592,6 +608,8 @@ class AgentTools:
             args = arguments
         else:
             model = SPECS[name][0]
+            if self.replay_speech_voice and name == "generate_speech":
+                model = LegacySpeechArguments
             try:
                 args = model.model_validate_json(arguments)
             except ValidationError as error:

@@ -33,7 +33,7 @@ from tavern.storage.worldbooks import read_defaults, write_defaults
 MAX_UPLOAD = 256 * 1024 * 1024
 MAX_UNPACKED = 512 * 1024 * 1024
 FORMAT = "terrarium-tavern-personal-data"
-PACKAGE_VERSION = 20
+PACKAGE_VERSION = 23
 JSON_FIELDS = {
     "worldbooks": {"book"},
     "cards": {"resources", "document", "report"},
@@ -431,6 +431,20 @@ def validate_package(store, package, blobs):
         if preferences is not None:
             preferences["document"] = migrate_settings(preferences["document"]).model_dump()
             browser_preferences(preferences.get("browser", {}))
+        if package["version"] < 23:
+            from tavern.media.routing import upgrade_selection
+
+            media_document = (
+                SettingsDocument.model_validate(preferences["document"])
+                if preferences
+                else store.settings_document()
+            )
+            for bundle in package["sessions"]:
+                session = bundle["session"]
+                if "media_config" in session:
+                    session["media_config"] = upgrade_selection(
+                        session["media_config"], session, media_document
+                    ).model_dump()
         for persona in package["personas"]:
             validate_row(schema, "personas", persona, {"id", "version", "name", "description"})
             PersonaEdit.model_validate({"name": persona["name"], "description": persona["description"]})
@@ -866,8 +880,7 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 source = session_record(bundle, package["version"])
                 row = remap(source, ids)
                 row["model_selection"] = copy.deepcopy(source.get("model_selection", {}))
-                if "media_config" in source:
-                    row["media_config"] = copy.deepcopy(source["media_config"])
+                row["media_config"] = copy.deepcopy(source["media_config"])
                 # A session owns its pinned card even when the library card was deleted.
                 row["card"] = ids.get(source["card"], uid())
                 row["card_data"]["id"] = row["card"]

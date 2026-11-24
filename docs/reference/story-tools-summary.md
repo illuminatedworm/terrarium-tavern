@@ -10,8 +10,8 @@
 
 | 工具名 | 描述 | 参数 | 额外备注 |
 |---|---|---|---|
-| `generate_speech` | 登记角色配音 | `text: string`；`speaker: string`；`delivery: string=""`；`voice: string或null=null` | 文本直接传递，不与正文核对。已有角色沿用声线，新角色首次选择可用声音；正文提交后才生成。默认每轮最多20段、2000字符，用户可改。 |
-| `generate_image` | 登记剧情插图 | `prompt: string`；`references: string[]=[]`（最多16个I引用）；`size: "auto"或"1024x1024"或"1536x1024"或"1024x1536"="auto"` | 尺寸单位为像素；画质与模型由用户控制。默认每轮最多1张，用户可改；正文提交后才生成。 |
+| `generate_speech` | 登记角色配音 | `text: string`；`speaker: string`；`delivery: string=""` | 文本直接传递，不与正文核对。运行时按角色表选声，新角色首次绑定默认音色；正文提交后才生成。默认每轮最多20段、2000字符，用户可改。 |
+| `generate_image` | 登记剧情插图 | `prompt: string`；`references: string[]=[]`（最多10、14或16个I引用）；`size: string="auto"` | 工具按当前协议列出像素尺寸或宽高比。固定画幅时仅提供 auto。模型与画质由用户控制，默认每轮最多1张，正文提交后生成。 |
 | `view_image` | 主动查看图片 | `ref: string`（一个I引用） | 只可查看授权参考图或当前剧情中的完成图片；在完整工具批次之后向当前模型提供原图。 |
 | `submit_story` | 唯一的正文交付工具 | `content: string` | 必须非空白且结构完整，始终启用。每轮最多接收三段。 [普通文本兜底条件](../design/story.md#正文交付submit_story) |
 | `present_ui` | 展示冻结的交互图形 | `spec: object`（json-render 规格） | 新建故事默认关闭；Kemini 实验对话不提供。每轮至多接收三份，失败不计数；与 `submit_story` 按调用顺序穿插显示；不接受 HTML、SVG、脚本或 URL，界面操作只改变本地显示或填写输入框。 |
@@ -70,7 +70,7 @@
 <details>
 <summary>查看工具描述原文与 JSON 示例</summary>
 
-工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。资料调查示例要求开启调查者并配置可用来源；媒体示例要求开启对应功能、配置 API Key 连接，并已选择人物参考图 I1。异步状态以实际任务为准。参数与错误恢复见[完整协议](story-tools.md)。
+工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。资料调查示例要求开启调查者并配置可用来源；媒体示例要求开启对应功能、选择可用的媒体连接，并已选择人物参考图 I1。异步状态以实际任务为准。参数与错误恢复见[完整协议](story-tools.md)。
 
 ### `find_lore_for_edit`
 
@@ -555,7 +555,7 @@ Arrange a character voice clip. Generation starts only after this story turn is 
 请求：
 
 ```json
-{"text":"明天在灯塔见。","speaker":"向导","voice":"marin","delivery":"轻声"}
+{"text":"明天在灯塔见。","speaker":"向导","delivery":"轻声"}
 ```
 
 成功返回：

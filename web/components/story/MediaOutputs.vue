@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
-import { mediaStatus, mediaUrl, storyMediaKey, type MediaJob } from '../../lib/media';
+import { adapterLabels, mediaStatus, mediaUrl, storyMediaKey, type MediaJob } from '../../lib/media';
 
 const props = defineProps<{ messageId: string }>();
 const media = inject(storyMediaKey, null);
@@ -121,18 +121,63 @@ function showImage(url: string) {
         <summary>{{ job.kind === 'speech' ? '实际配音文本与设置' : '提示词、参考图与设置' }}</summary>
         <p class="media-text">{{ job.request.text ?? job.request.prompt }}</p>
         <p v-if="job.request.delivery">演绎：{{ job.request.delivery }}</p>
-        <p v-if="job.kind === 'speech'" class="media-text">
+        <p
+          v-if="
+            'instructions' in job.request.connection &&
+            (job.request.connection.adapter !== 'openai_speech' || job.request.connection.send_instructions)
+          "
+          class="media-text"
+        >
           实际语音指令：{{
             [job.request.connection.instructions, job.request.delivery].filter(Boolean).join('\n\n')
           }}
         </p>
-        <p>{{ job.request.connection.provider_name }} · {{ job.request.connection.model }}</p>
+        <p>
+          {{ job.request.connection.provider_name }} · {{ adapterLabels[job.request.connection.adapter] }} ·
+          {{ job.request.connection.model }}
+        </p>
         <p>
           {{ job.request.connection.base_url }}/{{ job.request.connection.api_path }} · 超时
           {{ job.request.connection.timeout_seconds }} 秒
         </p>
         <p v-if="job.kind === 'speech'">声音：{{ job.request.voice }} · AI 生成语音</p>
-        <p v-else>尺寸：{{ job.request.size }} · 画质：{{ job.request.connection.quality }}</p>
+        <p v-if="job.request.connection.adapter === 'openai_speech'">
+          语速 {{ job.request.connection.speed }}× ·
+          {{ job.request.connection.send_instructions ? '发送演绎指令' : '仅发送台词' }}
+        </p>
+        <p v-if="job.request.connection.adapter === 'gemini_tts'">
+          {{
+            job.request.connection.instruction_format === 'speech_metadata'
+              ? '演绎指令单独发送'
+              : '演绎指令放在台词前'
+          }}
+          · 语言：{{ job.request.connection.language_code || '自动识别' }} · 采样温度：{{
+            job.request.connection.temperature ?? '模型默认'
+          }}
+        </p>
+        <p v-if="job.request.connection.adapter === 'seed_tts'">
+          语速调整 {{ job.request.connection.speech_rate }}% · 音量调整
+          {{ job.request.connection.loudness_rate }}% · {{ job.request.connection.sample_rate }} Hz
+        </p>
+        <p v-if="job.request.connection.adapter === 'openai_images'">
+          尺寸：{{ job.request.size }} · 画质：{{ job.request.connection.quality }} ·
+          {{ (job.request.connection.output_format || 'png').toUpperCase() }}
+        </p>
+        <p v-if="job.request.connection.adapter === 'gemini_image'">
+          画幅：{{ job.request.size === 'auto' ? '模型决定' : job.request.size }} · 分辨率：{{
+            job.request.connection.resolution === 'auto' ? '模型默认' : job.request.connection.resolution
+          }}
+        </p>
+        <p v-if="job.request.connection.adapter === 'ark_seedream'">
+          尺寸：{{ job.request.size }} ·
+          {{
+            job.request.connection.output_format === 'auto'
+              ? '格式由模型决定'
+              : job.request.connection.output_format.toUpperCase()
+          }}
+          · {{ job.request.connection.watermark ? '开启水印' : '关闭水印' }}
+        </p>
+        <p v-if="job.output">文件格式：{{ job.output.mime }}</p>
         <p v-for="reference in job.request.reference_names" :key="reference.ref">
           参考：{{ reference.ref }} · {{ reference.name }}
         </p>

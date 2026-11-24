@@ -39,6 +39,7 @@ import AdvisorSettings from './AdvisorSettings.vue';
 import NovelSettings from './NovelSettings.vue';
 import CardAuthorSettings from './CardAuthorSettings.vue';
 import WebSettings from './WebSettings.vue';
+import GlobalMediaSettings from './GlobalMediaSettings.vue';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { blankChannelProfile, channelProviders, storyProfileKey, type Channel } from '../../lib/channels';
 import type { ModelWarmupState } from '../../composables/useModelWarmup';
@@ -223,6 +224,10 @@ const searchable = computed(() => {
               ? miscFields
               : [];
     for (const f of fields) entries.push({ page: p, label: f.label, path: f.path });
+    if (p.key === 'media') {
+      entries.push({ page: p, label: '全局配音渠道、语音模型与额度', path: 'media.speech' });
+      entries.push({ page: p, label: '全局生图渠道、插图模型与额度', path: 'media.image' });
+    }
     if (p.key === 'model' || p.key === 'editor')
       for (const [path, label] of [
         ['model', '模型名称'],
@@ -473,6 +478,13 @@ onMounted(async () => {
               />
             </div>
           </template>
+          <GlobalMediaSettings
+            v-else-if="page.key === 'media'"
+            :value="draft.story.media"
+            :providers="draft.shared.providers"
+            :flush="editor.flush"
+            @providers="navigate('shared.providers')"
+          />
           <ProviderSettings
             v-else-if="page.key === 'providers'"
             v-model:providers="draft.shared.providers"

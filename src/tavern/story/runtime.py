@@ -98,11 +98,16 @@ class StoryRuntime:
             async with deadline:
                 turn = self.store.turn(tid)
                 request = TurnRequest.model_validate(turn["request"])
-                session = self.store.session(turn["session"])
+                # Resolve inherited media parameters and their provider connections
+                # from the same revision, even if another window edits global settings.
+                settings_document = self.store.settings_document()
+                session = self.store.session(turn["session"], settings_document=settings_document)
                 from tavern.core.message_adapter import bind_adapter
 
                 settings = bind_adapter(
-                    self.store.session_settings(session).for_role("story").model_copy(deep=True),
+                    self.store.session_settings(session, document=settings_document)
+                    .for_role("story")
+                    .model_copy(deep=True),
                     self.store,
                     "story",
                     session["id"],

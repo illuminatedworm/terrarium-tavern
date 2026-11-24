@@ -97,7 +97,7 @@ class StoryAgent:
         self.definitions = tool_definitions(
             session, settings.story_config, settings=settings, story_format=self.story_format
         )
-        self.tools = AgentTools(self)
+        self.tools = AgentTools(self, replay_speech_voice=(progress or {}).get("replay_speech_voice", False))
         # Tool exchanges survive turns/windows. Their short document handles
         # must keep the same meaning after document reorder or a new provider.
         initial_view = {"document": document, "state": snapshot["state"]}
@@ -187,6 +187,8 @@ class StoryAgent:
                 "model_completed": self.model_completed,
                 "resume_reason": self.resume_reason,
                 "legacy_protocol": self.legacy_protocol,
+                # Each recovered result is checkpointed before the next unpaired call.
+                "replay_speech_voice": self.tools.replay_speech_voice,
                 "variable_rules": self.variable_rules,
                 "exiting": sorted(self.exiting),
                 "tool_reads": copy.deepcopy(self.tools.reads.records),
@@ -852,6 +854,7 @@ class StoryAgent:
                 if self.model_completed and batch_failed:
                     await self.finished_text(batch_failed=True)
         self.legacy_protocol = False
+        self.tools.replay_speech_voice = False
         if frame := self.media.image_frame():
             self.append(frame, self.state["window"]["id"])
         await self.save_progress()

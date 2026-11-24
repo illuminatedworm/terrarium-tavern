@@ -30,7 +30,7 @@ NOTE_META = {"key": NOTE_KEY, "kind": "plan", "status": "active", "sources": []}
 NOTICE = "正文完成后与本回合统一提交。"
 EXAMPLES = {
     "generate_speech": (
-        {"text": "明天在灯塔见。", "speaker": "向导", "voice": "marin", "delivery": "轻声"},
+        {"text": "明天在灯塔见。", "speaker": "向导", "delivery": "轻声"},
         {"saved_to_draft": True, "message": "已登记；正文接受并提交后开始生成，可在回复下查看进度"},
     ),
     "generate_image": (
@@ -196,7 +196,7 @@ def descriptions():
         "<details>",
         "<summary>查看工具描述原文与 JSON 示例</summary>",
         "",
-        "工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。资料调查示例要求开启调查者并配置可用来源；媒体示例要求开启对应功能、配置 API Key 连接，并已选择人物参考图 I1。异步状态以实际任务为准。参数与错误恢复见[完整协议](story-tools.md)。",
+        "工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。资料调查示例要求开启调查者并配置可用来源；媒体示例要求开启对应功能、选择可用的媒体连接，并已选择人物参考图 I1。异步状态以实际任务为准。参数与错误恢复见[完整协议](story-tools.md)。",
         "",
     ]
     assert set(EXAMPLES) == set(SPECS)

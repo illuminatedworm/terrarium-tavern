@@ -3,7 +3,7 @@ import { clone, difference, rebaseSettings, type SettingsDocument } from '../../
 
 const fixture = () =>
   ({
-    version: 23,
+    version: 25,
     story: {
       model: { model: 'full', reply_tokens: 2048 },
       system_prompt: {
@@ -18,6 +18,29 @@ const fixture = () =>
   }) as unknown as SettingsDocument;
 
 describe('settings acknowledgements', () => {
+  it('replaces media protocol fields together when rebasing a provider switch', () => {
+    const saved = fixture();
+    const first = { provider_id: 'p', adapter: 'openai_images', quality: 'high' };
+    Object.assign(saved.story, {
+      media: { image: { active_channel: 'standard', standard: first, remembered: [] } },
+    });
+    const draft = clone(saved);
+    Object.assign(draft.story.media.image, {
+      standard: { provider_id: 'ark', adapter: 'ark_seedream', size: '2K' },
+      remembered: [first],
+    });
+    const sent = difference(saved.story, draft.story);
+    expect(sent).toEqual({ 'media.image': draft.story.media.image });
+    const acknowledged = clone(draft);
+    Object.assign(draft.story.media.image, {
+      standard: { provider_id: 'g', adapter: 'gemini_image', resolution: '1K' },
+      remembered: [first, draft.story.media.image.standard],
+    });
+    expect(rebaseSettings(saved, draft, acknowledged, 'story', sent).story.media.image).toEqual(
+      draft.story.media.image,
+    );
+  });
+
   it('keeps edits made while a save is in flight and edits in other scopes', () => {
     const saved = fixture();
     const draft = clone(saved);

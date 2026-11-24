@@ -21,12 +21,14 @@ class ImageMetadata(TypedDict):
     height: int
 
 
-def image_metadata(extension: str, data: bytes) -> ImageMetadata:
+def image_metadata(extension: str | None, data: bytes) -> ImageMetadata:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(BytesIO(data)) as image:
-                if image.format != IMAGE_FORMATS.get(extension):
+                if image.format not in MIME_TYPES or (
+                    extension is not None and image.format != IMAGE_FORMATS.get(extension)
+                ):
                     raise ValueError("图片实际格式与扩展名不符，请选择 PNG、JPEG 或静态 WebP。")
                 if getattr(image, "n_frames", 1) != 1:
                     raise ValueError("暂不支持动图，请选择静态 PNG、JPEG 或 WebP 图片。")

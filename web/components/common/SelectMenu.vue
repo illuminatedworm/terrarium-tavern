@@ -21,6 +21,7 @@ const props = withDefaults(
     highlighted?: boolean;
     searchable?: boolean;
     allowCustom?: boolean;
+    customDescription?: string;
     searchPlaceholder?: string;
     emptyText?: string;
     error?: string;
@@ -29,6 +30,7 @@ const props = withDefaults(
     placeholder: '请选择',
     searchPlaceholder: '搜索…',
     emptyText: '暂无可选项',
+    customDescription: '使用此模型 ID',
   },
 );
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
@@ -58,7 +60,7 @@ const choices = computed<SelectMenuOption[]>(() =>
   custom.value
     ? [
         ...filtered.value,
-        { value: query.value.trim(), label: query.value.trim(), description: '使用此模型 ID' },
+        { value: query.value.trim(), label: query.value.trim(), description: props.customDescription },
       ]
     : filtered.value,
 );

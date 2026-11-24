@@ -1,23 +1,111 @@
 import type { InjectionKey, Ref } from 'vue';
+import type { Channel } from './channels';
 
-export interface MediaConnection {
-  enabled: boolean;
+export type MediaKind = 'speech' | 'image';
+export interface ModelKey {
   provider_id: string;
-  api_path: string;
   model: string;
-  adapter: string;
+}
+interface BaseConnection extends ModelKey {
+  api_path: string;
   timeout_seconds: number;
-  quality?: string;
-  instructions?: string;
+}
+export type SpeechProfile = BaseConnection & { instructions: string; default_voice: string } & (
+    | {
+        adapter: 'openai_speech';
+        speed: number;
+        send_instructions: boolean;
+        voice_names: Record<string, string>;
+      }
+    | { adapter: 'openai_realtime' }
+    | {
+        adapter: 'gemini_tts';
+        temperature: number | null;
+        language_code: string;
+        instruction_format: 'auto' | 'speech_metadata' | 'prompt';
+      }
+    | { adapter: 'seed_tts'; speech_rate: number; loudness_rate: number; sample_rate: number }
+  );
+export type ImageProfile = BaseConnection &
+  (
+    | { adapter: 'openai_images'; quality: string; size: string; output_format: string }
+    | { adapter: 'gemini_image'; resolution: string; aspect_ratio: string }
+    | { adapter: 'ark_seedream'; size: string; output_format: string; watermark: boolean }
+  );
+export type SpeechConnection = SpeechProfile & { enabled: boolean };
+export type ImageConnection = ImageProfile & { enabled: boolean };
+export type MediaConnection = SpeechConnection | ImageConnection;
+export type Profile = SpeechProfile | ImageProfile;
+export type Adapter = Profile['adapter'];
+export const adapterLabels: Record<Adapter, string> = {
+  openai_speech: 'Speech HTTP · /audio/speech',
+  openai_realtime: 'Realtime · WebSocket',
+  gemini_tts: 'Gemini · generateContent',
+  seed_tts: '豆包语音 · 单向流式合成',
+  openai_images: 'Images HTTP · /images/generations',
+  gemini_image: 'Gemini · generateContent',
+  ark_seedream: 'Seedream · 方舟图像生成',
+};
+export interface Channels<P extends Profile> {
+  active_channel: Channel;
+  standard: P;
+  chatgpt: P;
+  remembered: P[];
+}
+export type SpeechChannels = Channels<SpeechProfile> & { max_segments: number; max_characters: number };
+export type ImageChannels = Channels<ImageProfile> & { max_images: number };
+export interface MediaDefaults {
+  speech: SpeechChannels;
+  image: ImageChannels;
 }
 export interface MediaConfig {
-  speech: MediaConnection;
-  image: MediaConnection;
-  view_images: boolean;
+  speech: SpeechConnection;
+  image: ImageConnection;
   max_images: number;
   max_speech_segments: number;
   max_speech_characters: number;
+  view_images: boolean;
   voices: Record<string, string>;
+}
+export interface VoiceTable {
+  story_model: ModelKey;
+  speech_model: ModelKey;
+  voices: Record<string, string>;
+}
+export interface MediaSelection {
+  speech: { enabled: boolean; custom: SpeechChannels | null };
+  image: { enabled: boolean; custom: ImageChannels | null };
+  view_images: boolean;
+  voice_tables: VoiceTable[];
+}
+export interface MediaProtocols {
+  presets: MediaDefaults;
+  keyless_adapters: Record<string, Adapter[]>;
+  speech_voices: Record<SpeechProfile['adapter'], string[]>;
+  seed_voice_names: Record<string, string>;
+  gemini_speech: { prompt_prefixes: string[]; metadata_voices: string[] };
+  adapters: { [A in Adapter]: Extract<MediaConnection, { adapter: A }> };
+}
+export type MediaSource = 'story' | 'global' | 'mixed';
+export const modelKey = ({ provider_id, model }: ModelKey): ModelKey => ({ provider_id, model });
+export const sameModel = (a: ModelKey, b: ModelKey) => a.provider_id === b.provider_id && a.model === b.model;
+export function metadataStyle(speech: SpeechProfile, catalog: MediaProtocols) {
+  if (speech.adapter !== 'gemini_tts') return false;
+  if (speech.instruction_format !== 'auto') return speech.instruction_format === 'speech_metadata';
+  const name = speech.model.replace(/^models\//, '');
+  return !catalog.gemini_speech.prompt_prefixes.some((prefix) => name.startsWith(prefix));
+}
+export function voiceOptions(p: SpeechProfile, catalog: MediaProtocols) {
+  const ids = metadataStyle(p, catalog)
+    ? catalog.gemini_speech.metadata_voices
+    : catalog.speech_voices[p.adapter];
+  const names =
+    p.adapter === 'openai_speech' ? p.voice_names : p.adapter === 'seed_tts' ? catalog.seed_voice_names : {};
+  return [...new Set([...Object.keys(names), ...ids])].map((id) => ({
+    value: id,
+    label: names[id] || id,
+    description: names[id] ? id : undefined,
+  }));
 }
 export interface MediaAsset {
   id: string;

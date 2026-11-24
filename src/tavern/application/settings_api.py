@@ -97,6 +97,7 @@ def page_catalog():
         ("model", "模型与生成", ["model", "official_model", "default_channel", "policy"]),
         ("retrieval", "检索与世界书", retrieval),
         ("memory", "工具与记忆", ["tools"]),
+        ("media", "配音与生图", ["media"]),
         ("prompts", "提示词", [p["path"] for p in prompts if p["scope"] == "story"]),
         ("novel", "资料调查", ["novel_research", "model.message_adapter"]),
     ]:

@@ -7,7 +7,7 @@ from tavern.scripting.native_response import portable
 from tavern.story.delivery import StoryFormat
 from tavern.story.protocol import failed as tool_failed
 
-PROGRESS_VERSION = 10
+PROGRESS_VERSION = 13
 
 
 def saved_story_format(progress: dict) -> StoryFormat:
@@ -38,6 +38,10 @@ def load_progress(progress):
         # model responses never regain these tools through an old checkpoint.
         progress["legacy_protocol"] = True
         progress["version"] = 3
+    elif 8 <= version < 12:
+        # The saved response can still contain unpaired calls with a voice argument.
+        # Keep their original arguments intact for activity and native history.
+        return {**progress, "version": 13, "replay_speech_voice": True}
     return progress
 
 

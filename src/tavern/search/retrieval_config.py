@@ -1,7 +1,9 @@
 """Validated, independently configurable retrieval and provider profiles."""
 
 import re
+from ipaddress import ip_address
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -29,6 +31,16 @@ class Provider(BaseModel):
     use_proxy: bool = False
     auth_mode: Literal["api_key", "chatgpt_subscription", "openai_api_key"] = "api_key"
     chatgpt_account_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+
+    @property
+    def is_loopback(self) -> bool:
+        host = urlsplit(self.base_url).hostname
+        if host == "localhost":
+            return True
+        try:
+            return ip_address(host).is_loopback
+        except ValueError:
+            return False  # Other DNS names are remote connections.
 
     @model_validator(mode="after")
     def valid_url(self):

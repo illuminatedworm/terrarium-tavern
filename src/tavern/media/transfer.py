@@ -9,7 +9,15 @@ from typing import Literal
 from pydantic import Field
 
 from tavern.character.editor_images import image_metadata
-from tavern.media.config import MediaConfig, StrictModel
+from tavern.media.config import (
+    MediaConfig,
+    StrictModel,
+    image_reference_limit,
+    image_sizes,
+    snapshot_options,
+    validate_voice,
+)
+from tavern.media.routing import ModelKey, StoryMediaSettings
 
 
 class AssetRecord(StrictModel):
@@ -59,7 +67,15 @@ def validate_bundle(bundle, messages, blobs, identity):
     sequence = session.get("media_sequence", 0)
     if type(sequence) is not int or sequence < 0:
         raise ValueError("媒体事件序号无效")
-    MediaConfig.model_validate(session.get("media_config", {}))
+    config = session.get("media_config", {})
+    # Pre-media packages omitted the column. A v23 re-export of one of these
+    # imports can contain the old table's unconfigured flat SQLite default.
+    if "media_config" not in session or (
+        "voices" in config and MediaConfig.model_validate(config) == MediaConfig()
+    ):
+        session["media_config"] = StoryMediaSettings().model_dump()
+    else:
+        StoryMediaSettings.model_validate(config)
     media = bundle.get("media", {"assets": [], "jobs": []})
     if set(media) != {"assets", "jobs"}:
         raise ValueError("媒体数据包格式无效")
@@ -128,35 +144,29 @@ def validate_bundle(bundle, messages, blobs, identity):
         request = item.request
         connection = request["connection"]
         # Validate only the connection and generation boundary, never compare TTS text with prose.
-        from tavern.media.config import ImageSettings, SpeechSettings
         from tavern.search.retrieval_config import Provider
 
-        if set(connection) - {
-            "provider_id",
-            "api_path",
-            "model",
-            "adapter",
-            "timeout_seconds",
-            "quality",
-            "instructions",
-            "provider_name",
-            "base_url",
-            "auth_mode",
-        }:
-            raise ValueError("媒体任务连接含未知字段")
-        options = {k: v for k, v in connection.items() if k not in ("provider_name", "base_url", "auth_mode")}
-        (SpeechSettings if item.kind == "speech" else ImageSettings).model_validate(options)
+        options = snapshot_options(item.kind, connection)
         Provider(
             id=connection["provider_id"], base_url=connection["base_url"], auth_mode=connection["auth_mode"]
         )
         if connection["auth_mode"] == "chatgpt_subscription":
             raise ValueError("媒体任务不能使用登录订阅")
         if item.kind == "speech":
-            SpeechArguments.model_validate({k: v for k, v in request.items() if k != "connection"})
+            SpeechArguments.model_validate(
+                {k: v for k, v in request.items() if k not in ("connection", "voice", "story_model")}
+            )
+            validate_voice(options, request["voice"])
+            if "story_model" in request:
+                ModelKey.model_validate(request["story_model"])
         else:
             ImageArguments.model_validate(
                 {k: v for k, v in request.items() if k not in ("connection", "reference_names")}
             )
+            if request.get("size", "auto") not in image_sizes(options).values() or len(
+                request["references"]
+            ) > image_reference_limit(options, frozen=True):
+                raise ValueError("媒体任务的尺寸或参考图数量与生图协议不符")
             if any(ref not in assets or assets[ref].kind != "image" for ref in request["references"]):
                 raise ValueError("媒体任务引用的图片不存在")
     for item in jobs.values():

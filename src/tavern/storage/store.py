@@ -16,6 +16,7 @@ from tavern.core.errors import NotFound
 from tavern.core.history_refs import message_ref
 from tavern.core.models import TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime
+from tavern.media.routing import StoryMediaSettings, story_key
 from tavern.storage.message_adapters import MessageAdapters
 from tavern.storage.schema import SCHEMA_VERSION as SCHEMA_VERSION
 from tavern.storage.schema import SETTINGS_VERSIONS as SETTINGS_VERSIONS
@@ -412,11 +413,13 @@ class Store(MessageAdapters):
                 raise NotFound("角色卡不存在或已删除")
         return self.card(card)
 
-    def settings_document(self):
-        with self.connection() as db:
-            return SettingsDocument.model_validate_json(
-                db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
-            )
+    def settings_document(self, *, db=None):
+        if db is None:
+            with self.connection() as connection:
+                return self.settings_document(db=connection)
+        return SettingsDocument.model_validate_json(
+            db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
+        )
 
     def settings(self, channel=None, *, document=None):
         settings = (document or self.settings_document()).runtime(channel)
@@ -432,7 +435,7 @@ class Store(MessageAdapters):
             settings._auth_generation = generations.get(settings.chatgpt_account_id, "")
         return settings
 
-    def session_settings(self, session, *, require_origin=True):
+    def session_settings(self, session, *, require_origin=True, document=None):
         sid = session if isinstance(session, str) else session["id"]
         if isinstance(session, str):
             with self.connection() as db:
@@ -447,7 +450,7 @@ class Store(MessageAdapters):
         channel = session.get("channel_origin")
         if not channel and require_origin:
             raise ValueError("请先确认此旧对话的渠道归属")
-        settings = self.settings(channel or "standard")
+        settings = self.settings(channel or "standard", document=document)
         settings.context_strategy = session.get("context_strategy", "new_context")
         settings.compact_auto = bool(session.get("compact_auto", True))
         if settings.context_strategy == "openai_compact" and channel != "chatgpt":
@@ -548,6 +551,7 @@ class Store(MessageAdapters):
                     "created": now,
                     "title": card["name"],
                     "disabled_tools": dump(["present_ui"]),
+                    "media_config": StoryMediaSettings().model_dump_json(),
                     "card_data": dump({**card, "session_id": sid, "dependencies": dependencies}),
                     "channel_origin": channel,
                     "kemini": int(options.kemini),
@@ -680,7 +684,7 @@ class Store(MessageAdapters):
             copy_traces(db, new_sid, ids, new_story=True)
         return self.session(new_sid)
 
-    def session(self, sid):
+    def session(self, sid, *, settings_document=None):
         with self.connection() as db:
             row = db.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
             if row is None:
@@ -694,7 +698,7 @@ class Store(MessageAdapters):
             ]
             result = dict(row)
             result["model_selection"] = json.loads(result["model_selection"])
-            result["media_config"] = json.loads(result["media_config"])
+            media = StoryMediaSettings.model_validate_json(result["media_config"])
             result["persona_data"] = json.loads(result["persona_data"])
             result["disabled_tools"] = json.loads(result["disabled_tools"])
             result["tool_result_options"] = json.loads(result["tool_result_options"])
@@ -727,7 +731,11 @@ class Store(MessageAdapters):
         from tavern.story.state import read_story_state
 
         read_story_state(result["snapshot"])
-        settings = self.session_settings(result, require_origin=False)
+        settings = self.session_settings(result, require_origin=False, document=settings_document)
+        result["media_source"] = media.source
+        text_model = story_key(result, settings._settings_source)
+        result["media_story_model"] = text_model.model_dump()
+        result["media_config"] = media.resolve(settings._settings_source.story.media, text_model).model_dump()
         result["compact_auto"] = bool(result["compact_auto"])
         result["plot_enabled"] = bool(result["plot_enabled"])
         result["kemini"] = bool(result["kemini"])

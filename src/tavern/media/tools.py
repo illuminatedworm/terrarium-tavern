@@ -3,7 +3,14 @@
 import copy
 import json
 
-from tavern.media.config import IMAGE_SIZES, VOICES, MediaConfig
+from tavern.media.config import (
+    LegacySpeechArguments,
+    MediaConfig,
+    canonical_voice,
+    image_reference_limit,
+    image_sizes,
+    validate_voice,
+)
 from tavern.media.storage import asset_by_ref, connection_snapshot, image_catalog
 from tavern.story.protocol import ToolError
 
@@ -15,16 +22,26 @@ class MediaDraft:
         self.owner = owner
         self.config = MediaConfig.model_validate(owner.session.get("media_config", {}))
         self.plans = copy.deepcopy((saved or {}).get("plans", []))
-        self.new_voices = {
-            speaker: voice
-            for speaker, voice in (saved or {}).get("new_voices", {}).items()
-            if speaker not in self.config.voices
-        }
+        # A resumed turn can already contain the first staged clip for a role.
+        # Its frozen choice applies to later clips for that same pair until commit.
+        for plan in self.plans:
+            if plan["kind"] == "speech":
+                clip = plan["request"]
+                conn = clip["connection"]
+                story = owner.session["media_story_model"]
+                if (
+                    clip.get("story_model", story) == story
+                    and conn["provider_id"] == self.config.speech.provider_id
+                    and conn["model"] == self.config.speech.model
+                ):
+                    self.config.voices.setdefault(
+                        clip["speaker"], canonical_voice(conn["adapter"], clip["voice"])
+                    )
         self.pending_images = list((saved or {}).get("pending_images", []))
         self.history_ids = {m["id"] for m in owner.history}
 
     def saved(self):
-        return {"plans": self.plans, "new_voices": self.new_voices, "pending_images": self.pending_images}
+        return {"plans": self.plans, "pending_images": self.pending_images}
 
     def authorized(self, ref):
         asset = asset_by_ref(self.owner.store, self.owner.session["id"], ref)
@@ -47,10 +64,7 @@ class MediaDraft:
         result = {
             "instructions": "自主按需安排媒体。生成只在本轮正文提交后开始；登记成功不代表生成成功。"
             "TTS 直接使用 text，不与正文核对，不需要正文编号。view_image 才会把图片送入当前模型。",
-            "voices": {**self.config.voices, **self.new_voices},
-            "available_voices": list(VOICES),
-            "image_sizes": list(IMAGE_SIZES),
-            "quality": self.config.image.quality,
+            "image_sizes": list(image_sizes(self.config.image)),
             "limits": {
                 "images": self.config.max_images,
                 "speech_segments": self.config.max_speech_segments,
@@ -60,14 +74,13 @@ class MediaDraft:
             "images": pictures,
         }
         if not self.config.speech.enabled:
-            for key in ("voices", "available_voices"):
-                result.pop(key)
             for key in ("speech_segments", "speech_characters", "character_unit"):
                 result["limits"].pop(key)
         if not self.config.image.enabled:
-            result.pop("quality")
             result.pop("image_sizes")
             result["limits"].pop("images")
+        elif self.config.image.adapter == "openai_images":
+            result["quality"] = self.config.image.quality
         return result
 
     def execute(self, name, args):
@@ -76,7 +89,7 @@ class MediaDraft:
             self.pending_images.append(args.ref)
             return {"ref": args.ref, "name": asset["name"], "message": "原图将在本批工具结果后提供"}
         kind = "speech" if name == "generate_speech" else "image"
-        request = args.model_dump(exclude={"voice"})
+        request = args.model_dump()
         request["connection"] = connection_snapshot(self.owner.settings, getattr(self.config, kind))
         if kind == "speech":
             speech = [p for p in self.plans if p["kind"] == "speech"]
@@ -87,23 +100,31 @@ class MediaDraft:
                 > self.config.max_speech_characters
             ):
                 raise ToolError("CONTENT_LIMIT", "本轮配音字符总量超限；本次未登记，已有文本不会被截断")
-            bindings = {**self.config.voices, **self.new_voices}
-            if args.speaker in bindings:
-                voice = bindings[args.speaker]
-                if args.voice is not None and args.voice != voice:
-                    raise ToolError("PERMISSION_DENIED", "此角色已有固定声线；模型不能覆盖用户的声线绑定")
-            else:
-                voice = args.voice
-                if voice not in VOICES:
-                    raise ToolError("INVALID_ARGUMENTS", "新角色须从 available_voices 选择声音")
-            if voice not in VOICES:
-                raise ToolError("INVALID_ARGUMENTS", "已绑定声音不受当前后端支持，请用户修改声线配置")
+            voice = self.config.voices.get(args.speaker, self.config.speech.default_voice)
+            if isinstance(args, LegacySpeechArguments):
+                if args.voice is not None:
+                    chosen = canonical_voice(self.config.speech.adapter, args.voice)
+                    if args.speaker in self.config.voices and chosen != voice:
+                        raise ToolError("PERMISSION_DENIED", "旧配音调用不能覆盖此角色已有的声线")
+                    voice = chosen
+                elif args.speaker not in self.config.voices:
+                    raise ToolError("INVALID_ARGUMENTS", "旧配音调用没有为新角色选择声线")
+            try:
+                validate_voice(self.config.speech, voice)
+            except ValueError as exc:
+                raise ToolError("INVALID_ARGUMENTS", "此角色的配音设置需要用户调整") from exc
             request["voice"] = voice
-            if args.speaker not in bindings:
-                self.new_voices[args.speaker] = voice
+            request["story_model"] = self.owner.session["media_story_model"]
+            self.config.voices[args.speaker] = voice
         else:
             if sum(p["kind"] == "image" for p in self.plans) >= self.config.max_images:
                 raise ToolError("CONTENT_LIMIT", "本轮已达到图片数量上限")
+            sizes = image_sizes(self.config.image)
+            if args.size not in sizes:
+                raise ToolError("INVALID_ARGUMENTS", "请选择本次工具提供的尺寸或 auto")
+            if len(args.references) > image_reference_limit(self.config.image):
+                raise ToolError("INVALID_ARGUMENTS", "参考图数量超过当前生图模型上限")
+            request["size"] = sizes[args.size]
             selected = [self.authorized(ref) for ref in args.references]
             request["reference_names"] = [
                 {"ref": ref, "name": asset["name"]}

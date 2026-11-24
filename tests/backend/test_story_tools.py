@@ -119,7 +119,75 @@ async def test_dice_receipt_is_durable_before_publication_and_only_regeneration_
         await service.close()
 
 
-def media_story(store, session):
+async def test_global_media_follows_settings_without_changing_authorizations_or_frozen_jobs(story):
+    from tavern.media import storage
+    from tavern.media.config import SeedreamProfile
+    from tavern.media.routing import StoryMediaSettings
+    from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
+
+    store, session = story
+    sid = session["id"]
+    document = store.settings_document()
+    provider = document.shared.providers[0]
+    provider.api_key = "fixture"
+    document.story.media.image.standard = SeedreamProfile(
+        provider_id=provider.id, model="ep-fixture", size="1K"
+    )
+    store.save_settings(document)
+    assert store.session(sid)["media_source"] == "global"
+    assert not storage.config(store, sid).image.enabled
+    legacy = {"source": "global", "image": {"enabled": True}, "voices": {"旁白": "marin"}}
+    usage = storage.save_config(store, sid, session["revision"], legacy)
+    service = runtime(store)
+    try:
+        model = Model(
+            ("generate_image", {"prompt": "灯塔", "references": ["I1"] * 11}),
+            ("generate_image", {"prompt": "灯塔", "size": "3:2"}),
+            "灯塔亮了。",
+        )
+        result, current = await turn(service, store.session(sid), model)
+        assert result["status"] == "committed", result["error"]
+        tool = next(
+            t["function"]
+            for t in model.requests[0]["extra_body"]["tools"]
+            if t["function"]["name"] == "generate_image"
+        )
+        assert tool["parameters"]["properties"]["references"]["maxItems"] == 10
+        error = next(m for m in model.requests[1]["messages"] if m["role"] == "tool")
+        assert "参考图数量超过" in json.loads(error["content"])["error"]["message"]
+        (job,) = storage.jobs(store, sid, [current["head"]])
+        assert job["request"]["size"] == "1248x832"
+        package, blobs = read_package(
+            export_package(store, ExportSelection(settings=False, sessions=[sid])), store
+        )
+        package["version"] = 22
+        package["sessions"][0]["session"]["media_config"] = legacy
+        imported = import_package(store, package, blobs)["sessions"][0]
+        assert store.session(imported)["media_source"] == "global"
+        custom = StoryMediaSettings.model_validate(usage.model_dump())
+        custom.image.custom = document.story.media.image.model_copy(deep=True)
+        storage.save_config(store, imported, store.session(imported)["revision"], custom)
+        document.story.media.image.standard.size = "2K"
+        document.story.media.image.max_images = 3
+        store.save_settings(document)
+        active = storage.config(store, sid)
+        assert active.image.size == "2K" and active.max_images == 3 and active.image.enabled
+        assert not active.speech.enabled and active.voices == {"旁白": "marin"}
+        assert (
+            store.session(imported)["media_source"] == "mixed"
+            and storage.config(store, imported).image.size == "1K"
+        )
+        with store.connection() as db:
+            raw = db.execute("SELECT media_config FROM sessions WHERE id=?", (sid,)).fetchone()[0]
+            assert json.loads(raw) == usage.model_dump()
+            db.execute("UPDATE media_jobs SET status='failed' WHERE id=?", (job["id"],))
+        assert storage.retry(store, sid, job["id"], regenerate=True)["request"]["size"] == "2496x1664"
+        assert storage.retry(store, sid, job["id"])["request"] == job["request"]
+    finally:
+        await service.close()
+
+
+def media_story(store, session, *, image_size="auto"):
     from tavern.media.config import MediaConfig
     from tavern.media.storage import save_config
 
@@ -130,16 +198,19 @@ def media_story(store, session):
     config.speech.enabled = config.image.enabled = config.view_images = True
     config.speech.provider_id = config.image.provider_id = settings.providers[0].id
     config.image.quality = "low"
+    config.image.size = image_size
     save_config(store, session["id"], session["revision"], config)
     return store.session(session["id"])
 
 
 async def test_media_intents_commit_with_review_and_keep_original_parameters(story):
     """Rejected drafts must not create paid work or overwrite the saved speaker table."""
-    from tavern.media.storage import config, jobs, save_config
+    from tavern.media.config import SeedreamSettings
+    from tavern.media.storage import config, jobs, retry, save_config
+    from tavern.storage.transfer import ExportSelection, export_package, read_package
 
     store, session = story
-    session = media_story(store, session)
+    session = media_story(store, session, image_size="1536x1024")
     with store.connection() as db:
         db.execute("UPDATE sessions SET policy='review' WHERE id=?", (session["id"],))
     session = store.session(session["id"])
@@ -160,8 +231,8 @@ async def test_media_intents_commit_with_review_and_keep_original_parameters(sto
 
     def model():
         return Model(
-            ("generate_speech", {"text": spoken, "speaker": "艾琳", "voice": "marin", "delivery": "轻声"}),
-            ("generate_image", {"prompt": "雨中的灯塔", "size": "1536x1024"}),
+            ("generate_speech", {"text": spoken, "speaker": "艾琳", "delivery": "轻声"}),
+            ("generate_image", {"prompt": "雨中的灯塔"}),
             ("read_state", {}),
             (
                 "patch_state",
@@ -193,11 +264,327 @@ async def test_media_intents_commit_with_review_and_keep_original_parameters(sto
         assert current["messages"][-1]["raw"] == "正文独立交付。"
         assert config(store, session["id"]).voices == {"艾琳": "marin"}
         edited = config(store, session["id"])
-        edited.image.quality = "high"
+        edited.image = SeedreamSettings(enabled=True, provider_id=edited.image.provider_id, size="2K")
         save_config(store, session["id"], current["revision"], edited)
-        assert jobs(store, session["id"], [current["head"]])[1]["request"]["connection"]["quality"] == "low"
+        with store.connection() as db:
+            db.execute("UPDATE media_jobs SET status='failed' WHERE id=?", (tasks[1]["id"],))
+        redo = retry(store, session["id"], tasks[1]["id"], regenerate=True)
+        assert redo["request"]["size"] == "2496x1664"
+        assert redo["request"]["connection"]["adapter"] == "ark_seedream"
+        original = retry(store, session["id"], tasks[1]["id"])
+        assert (
+            original["request"]["size"] == "1536x1024"
+            and original["request"]["connection"]["quality"] == "low"
+        )
+        # Switching the story model cannot switch the TTS route or reuse its role table.
+        document = store.settings_document()
+        original_text = document.story.model.model
+        original_speech = edited.speech.model
+        document.story.model.model = "other-text"
+        store.save_settings(document)
+        assert config(store, session["id"]).voices == {}
+        assert config(store, session["id"]).speech.model == original_speech
+        current_speech = config(store, session["id"])
+        current_speech.speech.model = "other-speech"
+        current_speech.speech.default_voice = "cedar"
+        save_config(store, session["id"], store.session(session["id"])["revision"], current_speech)
+        with store.connection() as db:
+            db.execute("UPDATE media_jobs SET status='failed' WHERE id=?", (tasks[0]["id"],))
+        regenerated = retry(store, session["id"], tasks[0]["id"], regenerate=True)
+        assert regenerated["request"]["voice"] == "cedar"
+        assert regenerated["request"]["story_model"] == tasks[0]["request"]["story_model"]
+        assert config(store, session["id"]).voices == {}
+        document.story.model.model = original_text
+        store.save_settings(document)
+        assert config(store, session["id"]).voices == {"艾琳": "cedar"}
+        # Restoring the saved channel via the native selection preserves both pairs.
+        from tavern.media.routing import StoryMediaSettings
+
+        with store.connection() as db:
+            row = db.execute("SELECT media_config FROM sessions WHERE id=?", (session["id"],)).fetchone()
+        selection = StoryMediaSettings.model_validate_json(row[0])
+        selection.speech.custom.standard.model = original_speech
+        save_config(store, session["id"], store.session(session["id"])["revision"], selection)
+        assert config(store, session["id"]).voices == {"艾琳": "marin"}
+        package, _ = read_package(
+            export_package(store, ExportSelection(settings=False, sessions=[session["id"]])), store
+        )
+        assert "media-fixture-key" not in json.dumps(package)
     finally:
         await service.close()
+
+
+async def test_preview_bills_only_the_edited_connection_without_changing_story_or_active_channel(
+    story, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    import httpx
+    from fastapi import FastAPI
+    from PIL import Image
+
+    from tavern.media.api import register_routes
+    from tavern.media.config import HTTPSpeechProfile, OpenAIImageProfile
+    from tavern.media.service import MediaService
+    from tavern.media.transport import pcm_wav
+    from tavern.search.retrieval_config import Provider
+
+    store, session = story
+    doc = store.settings_document()
+    relay = Provider(id="preview", name="relay", base_url="http://127.0.0.1:2048")
+    images = Provider(id="images", base_url=relay.base_url, api_key="fixture-image-key")
+    doc.shared.providers.extend((relay, images))
+    doc.story.media.speech.active_channel = "chatgpt"
+    store.save_settings(doc)
+    sound = pcm_wav(bytes(24), 24000)
+    picture = io.BytesIO()
+    Image.new("RGB", (2, 2)).save(picture, format="PNG")
+    calls = []
+
+    def respond(wire):
+        calls.append((wire.method, wire.url.path))
+        if wire.url.host == "cdn.example.test":
+            assert "Authorization" not in wire.headers
+            return httpx.Response(200, content=picture.getvalue())
+        assert wire.url.host == "127.0.0.1"
+        if wire.url.path.endswith("/speech"):
+            assert "Authorization" not in wire.headers
+            assert json.loads(wire.content) == {
+                "input": "  原样  ",
+                "model": "relay-tts",
+                "voice": "custom.id",
+                "response_format": "wav",
+                "speed": 1.25,
+            }
+            return httpx.Response(200, content=sound.data)
+        assert wire.headers["Authorization"] == "Bearer fixture-image-key"
+        if wire.method == "POST":
+            assert json.loads(wire.content) == {"model": "relay-image", "prompt": "灯塔", "n": 1}
+            return httpx.Response(200, json={"data": [{"url": "/result.png"}]})
+        return httpx.Response(302, headers={"Location": "https://cdn.example.test/final.png"})
+
+    public_url = AsyncMock()
+    monkeypatch.setattr("tavern.web.client.public_url", public_url)
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: AsyncClient(transport=httpx.MockTransport(respond))
+    )
+    app = FastAPI()
+    register_routes(app, MediaService(store))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        speech = HTTPSpeechProfile(
+            provider_id=relay.id, model="relay-tts", speed=1.25, voice_names={"custom.id": "旁白"}
+        )
+        response = await client.post(
+            "/api/media/preview",
+            json={
+                "kind": "speech",
+                "channel": "standard",
+                "profile": speech.model_dump(),
+                "text": "  原样  ",
+                "voice": "custom.id",
+            },
+        )
+        assert response.content == sound.data and response.headers["cache-control"] == "no-store"
+        image = OpenAIImageProfile(
+            provider_id=images.id, model="relay-image", quality="auto", output_format="auto"
+        )
+        response = await client.post(
+            "/api/media/preview",
+            json={"kind": "image", "channel": "standard", "profile": image.model_dump(), "prompt": "灯塔"},
+        )
+        assert response.content == picture.getvalue()
+    assert calls == [
+        ("POST", "/v1/audio/speech"),
+        ("POST", "/v1/images/generations"),
+        ("GET", "/result.png"),
+        ("GET", "/final.png"),
+    ]
+    public_url.assert_awaited_once_with("https://cdn.example.test/final.png")
+    assert store.settings_document().story.media.speech.active_channel == "chatgpt"
+    assert store.session(session["id"])["revision"] == session["revision"]
+    with store.connection() as db:
+        assert db.execute("SELECT count(*) FROM media_jobs").fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM media_assets").fetchone()[0] == 0
+
+
+async def test_gemini_clip_keeps_transcript_and_rejects_unfinished_audio(monkeypatch):
+    import base64
+    import wave
+    from types import SimpleNamespace
+
+    import httpx
+
+    from tavern.media.config import GeminiSpeechSettings, MediaConfig, SpeechArguments
+    from tavern.media.providers import ADAPTERS
+    from tavern.media.tools import MediaDraft
+    from tavern.search.retrieval_config import Provider
+
+    provider = Provider(id="loopback", base_url="http://127.0.0.1:2048")
+    config = MediaConfig(
+        speech=GeminiSpeechSettings(
+            provider_id=provider.id, enabled=True, instructions="轻声", default_voice="Lumi"
+        )
+    )
+    owner = SimpleNamespace(
+        session={
+            "media_config": config.model_dump(),
+            "media_story_model": {"provider_id": "text", "model": "story"},
+        },
+        history=[],
+        settings=SimpleNamespace(providers=[provider]),
+        state={"window": {"start": 0}},
+    )
+    draft = MediaDraft(owner)
+    assert "Lumi" not in json.dumps(draft.catalog()) and "voice" not in SpeechArguments.model_fields
+    text = "  一段台词。\n原样保留尾部空白  "
+    draft.execute("generate_speech", SpeechArguments(text=text, speaker="角色", delivery="愉快"))
+    request = draft.plans[0]["request"]
+    finish = "MAX_TOKENS"
+
+    def respond(wire):
+        assert wire.url.path == "/v1beta/models/gemini-3.8-flash-tts:generateContent"
+        assert "x-goog-api-key" not in wire.headers and "authorization" not in wire.headers
+        body = json.loads(wire.content)
+        assert body["contents"][0]["parts"] == [{"text": text, "speechMetadata": {"style": "轻声\n\n愉快"}}]
+        assert (
+            body["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"]
+            == "Lumi"
+        )
+        audio = {"mimeType": "audio/L16;rate=24000", "data": base64.b64encode(b"\x01\x00" * 8).decode()}
+        return httpx.Response(
+            200,
+            json={"candidates": [{"finishReason": finish, "content": {"parts": [{"inlineData": audio}]}}]},
+        )
+
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kwargs: AsyncClient(transport=httpx.MockTransport(respond))
+    )
+    adapter = ADAPTERS["gemini_tts"]
+    with pytest.raises(ValueError, match="MAX_TOKENS"):
+        await adapter.generate(request, key="", proxy=None, references=[])
+    finish = "STOP"
+    clip = await adapter.generate(request, key="", proxy=None, references=[])
+    with wave.open(io.BytesIO(clip.data)) as wav:
+        assert (wav.getframerate(), wav.getnframes()) == (24000, 8)
+
+
+async def test_pending_legacy_speech_keeps_its_voice_across_a_second_interruption(story, monkeypatch):
+    from tavern.media.storage import jobs
+    from tavern.story.tools import AgentTools
+
+    store, session = story
+    session = media_story(store, session)
+    service = runtime(store)
+    cut_at = "第一段"
+    execute = AgentTools.execute
+
+    async def interrupt(tools, name, arguments):
+        if name == "generate_speech" and json.loads(arguments)["text"] == cut_at:
+            raise RuntimeError("interrupted before speech receipt")
+        return await execute(tools, name, arguments)
+
+    monkeypatch.setattr(AgentTools, "execute", interrupt)
+    speaker = {"speaker": "向导", "voice": "cedar"}
+    try:
+        batch = [("generate_speech", {**speaker, "text": text}) for text in ("第一段", "第二段")]
+        failed, _ = await turn(service, session, Model({"calls": batch}))
+        assert failed["status"] == "error"
+        checkpoint = store.story_progress(failed["id"])
+        checkpoint["version"] = 10
+        checkpoint.pop("replay_speech_voice")
+        store.save_story_progress(failed["id"], checkpoint)
+
+        cut_at = "第二段"
+        interrupted, _ = await turn(
+            service, session, Model(), resume_turn_id=failed["id"], operation_id="first-resume"
+        )
+        assert interrupted["status"] == "error"
+        plans = store.story_progress(interrupted["id"])["media"]["plans"]
+        assert [p["request"]["voice"] for p in plans] == ["cedar"]
+
+        cut_at = None
+        model = Model(
+            ("generate_speech", {**speaker, "text": "新请求仍须遵守当前协议"}),
+            ("generate_speech", {"speaker": "向导", "text": "第三段"}),
+            "向导说完了。",
+        )
+        resumed, current = await turn(
+            service, session, model, resume_turn_id=interrupted["id"], operation_id="second-resume"
+        )
+        assert resumed["status"] == "committed", resumed["error"]
+        clips = [j["request"] for j in jobs(store, session["id"], [current["head"]])]
+        assert [(r["text"], r["voice"]) for r in clips] == [
+            (t, "cedar") for t in ("第一段", "第二段", "第三段")
+        ]
+        assert current["media_config"]["voices"] == {"向导": "cedar"}
+    finally:
+        await service.close()
+
+
+def test_resuming_a_first_speech_clip_keeps_its_voice_only_for_the_original_model_pair():
+    from types import SimpleNamespace
+
+    from tavern.media.config import GeminiSpeechSettings, MediaConfig, SpeechArguments
+    from tavern.media.tools import MediaDraft
+    from tavern.search.retrieval_config import Provider
+
+    relay = Provider(id="local", base_url="http://127.0.0.1:2048")
+    config = MediaConfig(
+        speech=GeminiSpeechSettings(provider_id=relay.id, enabled=True, default_voice="Kore")
+    )
+    owner = SimpleNamespace(
+        session={
+            "media_config": config.model_dump(),
+            "media_story_model": {"provider_id": "p", "model": "story-a"},
+        },
+        history=[],
+        settings=SimpleNamespace(providers=[relay]),
+    )
+    args = SpeechArguments(text="我在。", speaker="守灯人")
+    draft = MediaDraft(owner)
+    draft.execute("generate_speech", args)
+    saved = draft.saved()
+    owner.session["media_config"]["speech"]["default_voice"] = "Lumi"
+    resumed = MediaDraft(owner, saved)
+    resumed.execute("generate_speech", args)
+    assert resumed.plans[-1]["request"]["voice"] == "Kore"
+    owner.session["media_story_model"] = {"provider_id": "p", "model": "story-b"}
+    other = MediaDraft(owner, saved)
+    other.execute("generate_speech", args)
+    assert other.plans[-1]["request"]["voice"] == "Lumi"
+
+
+async def test_seed_speech_requires_terminal_success_before_publishing_pcm(monkeypatch):
+    import wave
+
+    from tavern.media import volcengine
+    from tavern.media.config import SeedSpeechSettings
+
+    connection = SeedSpeechSettings(speech_rate=20, sample_rate=16000, instructions="").model_dump()
+    request = {"connection": connection, "text": "  台词。 ", "voice": "云舟", "delivery": "慢慢地"}
+    response = b'{"code":0,"data":"AQACAA=="}\n'
+
+    async def post(saved, path, *, headers, json: dict, proxy):
+        assert path == "/tts/unidirectional" and headers["X-Api-Resource-Id"] == "seed-tts-2.0"
+        params = json["req_params"]
+        assert params["text"] == request["text"] and params["speaker"] == "zh_male_m191_uranus_bigtts"
+        assert params["audio_params"] == {
+            "format": "pcm",
+            "sample_rate": 16000,
+            "speech_rate": 20,
+            "loudness_rate": 0,
+        }
+        assert request["delivery"] in params["additions"]
+        return response
+
+    monkeypatch.setattr(volcengine, "post_media", post)
+    adapter = volcengine.SeedSpeech()
+    with pytest.raises(ValueError, match="完成标记"):
+        await adapter.generate(request, key="fixture", proxy=None, references=[])
+    response += b'{"code":20000000}\n'
+    result = await adapter.generate(request, key="fixture", proxy=None, references=[])
+    with wave.open(io.BytesIO(result.data)) as wav:
+        assert wav.getframerate() == 16000 and wav.readframes(2) == b"\x01\x00\x02\x00"
 
 
 async def test_media_recovery_and_manual_operations_do_not_duplicate_paid_work(story, monkeypatch):
@@ -370,8 +757,6 @@ def test_media_retry_checks_the_switch_under_the_enqueue_lock(story, monkeypatch
     (jid,) = queue_media_images(store, session, "retry")
     with store.connection() as db:
         db.execute("UPDATE media_jobs SET status='failed' WHERE id=?", (jid,))
-    config = storage.config(store, sid)
-    config.image.enabled = False
     enqueuing = Event()
     connection = store.connection
 
@@ -384,7 +769,10 @@ def test_media_retry_checks_the_switch_under_the_enqueue_lock(story, monkeypatch
     monkeypatch.setattr(store, "connection", observe_enqueue)
     with ThreadPoolExecutor(max_workers=1) as pool:
         with connection() as db:
-            db.execute("UPDATE sessions SET media_config=? WHERE id=?", (config.model_dump_json(), sid))
+            db.execute(
+                "UPDATE sessions SET media_config=json_set(media_config,'$.image.enabled',json('false')) WHERE id=?",
+                (sid,),
+            )
             retry = pool.submit(storage.retry, store, sid, jid, operation_id="disabled-retry")
             assert enqueuing.wait(timeout=1)
         with pytest.raises(ValueError, match="请先开启"):

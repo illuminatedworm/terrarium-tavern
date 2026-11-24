@@ -3,21 +3,60 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import Literal
 
 from fastapi import File, Form, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import Field
 
 from tavern.character.editor_images import image_metadata
+from tavern.core.channels import Channel, provider_channel
 from tavern.core.errors import NotFound
 from tavern.media import storage
-from tavern.media.config import IMAGE_SIZES, VOICES, MediaConfig, StrictModel
+from tavern.media.config import (
+    GEMINI_METADATA_VOICES,
+    GEMINI_PROMPT_MODELS,
+    SEED_VOICES,
+    SPEECH_VOICES,
+    GeminiImageSettings,
+    GeminiSpeechSettings,
+    HTTPSpeechSettings,
+    ImageProfile,
+    ImageSettings,
+    SeedreamSettings,
+    SeedSpeechSettings,
+    SpeechProfile,
+    SpeechSettings,
+    StrictModel,
+    available_voices,
+    image_sizes,
+    validate_voice,
+)
 from tavern.media.images import MAX_IMAGE_BYTES
+from tavern.media.providers import ADAPTERS
+from tavern.media.routing import MediaDefaults, StoryMediaSettings, story_key
+from tavern.scripting.http_errors import redact_detail
 
 
 class ConfigEdit(StrictModel):
     expected_revision: int = Field(ge=0)
-    config: MediaConfig
+    expected_selection: str | None = None
+    config: dict
+
+
+class SpeechPreview(StrictModel):
+    kind: Literal["speech"]
+    channel: Channel
+    profile: SpeechProfile
+    text: str = Field(min_length=1)
+    voice: str = Field(min_length=1)
+
+
+class ImagePreview(StrictModel):
+    kind: Literal["image"]
+    channel: Channel
+    profile: ImageProfile
+    prompt: str = Field(min_length=1)
 
 
 class MessageQuery(StrictModel):
@@ -51,45 +90,146 @@ def card_images(store, sid):
     return images
 
 
+def protocol_catalog(document):
+    return {
+        "presets": MediaDefaults().model_dump(),
+        "keyless_adapters": {
+            p.id: storage.LOCAL_HTTP_ADAPTERS
+            for p in document.shared.providers
+            if p.is_loopback and p.auth_mode == "api_key"
+        },
+        "defaults": document.story.media.model_dump(),
+        "providers": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "base_url": p.base_url,
+                "auth_mode": p.auth_mode,
+                "has_api_key": bool(p.api_key),
+                "use_proxy": p.use_proxy,
+            }
+            for p in document.shared.providers
+            if p.auth_mode != "chatgpt_subscription"
+        ],
+        "speech_voices": SPEECH_VOICES,
+        "seed_voice_names": {identity: name for name, identity in SEED_VOICES.items()},
+        "gemini_speech": {
+            "prompt_prefixes": GEMINI_PROMPT_MODELS,
+            "metadata_voices": GEMINI_METADATA_VOICES,
+        },
+        "adapters": {
+            preset.adapter: preset.model_dump()
+            for preset in (
+                HTTPSpeechSettings(),
+                SpeechSettings(),
+                GeminiSpeechSettings(),
+                SeedSpeechSettings(),
+                ImageSettings(),
+                GeminiImageSettings(),
+                SeedreamSettings(),
+            )
+        },
+    }
+
+
 def register_routes(app, service):
     store = service.store
 
+    @app.get("/api/media/protocols")
+    def protocols():
+        return protocol_catalog(store.settings_document())
+
+    @app.post("/api/media/preview")
+    async def preview(edit: SpeechPreview | ImagePreview, request: Request):
+        shared = store.settings_document().shared
+        conn = storage.connection_snapshot(shared, edit.profile)
+        provider = next(p for p in shared.providers if p.id == edit.profile.provider_id)
+        if provider_channel(provider) != edit.channel:
+            raise ValueError("测试渠道与当前提供商不匹配")
+        if isinstance(edit, SpeechPreview):
+            validate_voice(edit.profile, edit.voice)
+            payload = {"connection": conn, "voice": edit.voice, "text": edit.text, "delivery": ""}
+        else:
+            payload = {"connection": conn, "prompt": edit.prompt, "size": image_sizes(edit.profile)["auto"]}
+        proxy = (shared.network.proxy or None) if shared.network.api_proxy and provider.use_proxy else None
+        # Preview has no story, SQLite intent, or automatic retry. The request
+        # owns its transport and abandons it when the settings page disconnects.
+        generation = asyncio.create_task(
+            ADAPTERS[edit.profile.adapter].generate(payload, key=provider.api_key, proxy=proxy, references=[])
+        )
+
+        async def disconnected():
+            while (await request.receive())["type"] != "http.disconnect":
+                pass
+
+        disconnect = asyncio.create_task(disconnected())
+        try:
+            async with asyncio.timeout(conn["timeout_seconds"]):
+                done, _ = await asyncio.wait((generation, disconnect), return_when=asyncio.FIRST_COMPLETED)
+                if generation not in done:
+                    return Response(status_code=499)
+                result = generation.result()
+                return Response(result.data, media_type=result.mime, headers={"Cache-Control": "no-store"})
+        except TimeoutError:
+            raise ValueError("媒体试用超时，服务端可能已计费") from None
+        except Exception as error:
+            # Expose provider failures without leaking the configured credential.
+            raise ValueError(redact_detail(str(error) or type(error).__name__, provider.api_key)) from None
+        finally:
+            generation.cancel()
+            disconnect.cancel()
+            await asyncio.gather(generation, disconnect, return_exceptions=True)
+
     @app.get("/api/sessions/{sid}/media")
-    def settings(sid: str):
+    def settings(sid: str, library: bool = True):
         with store.connection() as db:
             current = db.execute(
-                "SELECT revision,media_config,head FROM sessions WHERE id=?", (sid,)
+                "SELECT revision,media_config,head,model_selection,channel_origin FROM sessions WHERE id=?",
+                (sid,),
             ).fetchone()
             if current is None:
                 raise NotFound("会话不存在")
-            parents = dict(db.execute("SELECT id,parent FROM messages WHERE session=?", (sid,)))
+            document = store.settings_document(db=db)
+            parents = (
+                dict(db.execute("SELECT id,parent FROM messages WHERE session=?", (sid,))) if library else {}
+            )
         active, cursor = set(), current["head"]
-        while cursor:
+        while library and cursor:
             if cursor not in parents or cursor in active:
                 raise ValueError("剧情分支无效")
             active.add(cursor)
             cursor = parents[cursor]
+        selection = StoryMediaSettings.model_validate_json(current["media_config"])
+        model = story_key(current, document)
+        config = selection.resolve(document.story.media, model)
         return {
-            "config": json.loads(current["media_config"]),
+            "config": config.model_dump(),
+            "source": selection.source,
+            "selection": selection.model_dump(),
+            "selection_token": storage.selection_token(current["media_config"]),
+            "story_model": model.model_dump(),
+            "story_provider_name": next(
+                (p.name for p in document.shared.providers if p.id == model.provider_id), ""
+            ),
             "revision": current["revision"],
-            "voices": VOICES,
-            "sizes": IMAGE_SIZES,
-            "providers": [
-                {"id": p.id, "name": p.name, "base_url": p.base_url}
-                for p in store.settings().providers
-                if p.auth_mode != "chatgpt_subscription"
-            ],
+            "voices": available_voices(config.speech),
+            "sizes": list(image_sizes(config.image)),
+            **protocol_catalog(document),
             "references": [
                 storage.asset_view(a)
                 for a in storage.image_catalog(store, sid, active, selected=True, unbound=True)
-            ],
-            "card_images": list(card_images(store, sid)),
+            ]
+            if library
+            else [],
+            "card_images": list(card_images(store, sid)) if library else [],
         }
 
     @app.put("/api/sessions/{sid}/media")
     async def save(sid: str, edit: ConfigEdit):
-        storage.save_config(store, sid, edit.expected_revision, edit.config)
-        disabled = tuple(kind for kind in ("speech", "image") if not getattr(edit.config, kind).enabled)
+        selection = storage.save_config(
+            store, sid, edit.expected_revision, edit.config, expected_selection=edit.expected_selection
+        )
+        disabled = tuple(kind for kind in ("speech", "image") if not getattr(selection, kind).enabled)
         if disabled:
             await service.cancel_running(sid, disabled)
         return store.session(sid)
