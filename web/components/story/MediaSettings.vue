@@ -360,8 +360,13 @@ async function saveReferenceText(reference: MediaAsset) {
                 @change="chosenFile = ($event.target as HTMLInputElement).files?.[0]"
               />
             </label>
-            <button type="button" class="quiet" :disabled="!chosenFile || loading" @click="upload">
-              上传并授权
+            <button
+              type="button"
+              :class="{ primary: chosenFile && !dirty }"
+              :disabled="!chosenFile || loading"
+              @click="upload"
+            >
+              <Icon name="arrow-up" :size="16" />上传并授权
             </button>
             <label>
               当前角色卡图片
