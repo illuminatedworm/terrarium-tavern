@@ -11,8 +11,11 @@ from tavern.character.cards import is_initvar, lore_entries, lore_title, normali
 from tavern.conversation.context import activate_lore, macros
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import unwrapped
-from tavern.core.model_view import DOCUMENT_HANDLE
-from tavern.story.protocol import ToolError
+from tavern.core.model_view import DOCUMENT_HANDLE, ModelView
+from tavern.story.content import lore_references
+from tavern.story.protocol import ToolError, encoded
+
+RUNTIME_LORE_SOURCE = "runtime_lore_injection"
 
 
 def lore_preview(body: str, limit: int) -> str:
@@ -24,6 +27,40 @@ def lore_preview(body: str, limit: int) -> str:
         if start >= 0 and (handle := DOCUMENT_HANDLE.match(body, start)) and limit < handle.end():
             limit = start
     return body[:limit]
+
+
+def lore_match(ref: str, body: str, limit: int, *, title: str = "") -> dict[str, str]:
+    opening = lore_preview(body, limit)
+    match = {"ref": ref}
+    if title:
+        match["title"] = title
+    match["preview" if len(opening) < len(body) else "text"] = opening
+    return match
+
+
+def runtime_lore_entry(
+    ref: str, frozen: str, view: ModelView, limit: int, *, title: str = ""
+) -> dict[str, str]:
+    # Project the authored values before adding protocol fields or escaping the JSON.
+    body = view.text(frozen)
+    match = lore_match(ref, body, limit, title=view.text(title).strip() if title else "")
+    return {"source": RUNTIME_LORE_SOURCE, **match}
+
+
+def injection_references(
+    document: dict, snapshot: dict, model_view: ModelView | None = None, *, rows=None
+) -> tuple[ModelView, dict[str, str]]:
+    state = snapshot.get("story", {})
+    if model_view is None:
+        # Readers may open an old snapshot that predates short references. Allocate
+        # its handles exactly as a turn would, without writing into the snapshot.
+        model_view = ModelView(
+            {"document": document, "state": snapshot.get("state", {})},
+            references=dict(state.get("model_references", {})),
+        )
+        state = {"lore_references": dict(state.get("lore_references", {}))}
+    refs = {eid: ref for ref, eid in lore_references(document, state, rows=rows).items()}
+    return model_view, refs
 
 
 def read_present_lore(owner, requested):
@@ -159,7 +196,7 @@ def _without_removed_entries(message, excluded):
     data["notice"] = "此处已省略用户手动移除的世界书注入。"
     return {
         **message,
-        "content": json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+        "content": encoded(result),
         "lore_ids": [eid for eid in ids if eid not in excluded],
         "_lore_anchors": {
             eid: anchor for eid, anchor in message["_lore_anchors"].items() if eid not in excluded

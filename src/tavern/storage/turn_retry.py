@@ -8,7 +8,8 @@ def retry_head(db, turn):
     if request.get("mode") == "regenerate":
         return request.get("message_id")
     row = db.execute(
-        "SELECT payload FROM events WHERE turn=? AND kind='input_ready' ORDER BY seq DESC LIMIT 1",
+        "SELECT json_extract(payload,'$.message.parent') FROM events "
+        "WHERE turn=? AND kind='input_ready' ORDER BY seq DESC LIMIT 1",
         (turn["id"],),
     ).fetchone()
-    return json.loads(row[0]).get("message", {}).get("parent") if row else None
+    return row[0] if row else None

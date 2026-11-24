@@ -16,7 +16,7 @@ from tavern.android.platform import is_android
 from tavern.application.service import StoryService
 from tavern.character.cards import append_lorebook, export_card, normalize
 from tavern.character.lore_purpose import upgrade_lore_purposes
-from tavern.core.errors import NotFound
+from tavern.core.errors import Gone, NotFound
 from tavern.core.models import (
     CardSync,
     ContentEdit,
@@ -234,6 +234,10 @@ def create_app(data_dir=None):
     @app.exception_handler(NotFound)
     async def not_found(request, error):
         return JSONResponse({"detail": str(error)}, status_code=404)
+
+    @app.exception_handler(Gone)
+    async def gone(request, error):
+        return JSONResponse({"detail": str(error)}, status_code=410)
 
     @app.get("/api/health")
     async def health():
@@ -680,6 +684,18 @@ def create_app(data_dir=None):
     async def remove_lore_injection(sid: str, anchor_id: str, entry_id: str, change: LoreInjectionRemoval):
         return store.remove_lore_injection(sid, anchor_id, entry_id, change.expected_revision)
 
+    @app.get("/api/sessions/{sid}/story/messages/{mid}/lore-previews")
+    def message_lore(sid: str, mid: str, anchor_id: str, payload: bool = False):
+        from tavern.story.lore_records import message_lore_previews
+
+        return message_lore_previews(store, sid, mid, anchor_id, payload=payload)
+
+    @app.get("/api/sessions/{sid}/story/turns/{tid}/lore-previews")
+    def turn_lore(sid: str, tid: str, anchor_id: str, payload: bool = False):
+        from tavern.story.lore_records import turn_lore_previews
+
+        return turn_lore_previews(store, sid, tid, anchor_id, payload=payload)
+
     def session_document(session):
         return (session["snapshot"].get("content") or {}).get(
             "document", store.session_card(session["id"])["document"]
@@ -920,8 +936,13 @@ def create_app(data_dir=None):
         return service.story.submit(sid, req)
 
     @app.get("/api/turns/{tid}")
-    async def turn(tid: str):
-        return store.turn(tid)
+    def turn(tid: str, include_input: bool = False):
+        result = store.turn(tid)
+        if include_input:
+            from tavern.story.lore_records import saved_input_ready
+
+            result["input_ready"] = saved_input_ready(store, tid) if result["status"] != "committed" else None
+        return result
 
     @app.get("/api/sessions/{sid}/work-records")
     async def work_records(sid: str, before: str | None = None, limit: int = Query(20, ge=1, le=50)):

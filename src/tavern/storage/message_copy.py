@@ -7,6 +7,7 @@ original. Citations and replayed request traces follow the new message IDs.
 
 import json
 
+from tavern.storage.lore_admissions import copy_reply_admissions
 from tavern.story.state import remap_sources
 
 
@@ -20,6 +21,7 @@ def remap_snapshot(snapshot, ids):
 def copy_traces(db, session, ids, *, new_story):
     """Give each copied message the request trace recorded for its original."""
     for original, copied in ids.items():
+        copy_reply_admissions(db, original, copied, ids)
         for row in db.execute(
             "SELECT seq,window_id,payload FROM story_trace WHERE message_id=?", (original,)
         ).fetchall():

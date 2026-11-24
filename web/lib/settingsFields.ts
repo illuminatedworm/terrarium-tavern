@@ -133,7 +133,7 @@ export const loreFields: SettingField[] = [
     path: 'lore_injection_title',
     label: '注入时携带条目标题',
     type: 'checkbox',
-    help: '开启后，正文请求中每条世界书正文前加一行标题，标题后空一行，不添加包裹符号。标题取条目名称（comment），为空时取 name；两者皆空则不加。包括常驻条目，切换后请求前缀会变化一次。',
+    help: '开启后，动态注入在 JSON 的 title 字段中携带标题，常驻条目在正文前单列标题。标题取 comment，为空时取 name，两者皆空则省略。',
   },
   number('lore_recursion_depth', '递归深度', 0, 16),
 ];

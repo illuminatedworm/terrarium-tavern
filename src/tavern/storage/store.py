@@ -810,6 +810,14 @@ class Store(MessageAdapters):
                 r["id"]: dict(r)
                 for r in db.execute("SELECT * FROM messages WHERE session=? ORDER BY created,rowid", (sid,))
             }
+            for record in db.execute(
+                "SELECT a.message_id,a.anchor_id,a.id,a.title FROM messages m "
+                "JOIN story_lore_admissions a ON a.message_id=m.id WHERE m.session=? ORDER BY a.rowid",
+                (sid,),
+            ):
+                rows[record["message_id"]].setdefault("lore_admissions", []).append(
+                    {k: record[k] for k in ("anchor_id", "id", "title")}
+                )
 
         def version_group(message):
             parent = rows.get(message["parent"])
@@ -880,7 +888,12 @@ class Store(MessageAdapters):
                 raise Conflict("请先完成或取消当前回合")
             rows = {
                 r["id"]: r
-                for r in db.execute("SELECT id,parent,snapshot FROM messages WHERE session=?", (sid,))
+                for r in db.execute(
+                    "SELECT m.id,m.parent,m.snapshot,EXISTS(SELECT 1 FROM story_lore_admissions a "
+                    "WHERE a.message_id=m.id AND a.anchor_id=? AND a.id=?) AS archived "
+                    "FROM messages m WHERE m.session=?",
+                    (anchor_id, entry_id, sid),
+                )
             }
             branch, branch_ids, mid = [], set(), session["head"]
             while mid:
@@ -904,6 +917,14 @@ class Store(MessageAdapters):
                         record.update(id=entry_id, anchor_id=anchor_id, manually_removed=True)
                         changed = found = True
                         seen_injection = True
+                if row["archived"]:
+                    # A same-turn edit can retire the active copy before the reply commits.
+                    # End the pre-admission markers here without restoring its presence.
+                    db.execute(
+                        "DELETE FROM story_lore_admissions WHERE message_id=? AND anchor_id=? AND id=?",
+                        (row["id"], anchor_id, entry_id),
+                    )
+                    found = seen_injection = True
                 # The anchor/user snapshot predates compilation of its first injection.
                 # Record the removal there too, so regenerating that reply cannot revive it.
                 if reached_anchor and not seen_injection:
@@ -1190,6 +1211,11 @@ class Store(MessageAdapters):
                 if row:
                     progress = resume_progress(json.loads(row["payload"]))
                     db.execute("INSERT INTO story_progress(turn,payload) VALUES (?,?)", (tid, dump(progress)))
+                    db.execute(
+                        "INSERT INTO story_lore_admissions(turn,anchor_id,id,ref,title,text) "
+                        "SELECT ?,anchor_id,id,ref,title,text FROM story_lore_admissions WHERE turn=? ORDER BY rowid",
+                        (tid, request.resume_turn_id),
+                    )
                     trace = progress["new_trace"]
                     for index, item in enumerate(trace):
                         message = item["message"]
@@ -1546,6 +1572,7 @@ class Store(MessageAdapters):
             self._update_cache_follow(
                 db, turn["session"], last, advance=req.get("mode", "send") != "regenerate"
             )
+            db.execute("UPDATE story_lore_admissions SET message_id=?,turn=NULL WHERE turn=?", (last, tid))
             for seq, item in enumerate(pending.get("story_trace", []), 1):
                 db.execute(
                     "INSERT INTO story_trace VALUES (?,?,?,?,?)",

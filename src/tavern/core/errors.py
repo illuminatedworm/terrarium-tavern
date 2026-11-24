@@ -1,6 +1,10 @@
 """Errors the HTTP layer maps to user-facing statuses."""
 
 
+class Gone(LookupError):
+    """The record existed, but its detail expired under the retention policy."""
+
+
 class NotFound(KeyError):
     """A requested record does not exist; the API answers 404 with this message.
 

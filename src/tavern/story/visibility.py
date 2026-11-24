@@ -11,13 +11,15 @@ import json
 import jsonpatch
 import jsonpointer
 
+from tavern.character.cards import lore_title
 from tavern.conversation.context import lore_text
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import unwrapped
 from tavern.core.model_view import state_for_model
 from tavern.scripting.native_response import native_items
 from tavern.story.content import CHARACTER_FIELDS, card_data, editable_entry, entry_rows, lore_references
-from tavern.story.protocol import succeeded
+from tavern.story.lore import runtime_lore_entry
+from tavern.story.protocol import encoded, succeeded
 from tavern.story.read_guards import state_scope
 
 
@@ -93,12 +95,9 @@ def observe_context(reads, messages):
     owner = reads.owner
     data = card_data(owner.document)
     expose = owner.model_view.expose
-    refs = lore_references(owner.document, owner.state)
-    entries = {
-        entry["id"]: (raw, entry)
-        for _, raw, entry in entry_rows(owner.document)
-        if editable_entry(raw, entry)
-    }
+    rows = entry_rows(owner.document)
+    refs = lore_references(owner.document, owner.state, rows=rows)
+    entries = {entry["id"]: (raw, entry) for _, raw, entry in rows if editable_entry(raw, entry)}
     reverse = {identity: ref for ref, identity in refs.items()}
     projected = state_for_model(owner.snapshot.get("state", {}))
     variables = expose(projected.get("stat_data", {}))
@@ -131,17 +130,24 @@ def observe_context(reads, messages):
         expected = normalized.get("content", "")
         if expanded:
             expected = owner.expand(expected)
-        if injected:
-            # Compare the complete compiled block; stripping an arbitrary first
-            # line could accidentally authorize a different or incomplete body.
-            expected = lore_text(
-                normalized,
+        if injected and not normalized.get("constant"):
+            # Compare the projected current version with the actual message. A
+            # matching opening alone cannot authorize an edit to the unseen tail.
+            payload = runtime_lore_entry(
+                ref,
                 expected,
-                owner.settings.lore_injection_title,
-                owner.expand,
-                ref=None if normalized.get("constant") else ref,
+                owner.model_view,
+                owner.settings.lore_preview_chars,
+                title=owner.expand(lore_title(normalized)) if owner.settings.lore_injection_title else "",
             )
-        if text == expose(expected):
+            if "text" not in payload:
+                return
+            expected = encoded(payload)
+        else:
+            if injected:
+                expected = lore_text(normalized, expected, owner.settings.lore_injection_title, owner.expand)
+            expected = expose(expected)
+        if text == expected:
             reads.read_entry(ref, raw)
 
     def state(value):

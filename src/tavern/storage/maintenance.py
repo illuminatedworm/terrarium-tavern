@@ -58,7 +58,9 @@ def _plan(store, db, now):
     rows = db.execute("""SELECT t.id,t.status,t.created,s.revision,
         json_extract(t.request,'$.expected_revision') AS expected_revision,
         length(CAST(coalesce(t.preview,'') AS BLOB)) AS preview_bytes,
-        length(CAST(t.draft AS BLOB)) AS draft_bytes
+        length(CAST(t.draft AS BLOB)) AS draft_bytes,
+        (SELECT coalesce(sum(length(CAST(a.title AS BLOB))+length(CAST(a.text AS BLOB))),0)
+         FROM story_lore_admissions a WHERE a.turn=t.id) AS admission_bytes
         FROM turns t JOIN sessions s ON s.id=t.session ORDER BY t.created""").fetchall()
     run_files = _files(store.root / "runs")
     run_groups = defaultdict(list)
@@ -82,7 +84,7 @@ def _plan(store, db, now):
         ]
         size = sum(p.stat().st_size for p in files)
         size += sum(e["bytes"] for e in detailed)
-        size += row["preview_bytes"]
+        size += row["preview_bytes"] + row["admission_bytes"]
         if row["status"] == "committed":
             size += row["draft_bytes"]
         turns.append(
@@ -214,6 +216,7 @@ def cleanup(store, *, vacuum=False):
             (time.time() - store.settings().log_retention_days * 86400,),
         )
         for turn in selected:
+            db.execute("DELETE FROM story_lore_admissions WHERE turn=?", (turn["id"],))
             for event in turn["events"]:
                 payload = json.loads(
                     db.execute("SELECT payload FROM events WHERE seq=?", (event["seq"],)).fetchone()[0]

@@ -399,6 +399,7 @@ watch(
     pendingInput.value = null;
     pendingLore.value = [];
   },
+  { flush: 'sync' },
 );
 const updateVariables = ref(false);
 const variablePreferenceSaving = ref(false);
@@ -946,14 +947,22 @@ function contextLabel(source: string) {
 const loreRecords = computed(() => {
   const messages = session.value?.messages || [];
   return dialogueLoreRecords(
-    pendingVisible.value ? [...messages, { snapshot: { lore_injections: pendingLore.value } }] : messages,
+    messages,
+    pendingVisible.value && activeTurn.value
+      ? {
+          turnId: activeTurn.value.id,
+          inputId: pendingInput.value?.id,
+          records: pendingLore.value,
+          regenerating: activeTurn.value.request?.mode === 'regenerate',
+        }
+      : undefined,
   );
 });
 const pendingInputLore = computed(() => {
   const inputId = pendingInput.value?.id;
   // Regeneration reuses an input whose lore is already shown at its history anchor.
   if (session.value?.messages.some((message) => message.id === inputId)) return [];
-  return pendingLore.value.filter((record) => !record.manually_removed && record.anchor_id === inputId);
+  return (inputId && loreRecords.value.get(inputId)) || [];
 });
 const removingLore = ref(false);
 async function removeLore(record: LoreRecord) {
@@ -1135,7 +1144,7 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
       last &&
       ['running', 'queued', 'awaiting_review', 'error', 'cancelled', 'interrupted'].includes(last.status)
     ) {
-      const turn: TurnRecord = await api(`/turns/${last.id}`);
+      const turn: TurnRecord = await api(`/turns/${last.id}?include_input=true`);
       if (!viewScope.owns(token)) return;
       if (active || canRetryTurn(turn, opened)) {
         restored = turn;
@@ -1145,6 +1154,8 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
     session.value = opened;
     sessionCard.value = card;
     activeTurn.value = restored;
+    pendingInput.value = restored?.input_ready?.message ?? null;
+    pendingLore.value = restored?.input_ready?.lore_admissions ?? [];
     draft.value = restoredDraft;
     draftBreaks.value = restored?.draft_breaks || [];
     busy.value = !!active && active.status !== 'awaiting_review';
@@ -1789,7 +1800,11 @@ function observe(id: string) {
         if (event.kind === 'story_prefix_debug') notify(event.payload.message);
         if (event.kind === 'input_ready') {
           pendingInput.value = event.payload.message;
-          pendingLore.value = event.payload.lore_injections || [];
+          pendingLore.value =
+            event.payload.lore_admissions ??
+            (event.payload.lore_injections || []).filter(
+              (r: { source_ids?: string[] }) => r.source_ids?.at(-1) === event.payload.message.id,
+            );
         }
         if (reading !== undefined) void holdDraft(reading);
         else void scroll();
@@ -2693,6 +2708,8 @@ useTimedError(error);
                 <LoreInjectionRecords
                   v-if="loreRecords.has(message.id)"
                   :records="loreRecords.get(message.id)!"
+                  :session-id="session.id"
+                  :preview-chars="activeSettings.lore_preview_chars"
                   :show-title="activeSettings.lore_injection_title !== false"
                   :removable="!pendingVisible"
                   :disabled="storyLocked || removingLore"
@@ -2738,6 +2755,8 @@ useTimedError(error);
                   <LoreInjectionRecords
                     v-if="pendingInputLore.length"
                     :records="pendingInputLore"
+                    :session-id="session.id"
+                    :preview-chars="activeSettings.lore_preview_chars"
                     :show-title="activeSettings.lore_injection_title !== false"
                   />
                   <article

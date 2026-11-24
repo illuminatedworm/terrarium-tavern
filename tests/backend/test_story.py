@@ -1208,6 +1208,9 @@ def test_cloud_checkpoint_survives_directory_and_ineffective_variable_changes():
 
 
 async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplicate_injection(tmp_path):
+    from tavern.core.message_adapter import unwrapped
+    from tavern.story.lore_records import message_lore_previews
+
     store = Store(tmp_path)
     document = {
         "name": "向导",
@@ -1251,13 +1254,11 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
         assert any(
             "<card_description>\n你是向导。\n</card_description>" in m.get("content", "") for m in requests[0]
         )
-        assert (
-            sum(
-                m.get("content") == "<lorebook>\n钟楼\n\n[L1 · 全文]\n钟楼每晚九点关门。\n</lorebook>"
-                for m in requests[0]
-            )
-            == 1
+        tower_injection = (
+            '<lorebook>\n{"source":"runtime_lore_injection","ref":"L1",'
+            '"title":"钟楼","text":"钟楼每晚九点关门。"}\n</lorebook>'
         )
+        assert sum(m.get("content") == tower_injection for m in requests[0]) == 1
         assert not any(
             "旧港的船只明晨出发。" in m.get("content", "")
             for messages in requests
@@ -1272,16 +1273,16 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
         assert set(tool_results[0]["data"]["matches"][0]) == {"ref", "title", "text"}
         assert tool_results[0]["data"]["matches"][0]["title"] == "旧港"
         assert tool_results[2]["data"]["matches"] == []
-        assert (
-            sum(
-                m.get("content") == "<lorebook>\n钟楼\n\n[L1 · 全文]\n钟楼每晚九点关门。\n</lorebook>"
-                for m in requests[2]
-            )
-            == 1
-        )
+        assert sum(m.get("content") == tower_injection for m in requests[2]) == 1
         records = current["snapshot"]["lore_injections"]
         assert len(records) == 1 and records[0]["title"] == "钟楼"
         assert records[0]["anchor_id"] == session["head"]
+        displayed = message_lore_previews(
+            store, current["id"], current["head"], session["head"], payload=True
+        )
+        assert displayed == [
+            {"id": records[0]["id"], "payload": json.loads(unwrapped(tower_injection, "lorebook"))}
+        ]
         assert current["snapshot"]["lore"]["port"]["present"] is True
         trace = load_trace(store, session["id"], current["messages"])
         recalled = [r["message"] for r in trace if r["message"].get("lore_ids")]
@@ -1347,13 +1348,11 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
         current = await follow("我查看旧港的船只。", model)
         assert current["snapshot"]["lore"]["port"]["present"] is True
         assert [r["id"] for r in current["snapshot"]["lore_injections"]] == ["port"]
-        assert (
-            sum(
-                m.get("content") == "<lorebook>\n旧港\n\n[L2 · 全文]\n旧港的船只明晨出发。\n</lorebook>"
-                for m in model.requests[0]["messages"]
-            )
-            == 1
+        port_injection = (
+            '<lorebook>\n{"source":"runtime_lore_injection","ref":"L2",'
+            '"title":"旧港","text":"旧港的船只明晨出发。"}\n</lorebook>'
         )
+        assert sum(m.get("content") == port_injection for m in model.requests[0]["messages"]) == 1
     finally:
         await service.close()
 
@@ -2110,7 +2109,7 @@ def test_constant_and_retained_lore_have_same_tag_without_mutating_storage(story
         "character_book": {
             "entries": [
                 {"id": "constant", "content": "常驻背景", "constant": True, "enabled": True},
-                {"id": "retained", "content": "动态背景"},
+                {"id": "retained", "content": '动态背景\n"下一句"'},
                 {"id": "disabled", "content": "已停用", "enabled": False},
             ]
         },
@@ -2118,13 +2117,13 @@ def test_constant_and_retained_lore_have_same_tag_without_mutating_storage(story
     snapshot = copy.deepcopy(session["snapshot"])
     snapshot["lore_injections"] = [
         {"id": eid, "content": body, "title": "背景", "anchor_id": session["head"]}
-        for eid, body in (("retained", "动态背景"), ("disabled", "已停用"), ("unmounted", "已卸载"))
+        for eid, body in (("retained", '动态背景\n"下一句"'), ("disabled", "已停用"), ("unmounted", "已卸载"))
     ]
     compiled = compile_window(document, session, session["messages"], snapshot, "继续", store.settings(), [])
     lore = [m for m in compiled["trace"] if m["source"].startswith("lore:")]
     assert {m["content"] for m in lore} == {
         "<lorebook>\n常驻背景\n</lorebook>",
-        "<lorebook>\n[L2 · 全文]\n动态背景\n</lorebook>",
+        '<lorebook>\n{"source":"runtime_lore_injection","ref":"L2","text":"动态背景\\n\\"下一句\\""}\n</lorebook>',
     }
     assert [row["id"] for row in compiled["next_lore_injections"]] == ["retained"]
     assert len(snapshot["lore_injections"]) == 3

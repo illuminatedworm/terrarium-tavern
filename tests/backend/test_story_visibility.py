@@ -303,8 +303,8 @@ async def test_preview_requires_full_read_of_the_frozen_version_before_edit(owne
         {"id": raw["id"], "anchor_id": "input", "title": "Harbor", "content": "Complete Guide lore"}
     ]
     compiled = context(owner)
-    block = next(m for m in compiled["trace"] if m.get("source") == "lore:entry")
-    assert "[L1 · 开头预览]\nCom" in block["content"] and "Guide lore" not in block["content"]
+    expected = '<lorebook>\n{"source":"runtime_lore_injection","ref":"L1","title":"Harbor","preview":"Com"}\n</lorebook>'
+    assert any(m.get("content") == expected for m in compiled["messages"])
     with pytest.raises(ValueError, match="read_lore_entry"):
         owner.tools.reads.require_entry("L1", raw)
     with pytest.raises(ValueError, match="编号"):

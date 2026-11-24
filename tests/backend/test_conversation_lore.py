@@ -119,7 +119,10 @@ def test_exported_lore_flags_preserve_matching_recursion_and_source():
             )["messages"]
         ]
 
-    assert "<lorebook>\n[L1 · 全文]\n海港：灯塔完整设定\n</lorebook>" in delivered(["a"])
+    assert (
+        '<lorebook>\n{"source":"runtime_lore_injection","ref":"L1","text":"海港：灯塔完整设定"}\n</lorebook>'
+        in delivered(["a"])
+    )
     assert doc == original
     assert json.loads(export_card(doc, kind, raw, assets)[0]) == original
 
@@ -132,7 +135,10 @@ def test_exported_lore_flags_preserve_matching_recursion_and_source():
         "b": {"recursive_parents": ["a"], "recursion_depth": 1}
     }
     bodies = delivered(["a", "b"])
-    assert "<lorebook>\n[L2 · 全文]\n远山完整设定\n</lorebook>" in bodies
+    assert (
+        '<lorebook>\n{"source":"runtime_lore_injection","ref":"L2","text":"远山完整设定"}\n</lorebook>'
+        in bodies
+    )
     assert all("排除递归的完整设定" not in body for body in bodies)
     assert [e["id"] for e in activate_lore(doc, [], "海港", {}, "seed")[0]] == ["b", "c"]
     source["matchWholeWords"] = False

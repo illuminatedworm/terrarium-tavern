@@ -1,5 +1,7 @@
 """Story tool result envelopes and explicit, actionable failure categories."""
 
+import json
+
 RECOVERY = {
     "STORY_LIMIT_REACHED": (False, "完成必要收尾后结束。"),
     "STORY_ALREADY_RECEIVED": (False, "保留已接收的正文，继续必要工具或正常结束回复；不要再次提交正文。"),
@@ -47,6 +49,10 @@ class TurnError(ValueError):
     def __init__(self, code, message):
         self.code = code
         super().__init__(message)
+
+
+def encoded(value) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def success(data):

@@ -3,6 +3,7 @@
  * Character documents, snapshots and MVU state are user-authored JSON with no fixed
  * schema, so they stay `JsonObject`; everything the app itself defines is typed. */
 import type { Channel } from './channels';
+import type { LoreRecord } from './loreRecords';
 import type { ConversationCacheUsage } from './editorContextStats';
 import type { ConversationModelSelection } from './settingsDocument';
 import type { StoryPresentation } from './storyPresentation';
@@ -89,6 +90,7 @@ export interface StoryMessageRecord {
   /** The user's out-of-character text; empty for replies and older messages. */
   ooc?: string;
   snapshot: JsonObject;
+  lore_admissions?: LoreRecord[];
   created: number;
   versions?: string[];
   version_index?: number;
@@ -130,6 +132,7 @@ export interface TurnRecord {
   /** How many failed continuations in a row led to this turn. */
   resume_failures: number;
   retry_head: string | null;
+  input_ready?: { message: PendingInput; lore_admissions: LoreRecord[] } | null;
 }
 
 /** `Store.session()`: one opened story with its current branch. */

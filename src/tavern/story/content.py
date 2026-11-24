@@ -187,11 +187,13 @@ def entry_rows(document):
     return [(slot, raw, entry) for (slot, raw), entry in zip(slots, effective, strict=True)]
 
 
-def lore_references(document, state):
+def lore_references(document, state, *, rows=None):
+    if rows is None:
+        rows = entry_rows(document)
     refs = state.setdefault("lore_references", {})
     known = set(refs.values())
     number = max((int(ref[1:]) for ref in refs if re.fullmatch(r"L[1-9]\d*", ref)), default=0)
-    for _, raw, entry in entry_rows(document):
+    for _, raw, entry in rows:
         if lore_purpose(raw) == NARRATIVE and entry["id"] not in known:
             number += 1
             refs[f"L{number}"] = entry["id"]

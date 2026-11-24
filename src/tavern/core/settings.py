@@ -108,7 +108,7 @@ class AgentSettings(StrictSettings):
     lore_recursion_depth: int = Field(default=1, ge=0, le=16, strict=True)
     lore_max_entries: int = Field(default=5, ge=1, le=1000, strict=True)
     lore_preview_chars: int = Field(default=120, ge=1, le=2_000_000, strict=True)
-    # Include a title line by default; users can choose ST-style content-only injection.
+    # Constant lore has a title line; dynamic injections use the optional title field.
     lore_injection_title: bool = Field(default=True, strict=True)
     # Legacy setting retained for stored profiles; selected entries are always complete.
     lore_max_chars: int = Field(default=3000, ge=1, le=2000000, strict=True)

@@ -3,7 +3,7 @@
 import copy
 import json
 
-from tavern.character.cards import is_initvar, lore_entries, normalize
+from tavern.character.cards import is_initvar, lore_entries, lore_title, normalize
 from tavern.conversation.cache_breakpoint import prepare_context
 from tavern.conversation.context import (
     lore_text,
@@ -17,10 +17,8 @@ from tavern.core.cache_policy import fingerprint
 from tavern.core.context_usage import context_tokens
 from tavern.core.history_refs import labeled, message_ref, span_ref
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
-from tavern.core.model_view import ModelView
 from tavern.core.story_segments import MAX_SEGMENTS, split_segments
 from tavern.story.config import tool_protocol
-from tavern.story.content import lore_references
 from tavern.story.content_history import content_history
 from tavern.story.context_ledger import ContextLedger
 from tavern.story.delivery import (
@@ -33,8 +31,9 @@ from tavern.story.delivery import (
     without_encoded_failures,
 )
 from tavern.story.handoff import render_chapters, render_current
-from tavern.story.lore import LoreReplay, lore_preview, retained_injections
+from tavern.story.lore import LoreReplay, injection_references, retained_injections, runtime_lore_entry
 from tavern.story.plot import plan_message, plan_value
+from tavern.story.protocol import encoded
 from tavern.story.state import story_state
 
 
@@ -134,16 +133,7 @@ def compile_window(
         if not record.get("manually_removed"):
             records_by_anchor.setdefault(record["anchor_id"], []).append(record)
     if records_by_anchor:
-        # Read-only previews calculate the same handles without allocating them in a snapshot.
-        ref_state = (
-            state if model_view is not None else {"lore_references": dict(state.get("lore_references", {}))}
-        )
-        ref_by_id = {eid: ref for ref, eid in lore_references(document, ref_state).items()}
-        if model_view is None:
-            model_view = ModelView(
-                {"document": document, "state": snapshot.get("state", {})},
-                references=dict(state.get("model_references", {})),
-            )
+        model_view, ref_by_id = injection_references(document, snapshot, model_view)
 
     # This absolute prefix is outside all application ordering and history
     # offsets; no runtime rules or worldbook entries can split its four blocks.
@@ -356,24 +346,20 @@ def compile_window(
         for record in records_by_anchor.get(message_id, ()):
             eid = record["id"]
             entry = narrative_lore[eid]
-            body = model_view.text(record["content"])
-            opening = lore_preview(body, settings.lore_preview_chars)
-            preview = len(opening) < len(body)
-            text = lore_text(
-                entry,
-                opening,
-                settings.lore_injection_title,
-                lambda title: model_view.text(expand(title)),
-                ref=ref_by_id[eid],
-                preview=preview,
+            payload = runtime_lore_entry(
+                ref_by_id[eid],
+                record["content"],
+                model_view,
+                settings.lore_preview_chars,
+                title=expand(lore_title(entry)) if settings.lore_injection_title else "",
             )
             add(
                 "system",
-                wrap_lorebook(text),
+                wrap_lorebook(encoded(payload)),
                 "lore:" + eid,
                 lore_ids=[eid],
                 anchor_id=message_id,
-                lore_preview=preview,
+                lore_preview="preview" in payload,
                 title=record["title"],
             )
 

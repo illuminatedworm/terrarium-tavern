@@ -33,7 +33,7 @@ from tavern.storage.worldbooks import read_defaults, write_defaults
 MAX_UPLOAD = 256 * 1024 * 1024
 MAX_UNPACKED = 512 * 1024 * 1024
 FORMAT = "terrarium-tavern-personal-data"
-PACKAGE_VERSION = 23
+PACKAGE_VERSION = 24
 JSON_FIELDS = {
     "worldbooks": {"book"},
     "cards": {"resources", "document", "report"},
@@ -242,6 +242,15 @@ def export_package(store, selection):
                                 f"SELECT * FROM {related} WHERE session=? ORDER BY rowid", (identity,)
                             )
                         ]
+                    bundle["lore_admissions"] = [
+                        dict(item)
+                        for item in db.execute(
+                            "SELECT a.message_id,a.anchor_id,a.id,a.ref,a.title,a.text "
+                            "FROM messages m JOIN story_lore_admissions a ON a.message_id=m.id "
+                            "WHERE m.session=? ORDER BY a.rowid",
+                            (identity,),
+                        )
+                    ]
                     adapter = db.execute(
                         "SELECT * FROM message_adapter_configs WHERE owner_kind='story' AND owner_id=?",
                         (identity,),
@@ -289,7 +298,7 @@ def validate_row(schema, table, row, required):
                 raise ValueError("数据包字段类型无效")
 
 
-def validate_story_sources(messages, traces=()):
+def validate_story_sources(messages, traces=(), admissions=()):
     """Check imported immutable citations against every branch in linear tree time."""
     children = {}
     for message in messages.values():
@@ -317,8 +326,25 @@ def validate_story_sources(messages, traces=()):
                 if first > last or (span and not span[0] <= first <= last <= span[1]):
                     raise ValueError("交接要点的引用范围无效")
 
+    admissions_by_reply = {}
+    for record in admissions:
+        owner, anchor = record["message_id"], record["anchor_id"]
+        if owner not in messages or messages[owner]["role"] != "assistant":
+            raise ValueError("世界书注入记录缺少所属回复")
+        position(anchor, owner, "世界书注入")
+        keys = admissions_by_reply.setdefault(owner, set())
+        key = (anchor, record["id"])
+        if key in keys:
+            raise ValueError("世界书注入记录重复")
+        keys.add(key)
+
     for mid, message in messages.items():
         state = message["snapshot"]["story"]
+        if mid in admissions_by_reply and any(
+            r.get("manually_removed") and (r["anchor_id"], r["id"]) in admissions_by_reply[mid]
+            for r in message["snapshot"].get("lore_injections", ())
+        ):
+            raise ValueError("已手动移除的世界书注入与入选记录冲突")
         for note in state["notes"].values():
             for source in note["sources"]:
                 position(source["message_id"], mid)
@@ -370,7 +396,7 @@ def validate_package(store, package, blobs):
     with store.connection() as db:
         schema = {
             table: {column["name"]: dict(column) for column in db.execute(f"PRAGMA table_info({table})")}
-            for table in ("personas", *JSON_FIELDS)
+            for table in ("personas", "story_lore_admissions", *JSON_FIELDS)
         }
         schema["sessions"].pop("empty_window_id")
 
@@ -626,7 +652,21 @@ def validate_package(store, package, blobs):
                 ):
                     raise ValueError("对话上下文轨迹无效")
                 trace_keys.add(key)
-            validate_story_sources(by_id, bundle.get("story_trace", []))
+            admissions = bundle.get("lore_admissions", [] if package["version"] < 24 else None)
+            if not isinstance(admissions, list):
+                raise ValueError("世界书注入记录必须为列表")
+            for record in admissions:
+                validate_row(
+                    schema,
+                    "story_lore_admissions",
+                    record,
+                    {"message_id", "anchor_id", "id", "ref", "title", "text"},
+                )
+                if "turn" in record or (
+                    record["ref"] is not None and not re.fullmatch(r"L[1-9]\d*", record["ref"])
+                ):
+                    raise ValueError("世界书注入记录编号或归属无效")
+            validate_story_sources(by_id, bundle.get("story_trace", []), admissions)
             from tavern.media.transfer import validate_bundle as validate_media
             from tavern.story.visuals import successful_specs, validate_spec
 
@@ -898,6 +938,13 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                     cloned = remap(trace, ids)
                     cloned["payload"].pop("_novel_mail", None)
                     insert(db, "story_trace", cloned)
+                db.executemany(
+                    "INSERT INTO story_lore_admissions(message_id,anchor_id,id,ref,title,text) VALUES (?,?,?,?,?,?)",
+                    (
+                        (ids[r["message_id"]], ids[r["anchor_id"]], r["id"], r["ref"], r["title"], r["text"])
+                        for r in bundle.get("lore_admissions", [])
+                    ),
+                )
                 adapter = bundle.get("adapter")
                 from tavern.advisor.transfer import import_bundle as import_advisor
 

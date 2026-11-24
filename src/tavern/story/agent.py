@@ -45,12 +45,13 @@ from tavern.story.delivery import (
     project_rejected_kemini_notes,
     story_history,
 )
-from tavern.story.lore import LoreReplay, inject_lore, lore_preview, retain_lore
+from tavern.story.lore import LoreReplay, inject_lore, lore_match, retain_lore
+from tavern.story.lore_records import freeze_admissions, publish_input_ready
 from tavern.story.preview import TurnPreview
-from tavern.story.protocol import ToolError, TurnError, failed, success
+from tavern.story.protocol import ToolError, TurnError, encoded, failed, success
 from tavern.story.recovery import PROGRESS_VERSION, saved_story_format
 from tavern.story.state import story_state
-from tavern.story.tools import AgentTools, encoded, tool_definitions
+from tavern.story.tools import AgentTools, tool_definitions
 from tavern.story.visibility import context_messages
 
 
@@ -403,19 +404,19 @@ class StoryAgent:
             },
         )
         if source == "auto":
-            return
+            return added
         if not added and not include_ref:
             return {"matches": []}
         refs = {eid: ref for ref, eid in self.lore_refs().items()}
         matches, tails = [], {}
         for record in added:
             eid, content = record["id"], record["content"]
-            match = {"ref": refs[eid]}
-            if include_title:
-                match["title"] = record["title"]
             body = self.model_view.text(content)
-            opening = lore_preview(body, settings.lore_preview_chars)
-            if len(opening) < len(body):
+            match = lore_match(
+                refs[eid], body, settings.lore_preview_chars, title=record["title"] if include_title else ""
+            )
+            if "preview" in match:
+                opening = match["preview"]
                 match["preview"] = wrap_lorebook(opening)
                 tails[eid] = body[len(opening) :]
             else:
@@ -586,16 +587,26 @@ class StoryAgent:
 
     async def run(self, provider=None, *, provider_factory=None, request_observer=None):
         try:
+            added = []
             if self.settings.story_config.auto_retrieval and not self.resumed:
                 from tavern.core.ooc import story_of
 
-                await self.retrieve(
+                added = await self.retrieve(
                     story_of(self.request.text, self.request.ooc), source="auto", ooc=self.request.ooc
                 )
-            self.store.event(
+            publish_input_ready(
+                self.store,
                 self.tid,
-                "input_ready",
-                {"message": self.user_message, "lore_injections": self.snapshot.get("lore_injections", [])},
+                self.user_message,
+                self.snapshot.get("lore_injections", []),
+                freeze_admissions(
+                    self.document,
+                    self.snapshot,
+                    self.session["persona"],
+                    added,
+                    model_view=self.model_view,
+                    send_titles=self.settings.lore_injection_title,
+                ),
             )
             if self.resumed:
                 if self.story is not None:

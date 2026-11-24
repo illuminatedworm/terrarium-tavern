@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 39
+SCHEMA_VERSION = 40
 SETTINGS_VERSIONS = range(2, 26)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
@@ -204,6 +204,12 @@ def _initialize_story_tables(db: sqlite3.Connection) -> None:
     db.execute("""CREATE TABLE IF NOT EXISTS story_progress (
         turn TEXT PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
         payload TEXT NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS story_lore_admissions (
+        turn TEXT REFERENCES turns(id) ON DELETE CASCADE,
+        message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
+        anchor_id TEXT NOT NULL, id TEXT NOT NULL, ref TEXT, title TEXT NOT NULL, text TEXT NOT NULL,
+        CHECK ((turn IS NULL) != (message_id IS NULL)),
+        UNIQUE(turn,anchor_id,id), UNIQUE(message_id,anchor_id,id))""")
 
 
 def _migrate_card_author_storage(db: sqlite3.Connection) -> None:
@@ -258,6 +264,10 @@ def _migrate_data(db: sqlite3.Connection, previous_schema: int) -> None:
         upgrade_story_records(db)
     if previous_schema < 28:
         upgrade_stored_lore_purposes(db)
+    if previous_schema < 40:
+        from tavern.storage.lore_admissions import upgrade_admissions
+
+        upgrade_admissions(db)
     if previous_schema < 38:
         document = SettingsDocument.model_validate_json(
             db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]

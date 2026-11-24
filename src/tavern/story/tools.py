@@ -1,6 +1,5 @@
 """Typed tools over a turn draft; storage identities never become model arguments."""
 
-import json
 import re
 from typing import Annotated, Any, Literal
 
@@ -44,7 +43,7 @@ from tavern.story.handoff import (
     require_coverage,
 )
 from tavern.story.lore import read_present_lore
-from tavern.story.protocol import ToolError, TurnError, success
+from tavern.story.protocol import ToolError, TurnError, encoded, success
 from tavern.story.read_guards import DraftReads, state_scope
 from tavern.story.state import note_view, rollover, rollover_start
 from tavern.story.visuals import DESCRIPTION as VISUAL_DESCRIPTION
@@ -522,10 +521,6 @@ def tool_definitions(
             }
         )
     return result
-
-
-def encoded(value):
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 class AgentTools:
