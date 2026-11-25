@@ -59,6 +59,8 @@ Gemini 原生接入使用 Google 官方 [python-genai](https://github.com/google
 
 Vue、lodash、jQuery、Zod、YAML、JSON5、fast-json-patch、Acorn、DOMPurify、marked、mathjs 和 klona 通过 npm 安装。各依赖附带的许可文件以及构建产物中保留的声明继续适用；准确版本见 [package-lock.json](../package-lock.json)。
 
+剧情 Markdown 的东亚字符范围源于 [Unicode Character Database 17.0.0](https://www.unicode.org/Public/17.0.0/ucd/)，采用 [Unicode License V3](Unicode-3.0.txt)。字符边界规则参考 [CommonMark 提案 #839](https://github.com/commonmark/commonmark-spec/pull/839)，在剧情使用的 Marked 分词器中应用。
+
 卡片离线模块打包使用 [esbuild](https://github.com/evanw/esbuild) 的 **MIT** 许可浏览器版本 `esbuild-wasm 0.25.10`。构建会将浏览器脚本、WebAssembly 二进制及其 `LICENSE.md` 原文复制至 `src/tavern/static/esbuild/`，随桌面和 Android 应用一同分发。
 
 剧情运算使用 [QuickJS 的 WebAssembly 绑定](https://github.com/justjake/quickjs-emscripten) 0.32.0，骰式语法使用 [dice-roller-parser](https://github.com/BTMorton/dice_roller) 0.1.8。运行器、QuickJS 与绑定的许可及骰式解析器的 MIT 许可随构建输出保存在 `src/tavern/static/calculation/`。

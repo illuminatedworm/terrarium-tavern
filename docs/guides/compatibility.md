@@ -11,7 +11,7 @@
 | 正则 | 原生 JavaScript RegExp；显示/模型阶段、placement 与 min/max depth |
 | 原始提示词 | 角色描述、system、post history 与示例进入剧情上下文，开场作为首条剧情消息 |
 | 宏 | 模型文本保留 char、user、getvar / getglobalvar 读取；Helper 的 get / format / format_quoted 变量宏支持 message、chat、character、preset、global，用于模型上下文和文字、Markdown、HTML 展示；未知宏保留 |
-| 剧情 Markdown | 使用 GFM；仅对汉字后紧接 `**`、内容以 `‘`、`“`、`「`、`『` 开头的粗体放宽起始边界，闭合仍遵循原解析规则；纯英文、代码、转义与存档原文不变，角色编辑预览不启用此扩展 |
+| 剧情 Markdown | 使用 GFM，并参考 [CommonMark 东亚文字提案](https://github.com/commonmark/commonmark-spec/pull/839) 扩展星号强调。星号紧邻符合条件的东亚字符时，可跨标点开启或闭合斜体、粗体和粗斜体，如 `他说**找到了！**随后起身`、`語**(ABC)**語` 和 `**(Markdown)**을`。星号内侧仍须紧贴内容，下划线沿用 GFM。剧情阅读和「分享对话」共用此规则，角色卡编辑预览使用标准 GFM，故事数据导出使用原文。 |
 | HTML 美化 | 原始 HTML 和代码块共用结构解析器，统一为正文／面板内容块，保留多个 HTML 界面及前、中、后的剧情；完整 head/body 按 HTML 文档处理；每个界面独立 sandbox iframe；CSS 的 url()/@import 和字体递归缓存后离线使用 |
 | 角色脚本 | 固定 SDK、无宿主密钥；按回合重新建立，变量持久化 |
 | 消息变量回调 | 在服务端重建消息 DOM realm，顺序执行 MVU 回调并等待完成 |
