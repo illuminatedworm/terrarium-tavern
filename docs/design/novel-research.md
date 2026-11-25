@@ -93,4 +93,4 @@
 - `PATCH .../novel/advisor` 使用同一绑定的 `expected_revision` 和 `enabled` 设置参谋授权。状态中的 `advisor_enabled` 是参谋授权，`advisor_model_selection` 是参谋模型的对话级选择，空值表示沿用全局设置。
 - `GET .../novel/sources/{source_id}/text?start=0&length=8000` 为用户按范围查看副本，`.../download` 下载原始文件；仅允许当前分支的文件历史，不是主模型工具。
 - `GET .../novel/jobs/{ref}/trace?after=0` 分页查看原始过程与报告；`POST .../novel/jobs/{ref}/pause|resume|destroy` 明确管理调查者，`POST .../novel/stop-all` 同时停止当前剧情生成和运行中的调查。
-- `GET /api/novel/activity` 与可重连的 `GET /api/novel/events` 提供跨对话状态；前端不轮询模型任务，不因展开面板而调用模型。
+- `GET /api/novel/activity` 与可重连的 `GET /api/novel/events` 提供跨对话状态。界面用 `GET /api/activity/events` 合用一条连接接收调查状态和日文词典进度，为多标签页下的预览、取消等请求留出连接。前端不轮询模型任务，不因展开面板而调用模型。

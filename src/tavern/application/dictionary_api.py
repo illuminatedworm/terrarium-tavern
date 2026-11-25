@@ -2,10 +2,18 @@
 
 import asyncio
 import json
+from contextlib import aclosing
 from typing import Literal
 
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
+
+
+async def dictionary_event_stream(dictionary, *, named=False):
+    prefix = "event: dictionary\n" if named else ""
+    async with aclosing(dictionary.events()) as updates:
+        async for value in updates:
+            yield f"{prefix}data: {json.dumps(value, ensure_ascii=False)}\n\n"
 
 
 def register_dictionary_routes(app, dictionary):
@@ -15,12 +23,10 @@ def register_dictionary_routes(app, dictionary):
 
     @app.get("/api/dictionaries/japanese/events")
     async def events():
-        async def stream():
-            async for value in dictionary.events():
-                yield "data: " + json.dumps(value, ensure_ascii=False) + "\n\n"
-
         return StreamingResponse(
-            stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+            dictionary_event_stream(dictionary),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
         )
 
     @app.post("/api/dictionaries/japanese/download")

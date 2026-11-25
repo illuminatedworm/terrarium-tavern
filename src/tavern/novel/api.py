@@ -28,6 +28,24 @@ class AdvisorAuthorization(BaseModel):
     enabled: bool
 
 
+async def novel_event_stream(service, cursor: int):
+    while not service.closed:
+        generation = service.generation
+        batch = service.data.events(cursor)
+        for event in batch:
+            cursor = event["seq"]
+            yield f"id: {cursor}\ndata: {dump(event)}\n\n"
+        if len(batch) == 200:
+            continue
+        await service.wait_change(generation)
+        if generation != service.generation:
+            # Session deletion cascades its audit events; still refresh the
+            # global activity list instead of leaving a deleted branch's badge.
+            yield "event: refresh\ndata: {}\n\n"
+        yield ": heartbeat\n\n"
+    yield "event: end\ndata: {}\n\n"
+
+
 def register_routes(app, service, main_runtime):
     store, data = service.store, service.data
 
@@ -212,26 +230,9 @@ def register_routes(app, service, main_runtime):
 
     @app.get("/api/novel/events")
     async def events(request: Request, after: int = Query(0, ge=0)):
-        async def stream():
-            cursor = max(after, int(request.headers.get("last-event-id", "0")))
-            while not service.closed:
-                generation = service.generation
-                batch = data.events(cursor)
-                for event in batch:
-                    cursor = event["seq"]
-                    yield f"id: {cursor}\ndata: {dump(event)}\n\n"
-                if await request.is_disconnected():
-                    return
-                if len(batch) == 200:
-                    continue
-                await service.wait_change(generation)
-                if generation != service.generation:
-                    # Session deletion cascades its audit events; still refresh the
-                    # global activity list instead of leaving a deleted branch's badge.
-                    yield "event: refresh\ndata: {}\n\n"
-                yield ": heartbeat\n\n"
-            yield "event: end\ndata: {}\n\n"
-
+        cursor = max(after, int(request.headers.get("last-event-id", "0")))
         return StreamingResponse(
-            stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+            novel_event_stream(service, cursor),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
         )

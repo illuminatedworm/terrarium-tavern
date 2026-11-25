@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, onMounted, ref, type InjectionKey } from 'vue';
+import { computed, ref, type InjectionKey } from 'vue';
 import { api } from '../lib/api';
 import { notify } from '../lib/notifications';
 
@@ -53,25 +53,22 @@ export function useJapaneseDictionary() {
   const progress = computed(() =>
     status.value?.total_bytes ? status.value.completed_bytes / status.value.total_bytes : undefined,
   );
-  let events: EventSource | undefined;
-  onMounted(() => {
-    events = new EventSource('/api/dictionaries/japanese/events');
-    events.onmessage = (event) => {
+  function observe(events: EventSource) {
+    events.addEventListener('dictionary', (event: MessageEvent<string>) => {
       const next = JSON.parse(event.data) as JapaneseDictionaryStatus;
       if (status.value && next.state === 'ready' && status.value.state !== 'ready')
         notify('日文词典已就绪，可继续日文检索。');
       status.value = next;
       connectionError.value = '';
-    };
-    events.onerror = () => {
+    });
+    events.addEventListener('error', () => {
       connectionError.value = '词典状态连接中断，正在重连。';
-    };
-  });
-  onBeforeUnmount(() => events?.close());
+    });
+  }
   async function action(name: 'download' | 'cancel') {
     status.value = await api(`/dictionaries/japanese/${name}`, {});
   }
-  return { status, busy, label, progress, connectionError, action };
+  return { status, busy, label, progress, connectionError, observe, action };
 }
 
 export type JapaneseDictionaryState = ReturnType<typeof useJapaneseDictionary>;

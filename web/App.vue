@@ -294,7 +294,8 @@ function closePanel() {
 }
 const startupModels = ref<StartupModels | null>(null);
 const modelWarmup = useModelWarmup(() => panel.value === 'warmup');
-provide(japaneseDictionaryKey, useJapaneseDictionary());
+const japaneseDictionary = useJapaneseDictionary();
+provide(japaneseDictionaryKey, japaneseDictionary);
 const contextStats = ref<StoryContextPreview | null>(null);
 const cacheUsage = ref<ConversationCacheUsage | null>(null);
 const cacheUsageExpiresAt = ref<number | null>(null);
@@ -2230,7 +2231,11 @@ async function frameAction(method: string, args: any, resolve: (v: any) => void,
   }
 }
 onMounted(() => {
-  stopNovelObservation = observeNovels();
+  stopNovelObservation = observeNovels((after) => {
+    const stream = new EventSource(`/api/activity/events?after=${after}`);
+    japaneseDictionary.observe(stream);
+    return stream;
+  });
   mobileSidebarQuery.addEventListener('change', syncMobileSidebar);
   rightOverlayQuery.addEventListener('change', syncRightOverlay);
   document.addEventListener('pointerdown', closeDeleteOnOutside);

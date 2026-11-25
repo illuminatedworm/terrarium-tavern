@@ -57,11 +57,27 @@ async def main(single_viewport=False, report_activity_only=False):
         app = create_app(root)
         store = app.state.store
         card = store.import_card(
-            json.dumps({"name": "流式预览角色", "first_mes": "开场：旧港的钟声响了。"}).encode()
+            json.dumps(
+                {
+                    "name": "流式预览角色",
+                    "first_mes": "开场：旧港的钟声响了。",
+                    "character_book": {
+                        "entries": [
+                            {
+                                "id": "port",
+                                "keys": ["旧港"],
+                                "comment": "港务处",
+                                "content": "港务处午后开门。",
+                                "enabled": True,
+                            }
+                        ]
+                    },
+                }
+            ).encode()
         )
         cfg = store.settings_document()
         cfg.story.model.model = "fixture"
-        cfg.story.tools.auto_retrieval = False
+        cfg.story.retrieval.channels = ["keyword"]
         cfg.shared.providers[0].api_key = "fixture"
         cfg.shared.model_request_mode = "stream"
         store.save_settings(cfg)
@@ -144,20 +160,32 @@ async def main(single_viewport=False, report_activity_only=False):
             assert await asyncio.to_thread(ready.wait, 5), "Acceptance server did not start"
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch(**system_browser().launch_options)
-                page = await browser.new_page(viewport={"width": 1920, "height": 1080})
+                context = await browser.new_context(viewport={"width": 1920, "height": 1080})
+                page = await context.new_page()
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 try:
+                    # Both tabs share Chromium's HTTP/1.1 connections to the local server.
+                    background = await context.new_page()
+                    await background.goto(address)
+                    await expect(
+                        background.locator(".session-open").filter(has_text="流式正文测试")
+                    ).to_be_visible()
                     await page.goto(address)
                     await page.evaluate("id => localStorage.setItem('tavern-session', id)", session["id"])
                     await page.reload()
                     send = page.get_by_role("button", name="发送", exact=True)
                     await expect(send).to_be_visible()
-                    await page.get_by_role("textbox", name="用户输入", exact=True).fill("继续故事")
+                    await page.get_by_role("textbox", name="用户输入", exact=True).fill("我前往旧港。")
                     await send.click()
                     runtime = page.locator(".agent-runtime-activity")
                     await expect(runtime).to_contain_text("R1 · 资料调查报告已送达")
                     await expect(runtime).to_contain_text("主模型请求已发出")
+                    injections = page.locator(".lore-injection-records")
+                    await injections.locator(":scope > summary").click(timeout=3000)
+                    await injections.locator(".lore-injection-item > summary").click(timeout=3000)
+                    await expect(injections.locator("pre")).to_contain_text("港务处午后开门。", timeout=3000)
+                    await background.close()
                     assert await runtime.locator("summary, code").count() == 0
                     await expect(page.locator(".draft")).to_have_count(0)
                     await page.screenshot(path=str(output / "report-dispatched.png"))

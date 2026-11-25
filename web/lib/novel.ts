@@ -97,7 +97,7 @@ export async function retryNovelActivity() {
 }
 
 /** One reconnectable observer for every branch; no background status polling. */
-export function observeNovels() {
+export function observeNovels(openStream: (after: number) => EventSource) {
   let source: EventSource | null = null;
   let disposed = false,
     refreshing = false,
@@ -127,7 +127,7 @@ export function observeNovels() {
         initialized = true;
         if (!source) {
           cursor = result.cursor;
-          source = new EventSource(`/api/novel/events?after=${cursor}`);
+          source = openStream(cursor);
           source.onmessage = (message) => {
             if (disposed) return;
             const event = JSON.parse(message.data) as { seq: number; session: string };

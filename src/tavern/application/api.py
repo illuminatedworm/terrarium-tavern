@@ -272,9 +272,11 @@ def create_app(data_dir=None):
     from tavern.application.settings_api import register_settings_routes
 
     register_settings_routes(app, store)
+    from tavern.application.activity_api import register_activity_routes
     from tavern.application.dictionary_api import register_dictionary_routes
 
     register_dictionary_routes(app, service.japanese_dictionary)
+    register_activity_routes(app, service)
     from tavern.application.transfer_api import register_transfer_routes
 
     register_transfer_routes(app, store)
