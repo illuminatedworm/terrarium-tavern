@@ -317,6 +317,7 @@ async def test_media_intents_commit_with_review_and_keep_original_parameters(sto
 async def test_preview_bills_only_the_edited_connection_without_changing_story_or_active_channel(
     story, monkeypatch
 ):
+    import base64
     from unittest.mock import AsyncMock
 
     import httpx
@@ -324,7 +325,7 @@ async def test_preview_bills_only_the_edited_connection_without_changing_story_o
     from PIL import Image
 
     from tavern.media.api import register_routes
-    from tavern.media.config import HTTPSpeechProfile, OpenAIImageProfile
+    from tavern.media.config import ChatImageProfile, HTTPSpeechProfile, OpenAIImageProfile
     from tavern.media.service import MediaService
     from tavern.media.transport import pcm_wav
     from tavern.search.retrieval_config import Provider
@@ -358,6 +359,16 @@ async def test_preview_bills_only_the_edited_connection_without_changing_story_o
             }
             return httpx.Response(200, content=sound.data)
         assert wire.headers["Authorization"] == "Bearer fixture-image-key"
+        if wire.url.path == "/v1/chat/completions":
+            assert json.loads(wire.content) == {
+                "model": "google/gemini-3.1-flash-image",
+                "messages": [{"role": "user", "content": "请画一座灯塔"}],
+                "modalities": ["text", "image"],
+                "stream": False,
+            }
+            url = "data:image/png;base64," + base64.b64encode(picture.getvalue()).decode("ascii")
+            message = {"content": "灯塔", "images": [{"type": "image_url", "image_url": {"url": url}}]}
+            return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": message}]})
         if wire.method == "POST":
             assert json.loads(wire.content) == {"model": "relay-image", "prompt": "灯塔", "n": 1}
             return httpx.Response(200, json={"data": [{"url": "/result.png"}]})
@@ -393,11 +404,23 @@ async def test_preview_bills_only_the_edited_connection_without_changing_story_o
             json={"kind": "image", "channel": "standard", "profile": image.model_dump(), "prompt": "灯塔"},
         )
         assert response.content == picture.getvalue()
+        chat_image = ChatImageProfile(provider_id=images.id, model="google/gemini-3.1-flash-image")
+        response = await client.post(
+            "/api/media/preview",
+            json={
+                "kind": "image",
+                "channel": "standard",
+                "profile": chat_image.model_dump(),
+                "prompt": "请画一座灯塔",
+            },
+        )
+        assert response.headers["content-type"] == "image/png" and response.content == picture.getvalue()
     assert calls == [
         ("POST", "/v1/audio/speech"),
         ("POST", "/v1/images/generations"),
         ("GET", "/result.png"),
         ("GET", "/final.png"),
+        ("POST", "/v1/chat/completions"),
     ]
     public_url.assert_awaited_once_with("https://cdn.example.test/final.png")
     assert store.settings_document().story.media.speech.active_channel == "chatgpt"
@@ -405,6 +428,48 @@ async def test_preview_bills_only_the_edited_connection_without_changing_story_o
     with store.connection() as db:
         assert db.execute("SELECT count(*) FROM media_jobs").fetchone()[0] == 0
         assert db.execute("SELECT count(*) FROM media_assets").fetchone()[0] == 0
+
+
+async def test_chat_image_sends_only_prompt_and_selected_pixels_and_rejects_text_only(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from tavern.media import providers
+    from tavern.media.config import ChatImageProfile
+
+    profile = ChatImageProfile(model="google/gemini-3-pro-image")
+    request = {
+        "connection": {**profile.model_dump(), "provider_id": "7b4f9af1-9d6a-45fe-aea6-ade483f540b1"},
+        "prompt": "画出参考图中的人物。",
+        "references": ["de4168c1-2ae7-47c8-8fdd-093807cc43a0"],
+    }
+    post = AsyncMock(
+        return_value={"choices": [{"finish_reason": "stop", "message": {"content": "只有文字"}}]}
+    )
+    monkeypatch.setattr(providers, "post_json", post)
+    with pytest.raises(ValueError, match="只返回了文字"):
+        await providers.ADAPTERS[profile.adapter].generate(
+            request, key="fixture", proxy=None, references=[(b"ref", "image/jpeg")]
+        )
+    post.assert_awaited_once_with(
+        request["connection"],
+        "/chat/completions",
+        headers={"Authorization": "Bearer fixture"},
+        proxy=None,
+        json={
+            "model": profile.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": request["prompt"]},
+                        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,cmVm"}},
+                    ],
+                }
+            ],
+            "modalities": ["text", "image"],
+            "stream": False,
+        },
+    )
 
 
 async def test_realtime_sends_the_selected_cloud_voice_before_the_first_audio_response(monkeypatch):

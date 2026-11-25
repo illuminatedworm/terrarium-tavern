@@ -15,6 +15,7 @@ from tavern.media.transport import (
     MediaResult,
     api_root,
     image_from_url,
+    image_result,
     pcm_wav,
     post_json,
     post_media,
@@ -23,6 +24,7 @@ from tavern.media.transport import (
     wav_result,
 )
 from tavern.media.volcengine import SeedreamImages, SeedSpeech
+from tavern.scripting.http_errors import upstream_message
 
 
 class MediaAdapter(Protocol):
@@ -79,6 +81,49 @@ class OpenAIImages:
         ):
             return await image_from_url(outputs[0]["url"], connection, proxy, mime, headers=headers)
         return single_image(body, mime)
+
+
+class ChatCompletionsImages:
+    async def generate(self, request, *, key, proxy, references):
+        connection = request["connection"]
+        prompt = request["prompt"]
+        content: str | list[dict] = prompt
+        if references:
+            content = [{"type": "text", "text": prompt}]
+            for data, mime in references:
+                url = f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+                content.append({"type": "image_url", "image_url": {"url": url}})
+        headers = {"Authorization": "Bearer " + key} if key else {}
+        body = await post_json(
+            connection,
+            "/chat/completions",
+            headers=headers,
+            proxy=proxy,
+            json={
+                "model": connection["model"],
+                "messages": [{"role": "user", "content": content}],
+                "modalities": ["text", "image"],
+                "stream": False,
+            },
+        )
+        match body.get("choices"):
+            case [{"finish_reason": "stop", "message": {"images": [{"image_url": {"url": str() as url}}]}}]:
+                if url.startswith(("https://", "http://")):
+                    return await image_from_url(url, connection, proxy, headers=headers)
+                media_type, separator, encoded = url.partition(";base64,")
+                if separator and media_type.startswith("data:image/") and encoded:
+                    return image_result(encoded, media_type.removeprefix("data:"))
+                raise ValueError("Chat Completions 返回的图片地址或编码无效")
+            case [{"finish_reason": "stop", "message": dict() as message}]:
+                if (
+                    not message.get("images")
+                    and isinstance(message.get("content"), str)
+                    and message["content"]
+                ):
+                    raise ValueError("Chat Completions 只返回了文字，请在提示词中明确要求生成图片")
+                raise ValueError("Chat Completions 未返回单张完整图片")
+            case _:
+                raise ValueError(upstream_message("Chat Completions 未完成图片生成", body))
 
 
 def openai_voice(request: dict) -> str | dict[str, str]:
@@ -191,6 +236,7 @@ ADAPTERS: dict[str, MediaAdapter] = {
     "openai_speech": OpenAIHTTPSpeech(),
     "openai_realtime": OpenAIRealtime(),
     "openai_images": OpenAIImages(),
+    "chat_completions_image": ChatCompletionsImages(),
     "gemini_tts": GeminiSpeech(),
     "gemini_image": GeminiImages(),
     "ark_seedream": SeedreamImages(),

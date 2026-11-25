@@ -79,10 +79,13 @@
 | 配音 · Gemini TTS | Google AI Studio 或本地反代，通常为 `v1beta` | 3.8 支持预设音色、同项目保存的云端音色和独立演绎样式。2.5 / 3.1 使用预设音色和提示词。可指定语言、温度和演绎指令格式 |
 | 配音 · 豆包语音 2.0 | `https://openspeech.bytedance.com`。Agent Plan 专属密钥使用 `api/v3/plan`，按量语音服务密钥使用 `api/v3` | 角色声线、语音指令、语速、音量、采样率 |
 | 插图 · OpenAI Images | OpenAI API Key 或兼容服务，通常为 `v1` | 画质、固定尺寸或剧情选图幅、PNG/JPEG/WebP |
+| 插图 · Chat Completions | 普通 API，通常为 `v1`，调用 `/chat/completions` | 支持文生图和参考图。可在提示词中描述画幅，输出尺寸和格式由模型决定 |
 | 插图 · Gemini | Google AI Studio 或本地反代，通常为 `v1beta` | 分辨率、宽高比，可固定画幅或交给剧情模型 |
 | 插图 · Seedream | `https://ark.cn-beijing.volces.com`，路径 `api/v3` | 分辨率档位或固定宽高、输出格式、AI 生成水印 |
 
 例如，本地 AI Studio 服务使用 `http://127.0.0.1:2048` 时，可把密钥留空并关闭该连接的接口代理。方舟生图使用推理密钥，套餐配音需另建语音连接。不同型号支持的分辨率和格式以服务为准，任务详情会显示接口返回的错误。[Gemini 配音](https://ai.google.dev/gemini-api/docs/speech-generation) · [Gemini 生图](https://ai.google.dev/gemini-api/docs/image-generation) · [Seedream 参数](https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh) · [方舟套餐语音](https://docs.volcengine.com/docs/ark/agent-plan-personal-voice-model?lang=zh)
+
+使用 Vercel AI Gateway 的 Nano Banana 系列时，在「管理提供商」把地址填为 `https://ai-gateway.vercel.sh`，并填写网关密钥。在「剧情插图 → 普通 API → 高级设置」选择 Chat Completions，API 路径填 `v1`。模型选网关目录中的完整名称，例如 Nano Banana 2 对应 `google/gemini-3.1-flash-image`。点击「试生成图片」，可用「请生成一张黄昏灯塔的插图」验证连接。网关通过 `choices[0].message.images` 返回图片；只返回文字时，任务会提示失败。[Vercel 聊天生图文档](https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions/image-generation)
 
 **使用已有云端音色。** 在提供商处制作并保存音色，复制返回的 ID。在「默认音色」「试听音色」或「角色音色表」的搜索框粘贴 ID，选择「使用此音色 ID」。角色表保存原始 ID，由当前配音连接调用。
 

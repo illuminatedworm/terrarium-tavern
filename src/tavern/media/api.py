@@ -19,6 +19,7 @@ from tavern.media.config import (
     GEMINI_PROMPT_MODELS,
     SEED_VOICES,
     SPEECH_VOICES,
+    ChatImageSettings,
     GeminiImageSettings,
     GeminiSpeechSettings,
     HTTPSpeechSettings,
@@ -127,6 +128,7 @@ def protocol_catalog(document):
                 GeminiSpeechSettings(),
                 SeedSpeechSettings(),
                 ImageSettings(),
+                ChatImageSettings(),
                 GeminiImageSettings(),
                 SeedreamSettings(),
             )

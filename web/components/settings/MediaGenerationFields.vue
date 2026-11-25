@@ -70,7 +70,7 @@ const providerOptions = computed(() => [
 ]);
 const choices = {
   speech: ['openai_speech', 'openai_realtime', 'gemini_tts', 'seed_tts'],
-  image: ['openai_images', 'gemini_image', 'ark_seedream'],
+  image: ['openai_images', 'chat_completions_image', 'gemini_image', 'ark_seedream'],
 } as const;
 const protocols = computed(() =>
   editing.value === 'standard'
@@ -345,7 +345,7 @@ async function refreshModels() {
                 <option v-for="ratio in ratios" :key="ratio">{{ ratio }}</option>
               </select></label
             >
-            <label v-else
+            <label v-else-if="image.adapter === 'openai_images' || image.adapter === 'ark_seedream'"
               >图片格式<select v-model="image.output_format">
                 <option value="auto">服务默认</option>
                 <option value="png">PNG</option>

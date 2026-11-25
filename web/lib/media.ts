@@ -29,6 +29,7 @@ export type SpeechProfile = BaseConnection & { instructions: string; default_voi
 export type ImageProfile = BaseConnection &
   (
     | { adapter: 'openai_images'; quality: string; size: string; output_format: string }
+    | { adapter: 'chat_completions_image' }
     | { adapter: 'gemini_image'; resolution: string; aspect_ratio: string }
     | { adapter: 'ark_seedream'; size: string; output_format: string; watermark: boolean }
   );
@@ -43,6 +44,7 @@ export const adapterLabels: Record<Adapter, string> = {
   gemini_tts: 'Gemini · generateContent',
   seed_tts: '豆包语音 · 单向流式合成',
   openai_images: 'Images HTTP · /images/generations',
+  chat_completions_image: 'Chat Completions · /chat/completions',
   gemini_image: 'Gemini · generateContent',
   ark_seedream: 'Seedream · 方舟图像生成',
 };

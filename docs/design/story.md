@@ -95,7 +95,7 @@ flowchart TD
 
 ### 配音、生图与看图
 
-媒体业务位于 `src/tavern/media/`，由 `MediaDraft` 接受 `generate_speech`、`generate_image` 和 `view_image`。前两个工具只修改本轮计划。`submit_story` 独立交付正文。媒体连接复用提供商凭据。新故事从全局设置读取配音、生图协议、模型与额度，也可保存本故事的独立参数。故事始终持有自己的媒体授权、声线与参考图库。配音支持 Speech HTTP、OpenAI Realtime、Gemini TTS 和豆包语音，生图支持 OpenAI Images、Gemini 和 Seedream。配音与生图分别保存普通 API、OpenAI 官方配置和生效渠道。工具只接收角色、台词和演绎要求，或提示词、可选图幅和参考图。运行时在当前故事内按剧情模型和配音模型的提供商及模型名查找角色表，新角色首次提交时绑定默认音色。计划保存当时的协议及原生生成参数，工作队列只向已选地址发起请求。Gemini 和 Seedream 将所选原图内联发送，模型业务输入与凭据的范围见[模型数据边界](model-data-boundary.md)。
+媒体业务位于 `src/tavern/media/`，由 `MediaDraft` 接受 `generate_speech`、`generate_image` 和 `view_image`。前两个工具只修改本轮计划。`submit_story` 独立交付正文。媒体连接复用提供商凭据。新故事从全局设置读取配音、生图协议、模型与额度，也可保存本故事的独立参数。故事始终持有自己的媒体授权、声线与参考图库。配音支持 Speech HTTP、OpenAI Realtime、Gemini TTS 和豆包语音，生图支持 OpenAI Images、Chat Completions、Gemini 和 Seedream。配音与生图分别保存普通 API、OpenAI 官方配置和生效渠道。工具只接收角色、台词和演绎要求，或提示词、可选图幅和参考图。运行时在当前故事内按剧情模型和配音模型的提供商及模型名查找角色表，新角色首次提交时绑定默认音色。计划保存当时的协议及原生生成参数，工作队列只向已选地址发起请求。Chat Completions、Gemini 和 Seedream 将所选原图内联发送，模型业务输入与凭据的范围见[模型数据边界](model-data-boundary.md)。
 
 `story_progress` 在待提交配音计划中冻结剧情模型、配音连接及音色，并保存尚未送出的看图引用。version 13 支持续接 version 8–11 中已收到、尚未执行的配音调用。其首次选择的音色随计划保存，已有角色绑定仍受保护。每个工具结果落盘后保留该批次的旧协议标记，直至补齐全部结果。后续模型调用使用当前工具协议。
 

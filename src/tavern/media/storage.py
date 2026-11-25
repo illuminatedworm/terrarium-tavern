@@ -97,7 +97,13 @@ def editable(db, sid, revision):
         raise Conflict("会话已改变，请刷新后重试")
 
 
-LOCAL_HTTP_ADAPTERS = ("gemini_tts", "gemini_image", "openai_speech", "openai_images")
+LOCAL_HTTP_ADAPTERS = (
+    "gemini_tts",
+    "gemini_image",
+    "openai_speech",
+    "openai_images",
+    "chat_completions_image",
+)
 
 
 def check_media_key(provider, adapter):

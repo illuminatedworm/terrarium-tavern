@@ -171,6 +171,11 @@ class OpenAIImageProfile(MediaConnection):
     output_format: Literal["auto", "png", "jpeg", "webp"] = "png"
 
 
+class ChatImageProfile(MediaConnection):
+    adapter: Literal["chat_completions_image"] = "chat_completions_image"
+    model: str = "google/gemini-3.1-flash-image"
+
+
 class GeminiImageProfile(MediaConnection):
     adapter: Literal["gemini_image"] = "gemini_image"
     api_path: str = "v1beta"
@@ -209,6 +214,9 @@ class SeedSpeechSettings(SeedSpeechProfile, MediaSwitch): ...
 class ImageSettings(OpenAIImageProfile, MediaSwitch): ...
 
 
+class ChatImageSettings(ChatImageProfile, MediaSwitch): ...
+
+
 class GeminiImageSettings(GeminiImageProfile, MediaSwitch): ...
 
 
@@ -220,14 +228,15 @@ SpeechProfile = Annotated[
     Field(discriminator="adapter"),
 ]
 ImageProfile = Annotated[
-    OpenAIImageProfile | GeminiImageProfile | SeedreamProfile, Field(discriminator="adapter")
+    OpenAIImageProfile | ChatImageProfile | GeminiImageProfile | SeedreamProfile,
+    Field(discriminator="adapter"),
 ]
 SpeechOptions = Annotated[
     HTTPSpeechSettings | SpeechSettings | GeminiSpeechSettings | SeedSpeechSettings,
     Field(discriminator="adapter"),
 ]
 ImageOptions = Annotated[
-    ImageSettings | GeminiImageSettings | SeedreamSettings, Field(discriminator="adapter")
+    ImageSettings | ChatImageSettings | GeminiImageSettings | SeedreamSettings, Field(discriminator="adapter")
 ]
 _OPTION_TYPES = {"speech": TypeAdapter(SpeechProfile), "image": TypeAdapter(ImageProfile)}
 
@@ -279,6 +288,8 @@ def validate_frozen_voice(request: dict) -> None:
 
 def image_sizes(image: ImageProfile) -> dict[str, str]:
     """Map offered tool choices to the native size frozen in the paid request."""
+    if isinstance(image, ChatImageProfile):
+        return {"auto": "auto"}
     if isinstance(image, GeminiImageProfile):
         if image.aspect_ratio != "auto":
             return {"auto": image.aspect_ratio}
@@ -303,7 +314,7 @@ def image_reference_limit(image: ImageProfile, *, frozen: bool = False) -> int:
         ):
             return 14
         return 14 if image.model in SEEDREAM_14_REFERENCE_MODELS else 10
-    return 14 if isinstance(image, GeminiImageProfile) else 16
+    return 14 if isinstance(image, (GeminiImageProfile, ChatImageProfile)) else 16
 
 
 def regenerate_image_size(original: dict, image: ImageProfile) -> str:
