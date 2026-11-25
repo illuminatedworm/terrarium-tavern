@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import os
+import webbrowser
 from pathlib import Path
 
 
@@ -12,6 +13,7 @@ def main():
     parser.add_argument("--port", type=int, default=51273)
     parser.add_argument("--data", default="data")
     parser.add_argument("--desktop", action="store_true", help="打开支持隔离卡片脚本的桌面窗口")
+    parser.add_argument("--open-browser", action="store_true", help="普通模式下，服务就绪后用默认浏览器打开首页")
     parser.add_argument("--dev", action="store_true", help="启动受控开发窗口、Vite 5173 与后端 51273")
     parser.add_argument("--backup", help="创建完整备份 ZIP 后退出")
     parser.add_argument("--restore", help="从备份 ZIP 恢复到 --data 指定的新空目录")
@@ -51,8 +53,15 @@ def main():
 
         async def startup(self, sockets=None):
             await super().startup(sockets)
-            if self.started:
+            if not self.started:
+                return
+            if args.desktop or args.dev:
                 ready.set()
+            elif args.open_browser:
+                port = self.servers[0].sockets[0].getsockname()[1]
+                url = f"http://127.0.0.1:{port}/"
+                if not await asyncio.to_thread(webbrowser.open, url):
+                    print(f"无法自动打开浏览器，请手动访问 {url}", flush=True)
 
     server = WindowServer(uvicorn.Config(app, host="127.0.0.1", port=args.port, timeout_graceful_shutdown=5))
 

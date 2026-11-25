@@ -4,8 +4,8 @@
 
 1. 安装 Microsoft Edge 或 Google Chrome 稳定版（仅有 WebView2 Runtime 不够）。
 2. 解压到一个可写的新目录。
-3. Windows x64 双击 `点击开始.cmd`；Linux x64 在该目录运行 `./start.sh`。
-4. 访问 <http://127.0.0.1:51273>。退出时运行 `stop.ps1` 或 `./stop.sh`。
+3. Windows x64 双击 `点击开始.cmd`，服务就绪后会在默认浏览器中打开酒馆首页。Linux x64 在该目录运行 `./start.sh`，再访问 <http://127.0.0.1:51273>。
+4. 退出时运行 `stop.ps1` 或 `./stop.sh`。
 
 - 端口和数据目录分别用 `-Port` / `--port`、`-Data` / `--data` 指定。数据默认存放在 `data/`；程序、运行时与个人数据相互独立。
 - 默认使用普通浏览器模式。受控窗口是可选项：Windows 用 `start.ps1 -Desktop`，Linux 用 `./start.sh --desktop`。

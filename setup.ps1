@@ -35,4 +35,4 @@ npm.cmd @tavernNpmArgs
 if ($LASTEXITCODE) { throw '前端依赖安装失败' }
 npm.cmd run build
 if ($LASTEXITCODE) { throw '前端构建失败' }
-Write-Host '安装完成。运行 .\点击开始.cmd，然后访问 http://127.0.0.1:51273'
+Write-Host '安装完成。运行 .\点击开始.cmd，服务就绪后会在默认浏览器中打开酒馆。'

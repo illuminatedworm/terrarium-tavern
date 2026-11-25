@@ -30,7 +30,7 @@ Linux 安装沿用环境代理，也可通过 `--proxy '<完整的 HTTP(S) 代�
 - 已有系统 Node.js 22+ 时可加 `-SkipNodeDownload` 或 `--skip-node-download`；启动、构建和开发脚本优先使用已准备的内置 Node。
 - 已有 `.venv` 对 `.cache/python` 的引用不会自动搬迁；重建环境的方法见[桌面开发](../development/desktop.md)。
 
-启动后访问 [http://127.0.0.1:51273](http://127.0.0.1:51273)。
+Windows 双击 `点击开始.cmd` 后，服务就绪时会在系统默认浏览器中打开首页。使用 `.\点击开始.cmd -Port 8001` 时，页面也会使用指定端口。直接运行 `.\start.ps1` 或 `./start.sh` 时，可手动访问 [http://127.0.0.1:51273](http://127.0.0.1:51273)。
 
 **便携包**已附带 Python、锁定依赖（含 Playwright 自带的 Node 驱动）和界面，使用系统的 Edge/Chrome 稳定版。准备好浏览器后，解压并运行 `点击开始.cmd` / `start.ps1` 或 `./start.sh` 即可，无需运行源码安装脚本。Windows 包使用 embeddable Python，Linux 包要求 glibc x64。构建、系统要求和验证见[便携包说明](../development/desktop.md#便携包)。
 

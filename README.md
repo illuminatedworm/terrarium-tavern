@@ -124,7 +124,9 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 .\点击开始.cmd
 ```
 
-以上命令使用直连下载。需要代理时，将 `-Proxy ''` 改为 `-Proxy '<完整的 HTTP(S) 代理地址>'`；省略 `-Proxy` 时沿用调用环境中的代理。
+双击 `点击开始.cmd` 或运行上述启动命令，服务就绪后会在默认浏览器中打开酒馆首页。
+
+以上安装命令使用直连下载。需要代理时，将 `-Proxy ''` 改为 `-Proxy '<完整的 HTTP(S) 代理地址>'`；省略 `-Proxy` 时沿用调用环境中的代理。
 
 </details>
 

@@ -1,4 +1,4 @@
-﻿param([int]$Port = 51273, [string]$Data = 'data', [switch]$Desktop)
+﻿param([int]$Port = 51273, [string]$Data = 'data', [switch]$Desktop, [switch]$OpenBrowser)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 . (Join-Path $PSScriptRoot 'tools/desktop-env.ps1')
@@ -13,7 +13,7 @@ try {
     $tavernClient.Dispose()
 }
 # Keep the result as an array: splatting a scalar string passes one argument per character.
-$tavernOptions = @(if ($Desktop) { '--desktop' })
+$tavernOptions = @(if ($Desktop) { '--desktop' } elseif ($OpenBrowser) { '--open-browser' })
 Write-Host "Python: $tavernPython"
 & $tavernPython -m tavern --port $Port --data $Data @tavernOptions
 if ($LASTEXITCODE) { throw "启动失败（退出码 $LASTEXITCODE）" }
