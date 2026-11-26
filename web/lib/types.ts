@@ -38,6 +38,15 @@ export interface CardRecord {
   _workspaceId?: string;
 }
 
+export interface CardSummary {
+  id: string;
+  name: string;
+  revision: number;
+  description: string | null;
+  variables: string | null;
+  portrait: string | null;
+}
+
 /** `GET /worldbooks` rows; `entries` is the entry count. */
 export interface WorldbookSummary {
   id: string;
@@ -67,7 +76,7 @@ export interface CardDefaults {
   version: number;
 }
 
-/** `Store.sessions()` rows: raw columns plus the card name. */
+/** Sidebar projection. Portraits always belong to the frozen session card. */
 export interface SessionSummary {
   id: string;
   title: string;
@@ -76,7 +85,7 @@ export interface SessionSummary {
   created: number;
   channel_origin: Channel | null;
   kemini: number;
-  card_data: string | null;
+  portrait: string | null;
   revision: number;
 }
 
@@ -137,6 +146,7 @@ export interface TurnRecord {
 
 /** `Store.session()`: one opened story with its current branch. */
 export interface Session {
+  work_count: number;
   media_config: import('./media').MediaConfig;
   media_source: import('./media').MediaSource;
   media_story_model: import('./media').ModelKey;
@@ -201,16 +211,19 @@ export type BranchMessage = Pick<StoryMessageRecord, 'id' | 'parent' | 'role' | 
 export type PendingInput = Pick<StoryMessageRecord, 'raw'> &
   Partial<Pick<StoryMessageRecord, 'id' | 'display' | 'ooc'>>;
 
-/** Complete next-request sources and the latest provider observation. */
-export type StoryContextPreview = JsonObject & {
-  trace: JsonObject[];
+export interface StoryContextStats {
   context_usage?: import('./contextUsage').ContextUsage;
-  /** Only when the explicit context panel requests it; a reference, never a mechanism input. */
-  local_estimate?: import('./localEstimate').LocalEstimate;
-  compaction_opaque?: boolean;
   /** The planned cache breakpoint of this request. */
   cache?: { scope: string; revision: number; message_id: string | null };
-  usage: JsonObject | null;
   cache_usage: ConversationCacheUsage | null;
   cache_usage_expires_at: number | null;
-};
+}
+
+/** Complete next-request sources and the latest provider observation. */
+export type StoryContextPreview = JsonObject &
+  StoryContextStats & {
+    trace: JsonObject[];
+    usage: JsonObject | null;
+    local_estimate?: import('./localEstimate').LocalEstimate;
+    compaction_opaque?: boolean;
+  };

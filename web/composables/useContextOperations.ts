@@ -27,7 +27,7 @@ export function useContextOperations(session: () => any, updated: (value: any) =
       if (needsSession) awaitingSession.value = true;
       operation.value = result;
       if (needsSession) {
-        const value = await api(`/sessions/${sid}`);
+        const value = await api(`/sessions/${sid}?reader=true`);
         if (generation === ticket && read === observation && session()?.id === sid) {
           if (value.revision >= session().revision) updated(value);
           awaitingSession.value = false;
@@ -73,7 +73,7 @@ export function useContextOperations(session: () => any, updated: (value: any) =
       clearTimeout(timer);
       if (result.status === 'completed') {
         awaitingSession.value = true;
-        const value = await api(`/sessions/${sid}`);
+        const value = await api(`/sessions/${sid}?reader=true`);
         if (ticket === generation && session()?.id === sid) {
           if (value.revision >= session().revision) updated(value);
           awaitingSession.value = false;

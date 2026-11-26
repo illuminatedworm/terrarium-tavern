@@ -88,11 +88,13 @@ import type {
   CardConversationSummary,
   JsonObject,
   CardRecord,
+  CardSummary,
   OrphanDraft,
   PendingInput,
   Session,
   SessionSummary,
   StoryContextPreview,
+  StoryContextStats,
   StoryMessageRecord,
   TurnRecord,
   TurnRequest,
@@ -147,10 +149,10 @@ const worldbooks = ref<WorldbookSummary[]>([]),
 const cardConversations = ref<CardConversationSummary[]>([]);
 const editorConversationId = ref('');
 const deletingCardConversationId = ref('');
-const cards = ref<CardRecord[]>([]),
+const cards = ref<CardSummary[]>([]),
   sessions = ref<SessionSummary[]>([]),
   session = ref<Session | null>(null);
-const sessionCard = ref<CardRecord | null>(null);
+const sessionCard = computed(() => session.value?.card_data ?? null);
 const sessionPortraits = computed(() =>
   Object.fromEntries(sessions.value.map((s) => [s.id, sessionPortraitUrl(s)])),
 );
@@ -197,7 +199,7 @@ async function classifyChannel(channel: Channel) {
       'PUT',
     );
     applyFullSession(updated);
-    sessions.value = await api('/sessions');
+    sessions.value = await api('/sessions?summary=true');
   } catch (e: any) {
     notify(e.message);
   }
@@ -296,7 +298,7 @@ const startupModels = ref<StartupModels | null>(null);
 const modelWarmup = useModelWarmup(() => panel.value === 'warmup');
 const japaneseDictionary = useJapaneseDictionary();
 provide(japaneseDictionaryKey, japaneseDictionary);
-const contextStats = ref<StoryContextPreview | null>(null);
+const contextStats = ref<StoryContextStats | null>(null);
 const cacheUsage = ref<ConversationCacheUsage | null>(null);
 const cacheUsageExpiresAt = ref<number | null>(null);
 let cacheUsageTimer: ReturnType<typeof setTimeout> | undefined;
@@ -313,13 +315,13 @@ function scheduleCacheUsageExpiry() {
   else cacheUsageTimer = setTimeout(scheduleCacheUsageExpiry, remaining);
 }
 
-function setCacheUsage(stats: StoryContextPreview | null) {
+function setCacheUsage(stats: StoryContextStats | null) {
   cacheUsage.value = stats?.cache_usage ?? null;
   cacheUsageExpiresAt.value = stats?.cache_usage_expires_at ?? null;
   scheduleCacheUsageExpiry();
 }
 
-function applyPreviewCacheUsage(stats: StoryContextPreview, startedWhileBusy: boolean) {
+function applyPreviewCacheUsage(stats: StoryContextStats, startedWhileBusy: boolean) {
   const working = busy.value || contextBusy.value;
   // A reopened running story can load the server's frozen total. Ignore previews
   // crossing a local task boundary or already showing the terminal statistics.
@@ -369,7 +371,6 @@ function abandonStoryLoad() {
   viewScope.enter();
   storyLoad.value = null;
   session.value = null;
-  sessionCard.value = null;
   activeTurn.value = null;
   busy.value = false;
 }
@@ -433,7 +434,7 @@ async function saveUpdateVariables() {
   variablePreferenceSaving.value = true;
   try {
     const updated = await viewApi(
-      `/sessions/${sid}/options`,
+      `/sessions/${sid}/options?changes_only=true`,
       { expected_revision: openStory().revision, update_variables: updateVariables.value },
       'PUT',
     );
@@ -635,7 +636,7 @@ function showOptionsNotice(message: string) {
   optionsNotice.value = message;
   optionsNoticeTimer = setTimeout(clearOptionsNotice, 2000);
 }
-const deletingCard = ref<CardRecord | null>(null),
+const deletingCard = ref<CardSummary | null>(null),
   deletingCardBusy = ref(false);
 const forkMessage = ref<BranchMessage | null>(null),
   creatingFork = ref(false);
@@ -870,17 +871,19 @@ async function setSessionScriptPermission(enabled: boolean) {
   scriptPermissionBusy.value = true;
   try {
     const result = await viewApi(
-      `/sessions/${sid}/script-permission`,
+      `/sessions/${sid}/script-permission?changes_only=true`,
       { enabled, expected_revision: openStory().revision },
       'PUT',
     );
     if (!viewScope.owns(token)) return;
-    sessionCard.value = result.card;
-    openStory().revision = result.session.revision;
+    const story = openStory();
+    if (story.card_data) story.card_data.permission = result.permission;
+    story.revision = result.revision;
     // Reload resolved display assets without reinitializing variables.
     if (enabled) {
       const updated = await viewApi(`/sessions/${sid}?reader=true`);
       if (!viewScope.owns(token)) return;
+      openStory().card_data = updated.card_data;
       openStory().messages = updated.messages;
       openStory().snapshot = updated.snapshot;
       openStory().revision = updated.revision;
@@ -1054,8 +1057,8 @@ async function load() {
     cardConversations.value,
     worldbooks.value,
   ] = await Promise.all([
-    api('/cards'),
-    api('/sessions'),
+    api('/cards?summary=true'),
+    api('/sessions?summary=true'),
     api('/settings'),
     api('/card-edits'),
     api('/card-author/conversations'),
@@ -1077,24 +1080,18 @@ async function refreshContextStats() {
     token = viewScope.current();
   const running = busy.value || contextBusy.value;
   try {
-    const [stats, records] = await Promise.allSettled([
-      api(`/sessions/${sid}/preview`, {
-        text: input.value,
-        ooc: ooc.value,
-        update_variables: updateVariables.value,
-        allow_content_edit: allowEdit.value,
-      }),
-      api(`/sessions/${sid}/work-records?limit=1`),
-    ]);
+    const stats: StoryContextStats = await api(`/sessions/${sid}/preview?stats_only=true`, {
+      text: input.value,
+      ooc: ooc.value,
+      update_variables: updateVariables.value,
+      allow_content_edit: allowEdit.value,
+    });
     if (!viewScope.owns(token) || request !== contextStatsRequest) return;
-    if (stats.status === 'fulfilled') {
-      contextStats.value = stats.value;
-      applyPreviewCacheUsage(stats.value, running);
-      contextEstimateError.value = '';
-    } else contextEstimateError.value = String(stats.reason?.message || stats.reason);
-    if (records.status === 'fulfilled') workCount.value = records.value.total;
-  } catch {
-    /* Explicit preview presents errors; a stats refresh must not break reading. */
+    contextStats.value = stats;
+    applyPreviewCacheUsage(stats, running);
+    contextEstimateError.value = '';
+  } catch (cause) {
+    if (viewScope.owns(token) && request === contextStatsRequest) contextEstimateError.value = String(cause);
   }
 }
 async function openSession(id: string, creating = false, createdSession?: Session) {
@@ -1110,7 +1107,6 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
   busy.value = true;
   error.value = '';
   session.value = null;
-  sessionCard.value = null;
   activeTurn.value = null;
   contextStats.value = null;
   setCacheUsage(null);
@@ -1129,10 +1125,7 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
   quickEffort.value = localStorage.getItem(`tavern-effort-${id}`) || 'inherit';
   if (window.innerWidth < 760) layout.value.leftCollapsed = true;
   try {
-    const [opened, card]: [Session, CardRecord] = await Promise.all([
-      createdSession || api(`/sessions/${id}?reader=true`),
-      api(`/sessions/${id}/card`),
-    ]);
+    const opened: Session = createdSession || (await api(`/sessions/${id}?reader=true`));
     if (!viewScope.owns(token)) return;
     const active = opened.turns.find((turn) =>
       ['running', 'queued', 'awaiting_review'].includes(turn.status),
@@ -1153,7 +1146,7 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
       }
     }
     session.value = opened;
-    sessionCard.value = card;
+    workCount.value = opened.work_count;
     activeTurn.value = restored;
     pendingInput.value = restored?.input_ready?.message ?? null;
     pendingLore.value = restored?.input_ready?.lore_admissions ?? [];
@@ -1175,7 +1168,6 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
   } catch (e: any) {
     if (!viewScope.owns(token)) return;
     session.value = null;
-    sessionCard.value = null;
     activeTurn.value = null;
     busy.value = false;
     if (storyLoad.value) storyLoad.value.error = e.message || String(e);
@@ -1223,7 +1215,6 @@ async function deleteCard() {
     await guarded(async () => {
       const id = deletingCard.value!.id;
       await api(`/cards/${id}`, {}, 'DELETE');
-      if (session.value?.card === id) sessionCard.value = await api(`/sessions/${openStory().id}/card`);
       if (selected.value?.id === id) {
         selected.value = null;
         if (pageMode.value === 'card') pageMode.value = '';
@@ -1274,7 +1265,7 @@ async function renameFromList(item: SessionSummary, title: string) {
 }
 async function renameSession(item: SessionSummary | Session, title: string) {
   const updated = await api(
-    `/sessions/${item.id}/title`,
+    `/sessions/${item.id}/title?changes_only=true`,
     {
       title,
       expected_revision: session.value?.id === item.id ? openStory().revision : item.revision,
@@ -1537,7 +1528,7 @@ async function deleteCardConversation(item: CardConversationSummary) {
     deletingCardConversationId.value = '';
   }
 }
-async function copyLibraryCard(card: CardRecord) {
+async function copyLibraryCard(card: CardSummary) {
   await guarded(async () => {
     const copied = await api(`/cards/${card.id}/copy`, {});
     await load();
@@ -1580,6 +1571,16 @@ function sessionLoreSaved(value: any) {
 watch(pageMode, (value) => {
   if (value) abandonStoryLoad();
 });
+async function openShelfCard(card: CardSummary) {
+  abandonStoryLoad();
+  const token = viewScope.enter();
+  selected.value = null;
+  pageMode.value = 'card';
+  await guarded(async () => {
+    const detail: CardRecord = await viewApi(`/cards/${card.id}`);
+    if (viewScope.owns(token) && pageMode.value === 'card') showCard(detail);
+  });
+}
 function showCard(card: CardRecord) {
   // Explicit navigation starts a fresh view, even after Save As retained an
   // earlier editor instance. The draft itself is restored by workspace ID.
@@ -1676,7 +1677,7 @@ async function cardStarted(s: any) {
   const token = viewScope.current();
   if (storyLoad.value) storyLoad.value.name = s.title || s.name || '';
   try {
-    const list = await api('/sessions');
+    const list = await api('/sessions?summary=true');
     if (viewScope.owns(token)) sessions.value = list;
   } catch (e: any) {
     if (viewScope.owns(token)) error.value = e.message;
@@ -1849,8 +1850,15 @@ function observe(id: string) {
           chat.value?.scrollTo({ top, behavior: 'instant' });
           followLatest.value = false;
         }
-        await load();
         if (!ownsTurn()) return;
+        workCount.value = updated.work_count;
+        const summary = sessions.value.find((item) => item.id === sid);
+        if (summary)
+          Object.assign(summary, {
+            revision: updated.revision,
+            title: updated.title,
+            persona: updated.persona,
+          });
         // Install the committed session/revision before treating the composer
         // as the next turn. Failed continuations never consume its input.
         if (turnContinuation.finish(turn, token)) await send();
@@ -2198,11 +2206,14 @@ async function saveCacheRetention(value: string) {
 }
 async function saveOptions(draft: SessionOptionsDraft) {
   await guarded(async () => {
-    session.value = await viewApi(
-      `/sessions/${openStory().id}/options`,
+    const saved = await viewApi(
+      `/sessions/${openStory().id}/options?changes_only=true`,
       { ...draft, turn_preference: draft.turn_preference || '', expected_revision: openStory().revision },
       'PUT',
     );
+    Object.assign(openStory(), saved);
+    const summary = sessions.value.find((item) => item.id === openStory().id);
+    if (summary) Object.assign(summary, { revision: saved.revision, persona: saved.persona });
     showOptionsNotice('已保存');
   });
 }
@@ -2400,7 +2411,7 @@ useTimedError(error);
           :active-id="pageMode === 'card' ? selected?.id : undefined"
           @create="createCard"
           @import="importCard"
-          @show="showCard"
+          @show="openShelfCard"
           @copy="copyLibraryCard"
           @delete="
             (card) => {
@@ -2497,7 +2508,9 @@ useTimedError(error);
         @open-agent="openCardAgent"
         @workspace-selected="selectWorkspace"
         @back="pageMode = ''"
-      /><CharacterEditor
+      />
+      <p v-else-if="pageMode === 'card' && !error" role="status">正在读取角色卡…</p>
+      <CharacterEditor
         v-else-if="pageMode === 'session-lore' && selected && session"
         :key="`lore-${session.id}`"
         :card="selected"
@@ -2517,7 +2530,12 @@ useTimedError(error);
         :cards="cards"
         :settings="settings"
         @started="cardStarted"
-        @card-changed="(card) => (cards = cards.map((item) => (item.id === card.id ? card : item)))"
+        @card-changed="
+          (card) => {
+            const item = cards.find((item) => item.id === card.id);
+            if (item) item.revision = card.revision;
+          }
+        "
         @settings="
           (channel) => {
             settingsChannel = channel;
@@ -3190,7 +3208,7 @@ useTimedError(error);
             panel = 'settings';
           "
           :story-title="session.title"
-          @preference-saved="api('/sessions/' + session.id).then(applyFullSession)"
+          @preference-saved="api('/sessions/' + session.id + '?reader=true').then(applyFullSession)"
           @started="session.opening_editable = false"
           @use-input="useAdvisorInput"
           @title="applyAdvisorTitle"
@@ -3256,7 +3274,11 @@ useTimedError(error);
               settingsInitialPage = 'shared.web';
               panel = 'settings';
             "
-            @stopped="guarded(async () => applyFullSession(await viewApi('/sessions/' + openStory().id)))"
+            @stopped="
+              guarded(async () =>
+                applyFullSession(await viewApi('/sessions/' + openStory().id + '?reader=true')),
+              )
+            "
           />
           <StoryTools
             v-if="inspectorTab === 'tools'"

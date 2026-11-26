@@ -1,6 +1,5 @@
 import asyncio
 import json
-import mimetypes
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -35,6 +34,7 @@ from tavern.core.models import (
     TurnRequest,
 )
 from tavern.core.ooc import with_ooc
+from tavern.storage import library
 from tavern.storage.store import Conflict, Store, dump
 
 # Application version; bump together with the locations listed in .agents/VERSIONING.md.
@@ -486,8 +486,8 @@ def create_app(data_dir=None):
             await provider.close()
 
     @app.get("/api/cards")
-    async def cards():
-        return store.cards()
+    def cards(summary: bool = False):
+        return library.card_summaries(store) if summary else store.cards()
 
     @app.post("/api/cards", status_code=201)
     async def create_card():
@@ -555,40 +555,26 @@ def create_app(data_dir=None):
             },
         )
 
-    def portrait_response(card):
-        def image_response(digest, mime):
-            path = store.root / "blobs" / digest
-            if not path.is_file():
-                raise HTTPException(404, "头像文件不存在")
-            return FileResponse(path, media_type=mime)
-
-        if card["container"] == "png":
-            return image_response(card["original"], "image/png")
-        assets = normalize(card["document"]).get("assets", [])
-        if not isinstance(assets, list):
-            assets = []
-        for asset in assets:
-            if not isinstance(asset, dict) or not isinstance(asset.get("uri"), str):
-                continue
-            path = asset["uri"].removeprefix("embeded://")
-            if asset.get("type") == "icon" and path in card["resources"]:
-                mime = mimetypes.guess_type(path)[0]
-                if mime not in ("image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"):
-                    continue
-                return image_response(card["resources"][path], mime)
-        raise HTTPException(404, "没有头像")
+    def portrait_response(owner, *, session=False):
+        digest, mime = library.portrait(store, owner, session=session)
+        if not digest:
+            raise HTTPException(404, "没有头像")
+        path = store.root / "blobs" / digest
+        if not path.is_file():
+            raise HTTPException(404, "头像文件不存在")
+        return FileResponse(path, media_type=mime)
 
     @app.get("/api/cards/{cid}/portrait")
-    async def portrait(cid: str):
-        return portrait_response(store.card(cid))
+    def portrait(cid: str):
+        return portrait_response(cid)
 
     @app.get("/api/sessions/{sid}/portrait")
-    async def session_portrait(sid: str):
-        return portrait_response(store.session_card(sid))
+    def session_portrait(sid: str):
+        return portrait_response(sid, session=True)
 
     @app.get("/api/sessions")
-    async def sessions():
-        return store.sessions()
+    def sessions(summary: bool = False):
+        return library.session_summaries(store) if summary else store.sessions()
 
     @app.get("/api/personas")
     async def personas():
@@ -631,7 +617,7 @@ def create_app(data_dir=None):
 
     @app.get("/api/sessions/{sid}")
     async def session(sid: str, reader: bool = False):
-        result = await run_in_threadpool(store.session, sid)
+        result = await run_in_threadpool(store.session, sid, view="reader" if reader else "full")
         card = result["card_data"]
         if card["permission"] and any("<" in message.get("display", "") for message in result["messages"]):
             await service.dependencies.resolve(card)
@@ -649,16 +635,17 @@ def create_app(data_dir=None):
                     message["display"], message["story_segments"]["display"] = join_segments(
                         [service.dependencies.markup(source, part) for part in parts]
                     )
+                    if reader:
+                        message["snapshot"] = reader_snapshot(message["snapshot"])
         service.prepare_indexes(sid)
-        if reader:
-            for message in result["messages"]:
-                message["snapshot"] = reader_snapshot(message["snapshot"])
         # The store already provides JSON data. Avoid a second recursive conversion.
         return await run_in_threadpool(JSONResponse, result)
 
     @app.put("/api/sessions/{sid}/title")
-    async def session_title(sid: str, payload: SessionTitle):
-        return store.update_session(sid, payload.expected_revision, title=payload.title)
+    def session_title(sid: str, payload: SessionTitle, changes_only: bool = False):
+        return store.update_session(
+            sid, payload.expected_revision, title=payload.title, changes_only=changes_only
+        )
 
     @app.put("/api/sessions/{sid}/cache-breakpoint")
     async def session_cache_breakpoint(sid: str, payload: SessionCacheBreakpoint):
@@ -685,8 +672,10 @@ def create_app(data_dir=None):
         return store.session_card(sid)
 
     @app.put("/api/sessions/{sid}/script-permission")
-    async def session_script_permission(sid: str, change: SessionScriptPermission):
-        return store.set_session_script_permission(sid, change.expected_revision, change.enabled)
+    def session_script_permission(sid: str, change: SessionScriptPermission, changes_only: bool = False):
+        return store.set_session_script_permission(
+            sid, change.expected_revision, change.enabled, changes_only=changes_only
+        )
 
     @app.post("/api/sessions/{sid}/fork", status_code=201)
     async def fork_session(sid: str, payload: SessionFork):
@@ -879,22 +868,23 @@ def create_app(data_dir=None):
         return result
 
     @app.put("/api/sessions/{sid}/options")
-    async def session_options(sid: str, options: SessionOptions):
+    def session_options(sid: str, options: SessionOptions, changes_only: bool = False):
         fields = options.model_dump(exclude_unset=True, exclude={"expected_revision", "persona_data"})
         if "persona_data" in options.model_fields_set:
             fields["persona_data"] = dump(options.persona_data)
         return store.update_session(
             sid,
             options.expected_revision,
+            changes_only=changes_only,
             **fields,
         )
 
-    def compile_preview(sid: str, payload: dict):
+    def compile_preview(sid: str, payload: dict, *, stats_only=False):
         # FastAPI runs sync endpoints in its worker pool: token counting and
         # history compilation must not block story reads or turn event streams.
-        s = store.session(sid)
-        c = store.session_card(sid)
-        document = (s["snapshot"].get("content") or {}).get("document", c["document"])
+        settings_document = store.settings_document()
+        s = store.session(sid, settings_document=settings_document, view="preview")
+        document = (s["snapshot"].get("content") or {}).get("document", s["card_data"]["document"])
         text, ooc = payload.get("text", ""), payload.get("ooc", "")
         if not isinstance(text, str):
             raise ValueError("故事输入必须为文本")
@@ -906,7 +896,9 @@ def create_app(data_dir=None):
         from tavern.story.context import compile_window, load_trace
         from tavern.story.tools import tool_definitions
 
-        story_settings = bind_adapter(store.session_settings(s).for_role("story"), store, "story", sid)
+        story_settings = bind_adapter(
+            store.session_settings(s, document=settings_document).for_role("story"), store, "story", sid
+        )
         result = compile_window(
             document,
             s,
@@ -920,24 +912,30 @@ def create_app(data_dir=None):
                 settings=story_settings,
             ),
             trace=load_trace(store, sid, s["messages"]),
+            stats_only=stats_only,
             require_state_patch=payload.get("update_variables") is True,
             allow_content_edit=payload.get("allow_content_edit") is True,
         )
         return result, s, story_settings
 
     @app.post("/api/sessions/{sid}/preview")
-    def preview(sid: str, payload: dict):
+    def preview(sid: str, payload: dict, stats_only: bool = False):
         from tavern.search.japanese_dictionary import dictionary_read_only
 
         with dictionary_read_only():
-            result, s, settings = compile_preview(sid, payload)
-            if payload.get("local_estimate") is True:
+            result, s, settings = compile_preview(sid, payload, stats_only=stats_only)
+            if not stats_only and payload.get("local_estimate") is True:
                 # Only the explicit context panel asks; composer stats refreshes
                 # share this route and skip the tokenizer pass.
                 from tavern.core.local_estimate import attach_local_estimate
 
                 attach_local_estimate(result, settings)
-        result["usage"] = store.latest_usage(sid)
+        if stats_only:
+            result = {
+                key: result[key] for key in ("context_usage", "context_limit", "cache") if key in result
+            }
+        else:
+            result["usage"] = store.latest_usage(sid)
         result["cache_usage"], result["cache_usage_expires_at"] = store.story_cache.read(
             sid, settings, s["snapshot"]
         )

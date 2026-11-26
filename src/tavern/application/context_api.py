@@ -8,7 +8,6 @@ from tavern.application.context_operations import ContextOperationRequest
 def register_context_routes(app, store, context_operations):
     @app.get("/api/sessions/{sid}/context-operation")
     def context_operation(sid: str):
-        store.session(sid)
         return context_operations.latest(sid)
 
     @app.post("/api/sessions/{sid}/context-operations", status_code=202)

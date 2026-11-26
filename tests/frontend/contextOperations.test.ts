@@ -163,7 +163,7 @@ describe('context operation completion', () => {
     expect(request.mock.calls.map((call) => call[0])).toEqual([
       '/sessions/short-story/context-operation',
       '/sessions/short-story/context-operations',
-      '/sessions/short-story',
+      '/sessions/short-story?reader=true',
     ]);
     app.unmount();
   });
@@ -228,7 +228,7 @@ describe('context operation completion', () => {
     expect(session.value.revision).toBe(2);
     expect(request.mock.calls.map((call) => call[0])).toEqual([
       '/sessions/story/context-operation',
-      '/sessions/story',
+      '/sessions/story?reader=true',
     ]);
     app.unmount();
   });

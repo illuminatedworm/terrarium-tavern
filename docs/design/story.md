@@ -305,7 +305,9 @@ handoff 由模型通过结构化工具维护，Runtime 校验并保存。模型�
 
 `story_trace` 独立保存工具交换、运行时更新、正文响应、原生完成状态和基线元数据，与剧情在同一事务中提交，不复制进每轮快照，也不依赖可清理的诊断事件。过程展示按当前可见回复的身份读取，重生成、版本切换和分支只显示各自的记录；普通正文在工作记录中标为“正文输出”。
 
-阅读页使用 `GET /api/sessions/{sid}?reader=true`。顶层 `snapshot` 保留当前剧情的完整快照；各消息的快照只携带变量、作用域、旧版世界书注入目录及对应角色卡名称。服务端仍按各消息自己的角色卡版本处理正文显示资源。省略 `reader` 时返回完整的消息快照。历史工具记录的分支校验与轨迹读取共用一次 SQLite 读事务。
+阅读页使用 `GET /api/sessions/{sid}?reader=true`。SQLite 在同一读事务中读取分支关系、兄弟版本编号及当前分支的展示字段。顶层 `snapshot` 保留当前剧情的完整快照，各消息的快照只携带变量、作用域、旧版世界书注入目录及对应角色卡名称。带脚本权限的 HTML 按各条消息冻结的角色卡解析资源。阅读响应的 `card_data` 提供本会话的冻结卡，`work_count` 是当前会话的工作记录总数。省略 `reader` 时返回完整消息快照。历史工具记录的分支校验与轨迹读取共用一次 SQLite 读事务。
+
+输入框使用 `POST /api/sessions/{sid}/preview?stats_only=true`，返回当前输入对应的接口实测、上下文上限、适用的计划断点与缓存统计。完整预览及导出仍使用详细接口。卡库和会话侧栏使用 `GET /api/cards?summary=true` 与 `GET /api/sessions?summary=true` 获取名称、版本、头像等列表字段，卡库另含角色描述开头。改标题和会话选项可使用 `changes_only=true` 获取已保存的字段和新版本。脚本权限接口采用相同参数时返回生效的权限和新版本。
 
 `story_progress`（version 7）保存未提交草稿、工具进度、稳定的 `output_id`、`story`（正文、辅助展示内容及分段边界 breaks）、`model_completed` 与本轮 `story_format`。正文接收与模型结束分开记录。续接沿用保存的交付格式。version 1–5 使用明文，version 6 按 `unicode_story` 使用全文码点或明文。
 

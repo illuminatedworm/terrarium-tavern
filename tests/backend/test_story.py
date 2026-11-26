@@ -1034,6 +1034,19 @@ async def test_story_api_preview_and_recovery(story):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             preview = await client.post(f"/api/sessions/{session['id']}/preview", json={"text": "继续"})
             assert preview.status_code == 200
+            stats = await client.post(
+                f"/api/sessions/{session['id']}/preview?stats_only=true", json={"text": "继续"}
+            )
+            assert stats.json() == {
+                key: preview.json()[key]
+                for key in (
+                    "context_limit",
+                    "context_usage",
+                    "cache",
+                    "cache_usage",
+                    "cache_usage_expires_at",
+                )
+            }
             requested = await client.post(
                 f"/api/sessions/{session['id']}/preview",
                 json={"text": "继续", "update_variables": True, "local_estimate": True},

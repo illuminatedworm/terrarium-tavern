@@ -3,16 +3,16 @@ import { ref } from 'vue';
 import Icon from '../common/Icon.vue';
 import CharacterPortrait from './CharacterPortrait.vue';
 import { cardPortraitUrl } from '../../lib/portraits';
-import type { CardRecord, OrphanDraft } from '../../lib/types';
+import type { CardSummary, OrphanDraft } from '../../lib/types';
 
 /** Left sidebar list of library cards and drafts whose card was deleted. */
-defineProps<{ cards: CardRecord[]; orphanDrafts: OrphanDraft[]; activeId?: string }>();
+defineProps<{ cards: CardSummary[]; orphanDrafts: OrphanDraft[]; activeId?: string }>();
 const emit = defineEmits<{
   create: [];
   import: [file: File];
-  show: [card: CardRecord];
-  copy: [card: CardRecord];
-  delete: [card: CardRecord];
+  show: [card: CardSummary];
+  copy: [card: CardSummary];
+  delete: [card: CardSummary];
   'open-draft': [id: string];
 }>();
 const fileInput = ref<HTMLInputElement>();
@@ -49,8 +49,7 @@ function chosen(event: Event) {
       <button class="card-side-item" :class="{ active: activeId === card.id }" @click="emit('show', card)">
         <CharacterPortrait :src="cardPortraitUrl(card)" :name="card.name" />
         <span
-          >{{ card.name
-          }}<small>{{ card.report.variables === 'mvu_detected' ? 'MVU' : '普通角色卡' }}</small></span
+          >{{ card.name }}<small>{{ card.variables === 'mvu_detected' ? 'MVU' : '普通角色卡' }}</small></span
         >
       </button>
       <div class="card-row-actions" role="group" :aria-label="`${card.name} 操作`">

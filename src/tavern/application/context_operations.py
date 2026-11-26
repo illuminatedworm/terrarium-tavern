@@ -62,10 +62,25 @@ class ContextOperations:
     def latest(self, sid):
         with self.store.connection() as db:
             row = db.execute(
-                "SELECT id FROM context_operations WHERE session=? ORDER BY created DESC,rowid DESC LIMIT 1",
+                """SELECT o.id,o.session,o.operation,o.kind,o.status,o.expected_revision,o.error,o.created,
+                    json_extract(o.payload,'$.progress') AS progress,json_extract(o.payload,'$.usage') AS usage,
+                    json_extract(o.payload,'$.compacted') AS compacted,json_extract(o.payload,'$.converted') AS converted
+                FROM sessions s LEFT JOIN context_operations o ON o.id=(
+                    SELECT id FROM context_operations WHERE session=s.id ORDER BY created DESC,rowid DESC LIMIT 1)
+                WHERE s.id=?""",
                 (sid,),
             ).fetchone()
-        return self.get(row[0]) if row else None
+        if row is None:
+            raise NotFound("会话不存在")
+        if row["id"] is None:
+            return None
+        return {
+            **dict(row),
+            "progress": json.loads(row["progress"] or "{}"),
+            "usage": json.loads(row["usage"] or "[]"),
+            "compacted": bool(row["compacted"]),
+            "converted": bool(row["converted"]),
+        }
 
     def _settings(self, sid):
         return bind_adapter(self.store.session_settings(sid).for_role("story"), self.store, "story", sid)

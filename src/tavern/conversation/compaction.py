@@ -88,7 +88,9 @@ def _without_legacy_tail(items, messages):
     return items[:-length] if length else items
 
 
-def project_compact(result, state, settings, tools, fixed_count, *, keep_visible: int | None = None):
+def project_compact(
+    result, state, settings, tools, fixed_count, *, keep_visible: int | None = None, stats_only=False
+):
     complete = [canonical(portable(message)) for message in result["messages"]]
     header, body = complete[:fixed_count], complete[fixed_count:]
     signature_parts = {"header": header, "tools": tools}
@@ -138,6 +140,9 @@ def project_compact(result, state, settings, tools, fixed_count, *, keep_visible
         result["trace"] = rows[:fixed_count] + middle_rows + rows[tail_start:]
         for index, row in enumerate(result["trace"]):
             row["position"] = index
+    if stats_only:
+        result["messages"] = messages
+        return apply_usage(result, settings, tools)
     result.update(
         messages=messages,
         runtime_messages=copy.deepcopy(messages),

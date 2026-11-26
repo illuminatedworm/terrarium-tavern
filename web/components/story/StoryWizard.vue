@@ -4,25 +4,45 @@ import { computed, ref, watch } from 'vue';
 import StorySetup from './StorySetup.vue';
 import CharacterPortrait from '../character/CharacterPortrait.vue';
 import { cardPortraitUrl } from '../../lib/portraits';
+import { api } from '../../lib/api';
+import type { CardRecord, CardSummary } from '../../lib/types';
 import type { Channel } from '../../lib/channels';
-const props = defineProps<{ cards: any[]; settings?: any }>();
+const props = defineProps<{ cards: CardSummary[]; settings?: any }>();
 const emit = defineEmits<{
   started: [session: any];
   back: [];
   settings: [channel: Channel];
-  cardChanged: [card: any];
+  cardChanged: [card: CardRecord];
 }>();
-const selectedId = ref(''),
+const selected = ref<CardRecord | null>(null),
+  loading = ref(''),
+  error = ref(''),
   search = ref('');
-const selected = computed(() => props.cards.find((card) => card.id === selectedId.value));
 const filtered = computed(() =>
   props.cards.filter((card) => card.name.toLowerCase().includes(search.value.trim().toLowerCase())),
 );
-const description = (card: any) => (card.document.data || card.document).description || '暂无角色描述';
+let request = 0;
+async function selectCard(card: CardSummary) {
+  const ticket = ++request;
+  loading.value = card.id;
+  error.value = '';
+  try {
+    const detail = await api(`/cards/${card.id}`);
+    if (ticket === request && props.cards.some((item) => item.id === card.id)) selected.value = detail;
+  } catch (cause) {
+    if (ticket === request) error.value = String(cause);
+  } finally {
+    if (ticket === request) loading.value = '';
+  }
+}
+function cardChanged(card: CardRecord) {
+  selected.value = card;
+  emit('cardChanged', card);
+}
 watch(
   () => props.cards,
-  () => {
-    if (!selected.value) selectedId.value = '';
+  (cards) => {
+    if (selected.value && !cards.some((item) => item.id === selected.value?.id)) selected.value = null;
   },
 );
 </script>
@@ -32,10 +52,10 @@ watch(
     :key="selected.id"
     :card="selected"
     :settings="settings"
-    @back="selectedId = ''"
+    @back="selected = null"
     @started="emit('started', $event)"
     @settings="emit('settings', $event)"
-    @card-changed="emit('cardChanged', $event)"
+    @card-changed="cardChanged"
   />
   <section v-else class="editor-page story-setup">
     <button class="quiet editor-back" @click="emit('back')"><Icon name="arrow-left" :size="16" />返回</button>
@@ -55,15 +75,18 @@ watch(
         class="story-card-option"
         :data-card-id="card.id"
         :aria-label="`选择角色卡 ${card.name}`"
-        @click="selectedId = card.id"
+        :aria-busy="loading === card.id"
+        @click="selectCard(card)"
       >
         <CharacterPortrait :src="cardPortraitUrl(card)" :name="card.name" size="card" />
         <span class="story-card-description"
           ><strong>{{ card.name }}</strong>
-          <p>{{ description(card) }}</p></span
+          <p>{{ card.description || '暂无角色描述' }}</p></span
         >
       </button>
     </div>
+    <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <p v-if="loading" role="status">正在读取角色卡…</p>
     <p v-if="!cards.length" class="muted">书架中暂无角色卡。请先从左侧“角色卡”页导入。</p>
     <p v-else-if="!filtered.length" class="muted">未找到匹配的角色卡。</p>
   </section>

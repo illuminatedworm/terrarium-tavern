@@ -96,7 +96,7 @@ async function refresh() {
   saving.value = true;
   error.value = '';
   try {
-    const updated: PlotSession = await api(`/sessions/${sid}`);
+    const updated: PlotSession = await api(`/sessions/${sid}?reader=true`);
     if (sid !== props.session.id || ticket !== generation) return;
     if (updated.revision < props.session.revision) {
       error.value = '会话再次更新，请重新刷新；编辑内容已保留。';

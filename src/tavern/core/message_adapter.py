@@ -521,7 +521,9 @@ WIRE_FIELDS = {
 }
 
 
-def project_context(context, settings, *, tools=None, managed=None):
+def project_context(context, settings, *, tools=None, managed=None, stats_only=False):
+    from tavern.core.context_usage import apply_usage
+
     if tools is None:
         tools = context.get("tools")
     rows = [
@@ -535,6 +537,12 @@ def project_context(context, settings, *, tools=None, managed=None):
     canonical = runtime_messages(rows, getattr(settings, "_adapter_lane", "story"))
     snapshot = adapter_snapshot(settings)
     adapted, ordered, warnings = adapt_messages(canonical, settings, snapshot, managed=managed)
+    context["messages"] = [{k: v for k, v in row.items() if k in WIRE_FIELDS} for row in adapted]
+    if stats_only:
+        # Cache placement uses the adapted source/order; debug and runtime copies
+        # are unnecessary for validating the provider observation.
+        context["trace"] = adapted
+        return apply_usage(context, settings, tools)
     context["runtime_trace"] = ordered
     context["runtime_messages"] = [
         {
@@ -546,7 +554,6 @@ def project_context(context, settings, *, tools=None, managed=None):
         }
         for row in ordered
     ]
-    context["messages"] = [{k: v for k, v in row.items() if k in WIRE_FIELDS} for row in adapted]
     context["trace"] = [
         {
             **row,
@@ -559,8 +566,6 @@ def project_context(context, settings, *, tools=None, managed=None):
             row["content"] = raw["content"]
     context["adapter_revision"] = snapshot["revision"]
     context.setdefault("diagnostics", []).extend({"reason": warning} for warning in warnings)
-    from tavern.core.context_usage import apply_usage
-
     return apply_usage(context, settings, tools)
 
 

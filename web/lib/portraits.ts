@@ -1,6 +1,10 @@
 /** Only request portraits backed by an imported file or embedded resource. */
 export function cardPortraitUrl(card: any): string {
   if (!card?.id || card._draftOnly) return '';
+  if ('portrait' in card)
+    return card.portrait
+      ? `/api/cards/${encodeURIComponent(card.id)}/portrait?v=${encodeURIComponent(card.portrait)}`
+      : '';
   let digest = card.container === 'png' ? card.original : '';
   if (!digest) {
     const data = card.document?.spec ? card.document.data : card.document;
@@ -20,8 +24,12 @@ export function cardPortraitUrl(card: any): string {
   return `/api/${owner}/portrait?v=${encodeURIComponent(digest)}`;
 }
 
-/** Session list rows serialize their snapshot; open sessions return an object. */
+/** List rows already carry the selected portrait digest. */
 export function sessionPortraitUrl(session: any): string {
+  if (session && 'portrait' in session)
+    return session.portrait
+      ? `/api/sessions/${encodeURIComponent(session.id)}/portrait?v=${encodeURIComponent(session.portrait)}`
+      : '';
   if (!session?.card_data) return '';
   const card = typeof session.card_data === 'string' ? JSON.parse(session.card_data) : session.card_data;
   return cardPortraitUrl({ ...card, session_id: session.id });

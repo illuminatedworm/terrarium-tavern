@@ -14,10 +14,10 @@ from pathlib import Path
 
 from tavern.character.cards import normalize, parse_card, upgrade_card_purposes
 from tavern.core.errors import NotFound
-from tavern.core.history_refs import message_ref
 from tavern.core.models import TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime
 from tavern.media.routing import StoryMediaSettings, story_key
+from tavern.storage.branch_history import BRANCH_MESSAGES, HistoryView, branch_history
 from tavern.storage.message_adapters import MessageAdapters
 from tavern.storage.schema import SCHEMA_VERSION as SCHEMA_VERSION
 from tavern.storage.schema import SETTINGS_VERSIONS as SETTINGS_VERSIONS
@@ -26,13 +26,6 @@ from tavern.storage.session_deletion import delete_session_rows
 from tavern.storage.story_cache import StoryCache
 from tavern.storage.turn_retry import retry_head
 from tavern.story.recovery import load_progress, resume_progress
-
-BRANCH_MESSAGES = (
-    "WITH RECURSIVE branch(id,parent,role) AS ("
-    "SELECT id,parent,role FROM messages WHERE session=? AND id=? UNION "
-    "SELECT m.id,m.parent,m.role FROM messages m JOIN branch b ON m.id=b.parent WHERE m.session=?"
-    ") "
-)
 
 
 def uid():
@@ -710,8 +703,9 @@ class Store(MessageAdapters):
             copy_traces(db, new_sid, ids, new_story=True)
         return self.session(new_sid)
 
-    def session(self, sid, *, settings_document=None):
+    def session(self, sid, *, settings_document=None, view: HistoryView = "full"):
         with self.connection() as db:
+            db.execute("BEGIN")
             row = db.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
             if row is None:
                 raise NotFound("会话不存在")
@@ -731,6 +725,10 @@ class Store(MessageAdapters):
             result["unicode_story"] = bool(result["unicode_story"])
             result["card_data"] = json.loads(result["card_data"]) if result["card_data"] else None
             result["turns"] = turns
+            if view != "preview":
+                result["work_count"] = db.execute(
+                    "SELECT count(*) FROM turns WHERE session=?", (sid,)
+                ).fetchone()[0]
             from tavern.novel.storage import research_enabled
 
             novel = db.execute("SELECT * FROM novel_bindings WHERE session=?", (sid,)).fetchone()
@@ -738,11 +736,20 @@ class Store(MessageAdapters):
             result["novel_active"] = db.execute(
                 "SELECT count(*) FROM novel_jobs WHERE session=? AND status!='destroyed'", (sid,)
             ).fetchone()[0]
-        result["messages"] = self.history(sid, result["head"])
+            result["messages"] = branch_history(
+                db, sid, result["head"], view, bool((result["card_data"] or {}).get("permission"))
+            )
+            if result["messages"]:
+                if view == "full":
+                    result["snapshot"] = copy.deepcopy(result["messages"][-1]["snapshot"])
+                else:
+                    result["snapshot"] = json.loads(
+                        db.execute(
+                            "SELECT snapshot FROM messages WHERE id=? AND session=?", (result["head"], sid)
+                        ).fetchone()[0]
+                    )
         empty_window = result.pop("empty_window_id")
-        if result["messages"]:
-            result["snapshot"] = copy.deepcopy(result["messages"][-1]["snapshot"])
-        else:
+        if not result["messages"]:
             # No message owns this snapshot yet. Repeated reads, retries and the
             # first committed user message must agree on the initial window.
             result["snapshot"] = new_snapshot()
@@ -867,48 +874,8 @@ class Store(MessageAdapters):
 
     def history(self, sid, head):
         with self.connection() as db:
-            rows = {
-                r["id"]: dict(r)
-                for r in db.execute("SELECT * FROM messages WHERE session=? ORDER BY created,rowid", (sid,))
-            }
-            for record in db.execute(
-                "SELECT a.message_id,a.anchor_id,a.id,a.title FROM messages m "
-                "JOIN story_lore_admissions a ON a.message_id=m.id WHERE m.session=? ORDER BY a.rowid",
-                (sid,),
-            ):
-                rows[record["message_id"]].setdefault("lore_admissions", []).append(
-                    {k: record[k] for k in ("anchor_id", "id", "title")}
-                )
-
-        def version_group(message):
-            parent = rows.get(message["parent"])
-            if parent is not None and parent["role"] == "user":
-                return "exchange", parent["parent"]
-            return "opening", message["parent"]
-
-        versions = {}
-        for row in rows.values():
-            if row["role"] == "assistant":
-                versions.setdefault(version_group(row), []).append(row["id"])
-        result, seen = [], set()
-        while head:
-            if head not in rows or head in seen:
-                raise ValueError("剧情分支无效")
-            row = rows[head]
-            row["snapshot"] = json.loads(row["snapshot"])
-            row["auxiliary"] = json.loads(row["auxiliary"])
-            row["story_segments"] = json.loads(row["story_segments"])
-            if row["role"] == "assistant":
-                row["versions"] = versions[version_group(row)]
-                row["version_index"] = row["versions"].index(row["id"])
-            result.append(row)
-            seen.add(head)
-            head = row["parent"]
-        result.reverse()
-        # Derived like versions: the UI shows the same H the models cite.
-        for position, row in enumerate(result, 1):
-            row["ref"] = message_ref(position)
-        return result
+            db.execute("BEGIN")
+            return branch_history(db, sid, head)
 
     def switch_message_version(self, sid, mid, target, expected_revision):
         session = self.session(sid)
@@ -1001,11 +968,11 @@ class Store(MessageAdapters):
             db.execute("UPDATE sessions SET revision=revision+1 WHERE id=?", (sid,))
         return self.session(sid)
 
-    def set_session_script_permission(self, sid, expected, enabled):
+    def set_session_script_permission(self, sid, expected, enabled, *, changes_only=False):
         """Change the story-owned permission without replacing its card or replaying initialization."""
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT revision,card_data FROM sessions WHERE id=?", (sid,)).fetchone()
+            row = db.execute("SELECT revision FROM sessions WHERE id=?", (sid,)).fetchone()
             if row is None:
                 raise NotFound("会话不存在")
             if row["revision"] != expected:
@@ -1019,12 +986,16 @@ class Store(MessageAdapters):
                 "SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)
             ).fetchone():
                 raise Conflict("请先完成或取消上下文整理")
-            card = json.loads(row["card_data"])
-            card["permission"] = int(enabled)
-            db.execute("UPDATE sessions SET card_data=?,revision=revision+1 WHERE id=?", (dump(card), sid))
-        return {"session": self.session(sid), "card": card}
+            db.execute(
+                "UPDATE sessions SET card_data=json_set(card_data,'$.permission',?),revision=revision+1 WHERE id=?",
+                (int(enabled), sid),
+            )
+        if changes_only:
+            return {"revision": expected + 1, "permission": int(enabled)}
+        session = self.session(sid)
+        return {"session": session, "card": session["card_data"]}
 
-    def update_session(self, sid, expected, **fields):
+    def update_session(self, sid, expected, *, changes_only=False, **fields):
         if "policy" in fields:
             from pydantic import TypeAdapter
 
@@ -1059,6 +1030,7 @@ class Store(MessageAdapters):
         elif "head" in fields:
             fields["empty_window_id"] = uid()
         with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
             active = db.execute(
                 "SELECT 1 FROM turns WHERE session=? AND status IN ('running','queued','awaiting_review')",
                 (sid,),
@@ -1085,6 +1057,15 @@ class Store(MessageAdapters):
                     "DELETE FROM context_token_samples WHERE owner IN (?,?)",
                     ("story:" + sid, "advisor:" + sid),
                 )
+            if changes_only:
+                changes = dict(fields)
+                if "persona_data" in changes:
+                    changes["persona_data"] = json.loads(changes["persona_data"])
+                if "policy" in changes:
+                    changes["policy_effective"] = (
+                        changes["policy"] or self.settings_document(db=db).story.policy
+                    )
+                return {"revision": expected + 1, **changes}
         return self.session(sid)
 
     def set_cache_breakpoint(

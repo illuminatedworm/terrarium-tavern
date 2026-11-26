@@ -3,7 +3,7 @@
 import copy
 import json
 
-from tavern.character.cards import is_initvar, lore_entries, lore_title, normalize
+from tavern.character.cards import card_view, is_initvar, lore_entries, lore_title
 from tavern.conversation.cache_breakpoint import prepare_context
 from tavern.conversation.context import (
     lore_text,
@@ -38,15 +38,14 @@ from tavern.story.state import story_state
 
 
 def load_trace(store, sid, history):
-    allowed = {m["id"] for m in history}
     with store.connection() as db:
         rows = db.execute(
-            "SELECT * FROM story_trace WHERE session=? ORDER BY message_id,seq", (sid,)
+            "SELECT * FROM story_trace WHERE session=? AND message_id IN (SELECT value FROM json_each(?)) "
+            "ORDER BY message_id,seq",
+            (sid, json.dumps([m["id"] for m in history])),
         ).fetchall()
     result = []
     for row in rows:
-        if row["message_id"] not in allowed:
-            continue
         message = json.loads(row["payload"])
         if "_archive_content" in message:
             message["content"] = message.pop("_archive_content")
@@ -86,6 +85,7 @@ def compile_window(
     replay_all=False,
     model_view=None,
     lore_replay: LoreReplay | None = None,
+    stats_only=False,
 ):
     state = story_state(snapshot)
     from tavern.core.kemini import TURN_SOURCES, prefix_frames, turn_frames
@@ -98,7 +98,7 @@ def compile_window(
     settings._context_generation = fingerprint(
         [window["id"], {key: value for key, value in compaction.items() if key != "items"}]
     )
-    card = normalize(document)
+    card = card_view(document)
     complete_source = compact or replay_all
     visible = history if complete_source else history[window["start"] :]
     turn_instructions = {
@@ -562,11 +562,14 @@ def compile_window(
         "_gemini_synthetic_calls",
     }
 
-    def wire():
+    def mark_body():
         # Role remapping must not let anchored lore join/reorder the fixed
         # prefix: replay offsets are defined by the original exchange order.
         for item in [*items[fixed_count:], *request_tail]:
             item["runtime_phase"] = "body"
+
+    def wire():
+        mark_body()
         typed = runtime_messages([*items, *request_tail], getattr(settings, "_adapter_lane", "story"))
         adapted, _, _ = adapt_messages(typed, settings, managed=True)
         return [{k: v for k, v in m.items() if k in allowed_fields} for m in adapted]
@@ -585,7 +588,7 @@ def compile_window(
     )
     if not complete_source:
         update("context_status", status)
-    tokens = context_tokens(wire(), settings, tools)
+    tokens = None if complete_source else context_tokens(wire(), settings, tools)
     rollover_required = not complete_source and (
         force_rollover or tokens is not None and tokens >= settings.context_tokens
     )
@@ -620,10 +623,9 @@ def compile_window(
         update("context_budget", content, value=value)
     elif not complete_source:
         update("context_budget", "")
-    messages = wire()
+    mark_body()
     rows = [*items, *request_tail]
     result = {
-        "messages": messages,
         "trace": [{**m, "position": i} for i, m in enumerate(rows)],
         "available_tokens": available,
         "rollover_required": rollover_required,
@@ -634,12 +636,13 @@ def compile_window(
         "window": {k: v for k, v in window.items() if k != "id"},
         "daily_context_budget": available,
         "window_message_count": len(visible) + bool(user_input),
-        "next_lore_injections": copy.deepcopy(injections),
     }
-    result["context_ledger"] = ledger.audit()
-    result["context_additions"] = copy.deepcopy(ledger.additions)
-    project_context(result, settings, tools=tools, managed=True)
-    if complete_source:
+    if not stats_only:
+        result["next_lore_injections"] = copy.deepcopy(injections)
+        result["context_ledger"] = ledger.audit()
+        result["context_additions"] = copy.deepcopy(ledger.additions)
+    project_context(result, settings, tools=tools, managed=True, stats_only=stats_only)
+    if complete_source and not stats_only:
         from tavern.conversation.compaction import canonical
         from tavern.scripting.native_response import portable
 
@@ -653,5 +656,7 @@ def compile_window(
     if compact:
         from tavern.conversation.compaction import project_compact
 
-        return project_compact(result, state, settings, tools, fixed_count, keep_visible=warning_position)
+        return project_compact(
+            result, state, settings, tools, fixed_count, keep_visible=warning_position, stats_only=stats_only
+        )
     return result if replay_all else prepare_context(result, session, history, snapshot, settings)

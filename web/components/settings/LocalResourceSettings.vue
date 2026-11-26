@@ -187,7 +187,7 @@ async function cancel(id: string) {
 onMounted(async () => {
   await poll();
   try {
-    sessions.value = await api('/sessions');
+    sessions.value = await api('/sessions?summary=true');
     selectedSession.value = sessions.value[0]?.id || '';
   } catch (e) {
     error.value = String(e);
