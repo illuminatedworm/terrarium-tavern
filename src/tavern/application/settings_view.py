@@ -4,6 +4,7 @@ from functools import cache
 from sqlite3 import Connection
 from typing import Literal
 
+from tavern.core.json_values import same_json
 from tavern.core.prompts import PROMPT_DEFINITIONS, STORY_SYSTEM_PROMPT_DEFINITION
 from tavern.core.settings import SettingsDocument
 
@@ -127,7 +128,7 @@ def public_settings(doc: SettingsDocument) -> dict:
 
 
 def changed_paths(before, after, path: str, changes: dict) -> None:
-    if before == after:
+    if same_json(before, after):
         return
     if isinstance(after, dict) and isinstance(before, dict) and after.keys() == before.keys():
         # User-defined keys (e.g. provider IDs) may contain dots. Replace the

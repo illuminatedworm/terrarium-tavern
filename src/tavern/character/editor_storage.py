@@ -270,8 +270,8 @@ class Conversations:
             files = json.loads(row[0]) if row[0] else []
         attachments = {}
         for file in files:
-            if ref := file.get("message_ref"):
-                attachments.setdefault(ref, []).append(file)
+            if message_ref := file.get("message_ref"):
+                attachments.setdefault(message_ref, []).append(file)
         where = "AND m.seq=substr(?,2) AND 'H'||m.seq=?" if ref is not None else ""
         return [
             {

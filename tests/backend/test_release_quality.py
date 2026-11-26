@@ -58,6 +58,7 @@ async def test_recursive_admission_and_degradation_use_original_query(tmp_path, 
 
 def test_storage_cleanup_preserves_story_branches_and_recoverable_failure(tmp_path):
     from tavern.storage.maintenance import cleanup, storage_report
+    from tavern.story.activity import turn_items
 
     store = Store(tmp_path)
     card = store.import_card(json.dumps({"name": "测试", "first_mes": "开场"}).encode())
@@ -70,6 +71,8 @@ def test_storage_cleanup_preserves_story_branches_and_recoverable_failure(tmp_pa
         db.execute("UPDATE turns SET created=? WHERE id=?", (time.time() - 20 * 86400, old))
     store.event(old, "provider_request", {"purpose": "narrative", "messages": ["private"]})
     store.event(old, "text", {"text": "old"})
+    activity = store.event(old, "story_assistant", {"content": "old reply"})
+    terminal = store.event(old, "committed", {"message_id": session["head"]})
     runs = tmp_path / "runs" / f"{old}.kohakutr.drives"
     runs.mkdir(parents=True)
     (runs / "nested-log").write_text("private")
@@ -88,6 +91,9 @@ def test_storage_cleanup_preserves_story_branches_and_recoverable_failure(tmp_pa
     assert not runs.exists()
     assert store.turn(old)["preview"] is None
     assert store.events(old)[0]["payload"]["detail_expired"]
+    replay = store.events(old, after=activity - 1, reader=True)
+    assert [(e["seq"], e["kind"]) for e in replay] == [(activity, "detail_expired"), (terminal, "committed")]
+    assert turn_items(store, session["id"], old, summary=True) == []
     assert store.work_turns(session["id"], limit=1)["total"] == 2
     assert len(store.work_turns(session["id"], limit=1)["items"]) == 1
     assert storage_report(store)["reclaimable_bytes"] == 0

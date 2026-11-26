@@ -159,6 +159,7 @@ const deletingCardConversationId = ref('');
 const cards = ref<CardSummary[]>([]),
   sessions = ref<SessionSummary[]>([]),
   session = ref<Session | null>(null);
+let cardLibraryRead = 0;
 const sessionCard = computed(() => session.value?.card_data ?? null);
 const sessionPortraits = computed(() =>
   Object.fromEntries(sessions.value.map((s) => [s.id, sessionPortraitUrl(s)])),
@@ -259,6 +260,7 @@ const draftSegments = computed(() => splitStorySegments(draft.value, draftBreaks
 const panel = ref(''),
   settings = ref<SettingsDocument | null>(null),
   selected = ref<CardRecord | null>(null);
+const shelfCardLoad = ref<{ id?: string; error?: string } | null>(null);
 const preview = ref<StoryContextPreview | null>(null),
   trace = ref<TraceEvent[]>([]);
 const previewMessagesBusy = ref(false);
@@ -284,6 +286,14 @@ function acceptSettings(incoming: SettingsDocument, refreshContext = false) {
   if (next === settings.value) return;
   settings.value = next;
   if (refreshContext) void refreshContextStats();
+}
+async function syncTurnSettings() {
+  const token = viewScope.current();
+  try {
+    acceptSettings(await refreshSettings(loadedSettings()));
+  } catch (cause) {
+    if (viewScope.owns(token)) notify(`全局设置同步失败。${cause}`);
+  }
 }
 const activeSettings = computed<SettingsObject>(() => settings.value?.story ?? {});
 const configuredModel = computed(
@@ -372,8 +382,7 @@ watch([input, ooc], () => {
     if (!busy.value) void refreshContextStats();
   }, 350);
 });
-const workCount = ref(0),
-  rewriteExpanded = ref(false);
+const rewriteExpanded = ref(false);
 const rewriteToggle = ref<HTMLButtonElement>();
 const retryNote = ref(''),
   retryIncludeReply = ref(false);
@@ -1064,7 +1073,8 @@ const composerContextLabel = computed(() => {
   const current = contextEstimateError.value
     ? '—'
     : (contextTokens(contextStats.value)?.toLocaleString() ?? '—');
-  return `${current} / ${activeModel.value.context_tokens.toLocaleString()} tokens · ${contextUsageLabel(contextStats.value)}${busy.value ? ' · 进行中，显示此前快照' : ''}`;
+  const limit = contextStats.value?.context_limit ?? activeModel.value.context_tokens;
+  return `${current} / ${limit.toLocaleString()} tokens · ${contextUsageLabel(contextStats.value)}${busy.value ? ' · 进行中，显示此前快照' : ''}`;
 });
 const composerContextTitle = computed(
   () =>
@@ -1078,18 +1088,33 @@ async function guarded(fn: () => Promise<any>) {
     if (!(e instanceof StaleView)) error.value = e.message;
   }
 }
+async function readCardLibrary() {
+  const ticket = ++cardLibraryRead;
+  const [items, drafts]: [CardSummary[], OrphanDraft[]] = await Promise.all([
+    api('/cards?summary=true'),
+    api('/card-edits'),
+  ]);
+  return { ticket, items, drafts };
+}
+function applyCardLibrary(library: Awaited<ReturnType<typeof readCardLibrary>>) {
+  if (library.ticket === cardLibraryRead) {
+    cards.value = library.items;
+    orphanDrafts.value = library.drafts;
+  }
+}
 async function load() {
-  let received: SettingsDocument;
-  [cards.value, sessions.value, received, orphanDrafts.value, cardConversations.value, worldbooks.value] =
-    await Promise.all([
-      api('/cards?summary=true'),
-      api('/sessions?summary=true'),
-      refreshSettings(settings.value),
-      api('/card-edits'),
-      api('/card-author/conversations'),
-      api('/worldbooks'),
-    ]);
+  const [library, stories, received, conversations, books] = await Promise.all([
+    readCardLibrary(),
+    api('/sessions?summary=true'),
+    refreshSettings(settings.value),
+    api('/card-author/conversations'),
+    api('/worldbooks'),
+  ]);
+  applyCardLibrary(library);
+  sessions.value = stories;
   settings.value = latestSettings(settings.value, received);
+  cardConversations.value = conversations;
+  worldbooks.value = books;
 }
 async function afterDataImport(result: {
   settings_restored: boolean;
@@ -1138,7 +1163,6 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
   setCacheUsage(null);
   contextEstimateError.value = '';
   clearTimeout(contextRefreshTimer);
-  workCount.value = 0;
   events?.close();
   events = undefined;
   sidebarSection.value = 'sessions';
@@ -1172,7 +1196,6 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
       }
     }
     session.value = opened;
-    workCount.value = opened.work_count;
     activeTurn.value = restored;
     pendingInput.value = restored?.input_ready?.message ?? null;
     pendingLore.value = restored?.input_ready?.lore_admissions ?? [];
@@ -1241,8 +1264,9 @@ async function deleteCard() {
     await guarded(async () => {
       const id = deletingCard.value!.id;
       await api(`/cards/${id}`, {}, 'DELETE');
-      if (selected.value?.id === id) {
+      if (selected.value?.id === id || shelfCardLoad.value?.id === id) {
         selected.value = null;
+        shelfCardLoad.value = null;
         if (pageMode.value === 'card') pageMode.value = '';
       }
       await load();
@@ -1470,32 +1494,48 @@ async function retryTurn(resume: boolean) {
     sendNext,
   );
 }
-// Imported and blank cards both open in the shelf editor once the library reloads.
-async function addLibraryCard(request: () => Promise<CardRecord>) {
-  await guarded(async () => {
-    selected.value = await request();
-    await load();
-    sidebarSection.value = 'cards';
-    pageMode.value = 'card';
-    panel.value = '';
-    if (window.innerWidth < 760) layout.value.leftCollapsed = true;
-  });
+async function selectShelfCard(request: () => Promise<CardRecord>, readId?: string) {
+  abandonStoryLoad();
+  const token = viewScope.enter();
+  const ownsSelection = () => viewScope.owns(token) && pageMode.value === 'card';
+  selected.value = null;
+  shelfCardLoad.value = { id: readId };
+  sidebarSection.value = 'cards';
+  pageMode.value = 'card';
+  panel.value = '';
+  if (window.innerWidth < 760) layout.value.leftCollapsed = true;
+  try {
+    const card = await request();
+    if (ownsSelection()) {
+      selected.value = { ...card, _editorKey: crypto.randomUUID() };
+      shelfCardLoad.value = null;
+    }
+    // A create, import or copy still changes the shelf when its editor is no longer selected.
+    if (readId === undefined) await refreshAuthorLibrary('card');
+  } catch (cause) {
+    if (!ownsSelection()) return;
+    const message = cause instanceof Error ? cause.message : String(cause);
+    if (shelfCardLoad.value) shelfCardLoad.value = { id: readId, error: message };
+    else notify(`书架刷新失败。${message}`);
+  }
+}
+function openShelfCard(id: string) {
+  return selectShelfCard(() => api(`/cards/${id}`), id);
 }
 function importCard(file: File) {
   const form = new FormData();
   form.append('file', file);
-  return addLibraryCard(() => api('/cards/import', form));
+  return selectShelfCard(() => api('/cards/import', form));
 }
 function createCard() {
-  return addLibraryCard(() => api('/cards', {}));
+  return selectShelfCard(() => api('/cards', {}));
 }
 async function refreshCardConversations() {
   cardConversations.value = await api('/card-author/conversations');
 }
 async function refreshAuthorLibrary(kind: 'card' | 'worldbook') {
   if (kind === 'worldbook') worldbooks.value = await api('/worldbooks');
-  else
-    [cards.value, orphanDrafts.value] = await Promise.all([api('/cards?summary=true'), api('/card-edits')]);
+  else applyCardLibrary(await readCardLibrary());
 }
 function openCardAgent(id: string, listLoaded = false) {
   abandonStoryLoad();
@@ -1559,12 +1599,8 @@ async function deleteCardConversation(item: CardConversationSummary) {
     deletingCardConversationId.value = '';
   }
 }
-async function copyLibraryCard(card: CardSummary) {
-  await guarded(async () => {
-    const copied = await api(`/cards/${card.id}/copy`, {});
-    await load();
-    showCard(copied);
-  });
+function copyLibraryCard(card: CardSummary) {
+  return selectShelfCard(() => api(`/cards/${card.id}/copy`, {}));
 }
 // Switching the Agent workspace keeps the editor's mount key so its composer survives.
 function selectWorkspace(id: string) {
@@ -1601,26 +1637,8 @@ function sessionLoreSaved(value: any) {
 }
 watch(pageMode, (value) => {
   if (value) abandonStoryLoad();
+  if (value !== 'card') shelfCardLoad.value = null;
 });
-async function openShelfCard(card: CardSummary) {
-  abandonStoryLoad();
-  const token = viewScope.enter();
-  selected.value = null;
-  pageMode.value = 'card';
-  await guarded(async () => {
-    const detail: CardRecord = await viewApi(`/cards/${card.id}`);
-    if (viewScope.owns(token) && pageMode.value === 'card') showCard(detail);
-  });
-}
-function showCard(card: CardRecord) {
-  // Explicit navigation starts a fresh view, even after Save As retained an
-  // earlier editor instance. The draft itself is restored by workspace ID.
-  selected.value = { ...card, _editorKey: crypto.randomUUID() };
-  sidebarSection.value = 'cards';
-  pageMode.value = 'card';
-  panel.value = '';
-  if (window.innerWidth < 760) layout.value.leftCollapsed = true;
-}
 function startNewStory() {
   if (busy.value) return;
   sidebarSection.value = 'sessions';
@@ -1784,14 +1802,15 @@ async function submitStoryTurn(request: TurnRequest, continueWithInput = false):
   try {
     const turn: TurnRecord = await api(`/sessions/${sid}/turns`, request);
     if (!viewScope.owns(token)) return false;
-    openStory().opening_editable = false;
+    const story = openStory();
+    story.opening_editable = false;
     activeTurn.value = turn;
     const pendingText = request.mode === 'regenerate' ? request.replacement_text : request.text;
     if (pendingText || request.ooc) pendingInput.value = { raw: pendingText || '', ooc: request.ooc };
     regenerateNote.value = '';
     regenerateIncludeReply.value = false;
     rewriteExpanded.value = false;
-    workCount.value += 1;
+    if (!story.turns.some((record) => record.id === turn.id)) story.work_count += 1;
     if (continueWithInput) turnContinuation.start(turn.id, token);
     void scroll('reply');
     observe(turn.id);
@@ -1846,6 +1865,7 @@ function observe(id: string) {
     },
     async () => {
       try {
+        const settingsSync = syncTurnSettings();
         const [turn, updated]: [TurnRecord, Session] = await Promise.all([
           api(`/turns/${id}?reader=true`),
           api(`/sessions/${sid}?reader=true`),
@@ -1882,7 +1902,6 @@ function observe(id: string) {
           followLatest.value = false;
         }
         if (!ownsTurn()) return;
-        workCount.value = updated.work_count;
         const summary = sessions.value.find((item) => item.id === sid);
         if (summary)
           Object.assign(summary, {
@@ -1890,6 +1909,8 @@ function observe(id: string) {
             title: updated.title,
             persona: updated.persona,
           });
+        await settingsSync;
+        if (!ownsTurn()) return;
         // Install the committed session/revision before treating the composer
         // as the next turn. Failed continuations never consume its input.
         if (turnContinuation.finish(turn, token)) await send();
@@ -1918,7 +1939,7 @@ async function review(accept: boolean) {
     const sendNext = turnContinuation.finish(turn, token);
     const opening = openSession(sid),
       openingToken = viewScope.current();
-    await opening;
+    await Promise.all([opening, syncTurnSettings()]);
     if (sendNext && viewScope.owns(openingToken) && session.value?.id === sid) await send();
   });
 }
@@ -2435,7 +2456,7 @@ useTimedError(error);
           :active-id="pageMode === 'card' ? selected?.id : undefined"
           @create="createCard"
           @import="importCard"
-          @show="openShelfCard"
+          @show="openShelfCard($event.id)"
           @copy="copyLibraryCard"
           @delete="
             (card) => {
@@ -2533,7 +2554,14 @@ useTimedError(error);
         @workspace-selected="selectWorkspace"
         @back="pageMode = ''"
       />
-      <p v-else-if="pageMode === 'card' && !error" role="status">正在读取角色卡…</p>
+      <div v-else-if="pageMode === 'card' && shelfCardLoad" class="editor-page">
+        <template v-if="shelfCardLoad.error !== undefined">
+          <p class="error" role="alert">无法打开角色卡。{{ shelfCardLoad.error }}</p>
+          <button v-if="shelfCardLoad.id" @click="openShelfCard(shelfCardLoad.id)">重试读取</button>
+          <button @click="manageCards">返回书架</button>
+        </template>
+        <p v-else role="status">正在读取角色卡…</p>
+      </div>
       <CharacterEditor
         v-else-if="pageMode === 'session-lore' && selected && session"
         :key="`lore-${session.id}`"
@@ -2616,12 +2644,14 @@ useTimedError(error);
             ><button
               :class="{ active: storyView === 'work' }"
               :aria-current="storyView === 'work' ? 'page' : undefined"
-              :title="workCount ? `${workCount} 条工作记录` : undefined"
+              :title="session.work_count ? `${session.work_count} 条工作记录` : undefined"
               @click="storyView = 'work'"
             >
               <span class="tab-label-full">Agent 工作记录</span><span class="tab-label-short">记录</span>
               <span v-if="busy" class="work-live-dot" aria-label="任务运行中"></span
-              ><span v-else-if="workCount" class="tab-count" aria-hidden="true">{{ workCount }}</span>
+              ><span v-else-if="session.work_count" class="tab-count" aria-hidden="true">{{
+                session.work_count
+              }}</span>
             </button>
           </nav>
           <div class="story-tools-menu" @keydown.esc="storyToolsOpen = false">

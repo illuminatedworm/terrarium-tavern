@@ -12,6 +12,8 @@ def reader_events(db, tid, after, limit):
     # can refresh its cursor, and EventSource can reconnect past a large diagnostic.
     rows = db.execute(
         """SELECT e.turn,e.seq,e.kind,e.created,s.kemini,CASE
+        WHEN e.kind IN ('provider_request','input_ready') AND json_extract(e.payload,'$.detail_expired')
+            THEN e.payload
         WHEN e.kind='provider_request' THEN json_object('purpose',json_extract(e.payload,'$.purpose'),
             'cache',json_extract(e.payload,'$.cache'))
         WHEN e.kind='input_ready' THEN json_object('message',json_object(
@@ -35,6 +37,9 @@ def reader_events(db, tid, after, limit):
         event = dict(row)
         visuals = not event.pop("kemini")
         event["payload"] = json.loads(event["payload"])
+        if event["payload"].get("detail_expired"):
+            # Retention kept a summary at this sequence, with no replayable activity or input.
+            event["kind"] = "detail_expired"
         item = event_activity(
             event,
             with_details=visuals

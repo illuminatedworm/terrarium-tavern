@@ -19,8 +19,10 @@ from tavern.application.settings_view import (
 )
 from tavern.core.channels import profile_key
 from tavern.core.errors import NotFound
+from tavern.core.json_values import same_json
 from tavern.core.models import PreferencePreset
 from tavern.core.settings import SettingsDocument
+from tavern.search.retrieval_config import ModelProfile
 from tavern.storage.store import Conflict
 
 
@@ -95,35 +97,26 @@ def validate_document(raw):
         ) from None
 
 
+def same_probe_config(before: ModelProfile, after: ModelProfile) -> bool:
+    return all(
+        getattr(before, key) == getattr(after, key)
+        for key, field in ModelProfile.model_fields.items()
+        if not field.exclude and key not in {"capability", "capability_key"}
+    )
+
+
 def invalidate_capabilities(old, new):
     providers_changed = old.shared.providers != new.shared.providers
-    for key in ("model", "official_model"):
-        before, after = (
-            getattr(old.story.novel_research, key),
-            getattr(new.story.novel_research, key),
-        )
-        if after is not None and (
-            providers_changed
-            or before is None
-            or (
-                before != after
-                and before.model_dump(exclude={"capability", "capability_key"})
-                != after.model_dump(exclude={"capability", "capability_key"})
-            )
-        ):
-            after.capability, after.capability_key = "unknown", ""
-    for key in ("model", "official_model"):
-        before, after = getattr(old.shared.advisor, key), getattr(new.shared.advisor, key)
-        if after is not None and (
-            providers_changed
-            or before is None
-            or (
-                before != after
-                and before.model_dump(exclude={"capability", "capability_key"})
-                != after.model_dump(exclude={"capability", "capability_key"})
-            )
-        ):
-            after.capability, after.capability_key = "unknown", ""
+    for previous, updated in (
+        (old.story.novel_research, new.story.novel_research),
+        (old.shared.advisor, new.shared.advisor),
+    ):
+        for key in ("model", "official_model"):
+            before, after = getattr(previous, key), getattr(updated, key)
+            if after is not None and (
+                providers_changed or before is None or not same_probe_config(before, after)
+            ):
+                after.capability, after.capability_key = "unknown", ""
     for scope, key, after in new.profiles():
         before = getattr(getattr(old, scope), key)
         if before is None or not before.provider_id or not after.provider_id:
@@ -332,7 +325,7 @@ def register_settings_routes(app, store):
             for path in page["paths"]:
                 current = get_path(raw[scope], path)
                 expected = get_path(latest, path)
-                if current != expected and editable(current) != editable(expected):
+                if not same_json(current, expected) and not same_json(editable(current), editable(expected)):
                     raise Conflict("本页设置已被其他操作修改，未执行撤回")
                 replacement = get_path(editor["baseline"][scope], path)
                 if current is not None and isinstance(replacement, dict) and "capability" in replacement:
@@ -367,8 +360,7 @@ def save_probe(store, role, result, captured):
                 profile is None
                 or before is None
                 or provider != old_provider
-                or profile.model_dump(exclude={"capability", "capability_key"})
-                != before.model_dump(exclude={"capability", "capability_key"})
+                or not same_probe_config(before, profile)
             ):
                 raise Conflict("检查期间资料调查模型连接已改变，请重新检查")
             profile.capability, profile.capability_key = result.capability, result.capability_key

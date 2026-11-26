@@ -212,6 +212,7 @@ export type PendingInput = Pick<StoryMessageRecord, 'raw'> &
   Partial<Pick<StoryMessageRecord, 'id' | 'display' | 'ooc'>>;
 
 export interface StoryContextStats {
+  context_limit: number;
   context_usage?: import('./contextUsage').ContextUsage;
   /** The planned cache breakpoint of this request. */
   cache?: { scope: string; revision: number; message_id: string | null };

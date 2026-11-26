@@ -58,6 +58,7 @@ Content-Type: application/json
 ```
 
 - 下一次修改使用成功响应中的修订号。上例省略了 `known_revisions`，会收到完整的公开设置文档。
+- 自定义缓存字段和请求参数保留 JSON 值的类型。将数字 `1` 改成布尔值 `true` 会更新修订号，增量回执返回布尔值。
 - 字段路径使用点分形式，如 `model.reply_tokens`。提供商引用、预算关联和字段类型整体校验后写入。
 - 更新 `shared.providers` 时应带上其余提供商。已有提供商的 `api_key` 留空或省略表示保留密钥，不能用空字符串清空。
 - `capability` 与 `capability_key` 由连接检查维护，不能通过 PATCH 写入。

@@ -433,29 +433,40 @@ async def test_settings_delta_preserves_other_scopes_and_redacts_rotated_keys(tm
 
 async def test_other_window_changes_cannot_be_undone_and_capabilities_cannot_be_forged(tmp_path):
     app = create_app(tmp_path)
+    store = app.state.store
+    doc = store.settings_document()
+    doc.story.model.cache.preset = "custom"
+    doc.story.model.cache.request = {"flags": [1]}
+    store.save_settings(doc)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         a = (await client.post("/api/settings/edit-sessions", json={})).json()
         b = (await client.post("/api/settings/edit-sessions", json={})).json()
+        known = b["settings"]["revisions"]
         result = await client.patch(
             "/api/settings/story",
             json={
-                "expected_revision": 0,
+                "expected_revision": known["story"],
+                "known_revisions": known,
                 "edit_session": b["id"],
-                "changes": {"model.model": "other-window"},
+                "changes": {"model.cache.request": {"flags": [True]}},
             },
         )
-        assert result.status_code == 200
+        result.raise_for_status()
+        delta = result.json()
+        revision = delta["revisions"]["story"]
+        assert revision == known["story"] + 1
+        assert delta["changes"]["story"]["model.cache.request.flags.0"] is True
         undo = await client.post(
             f"/api/settings/edit-sessions/{a['id']}/undo",
-            json={"page": "story.model", "expected_revision": 1},
+            json={"page": "story.model", "expected_revision": revision},
         )
         assert undo.status_code == 409
         fake = await client.patch(
             "/api/settings/story",
-            json={"expected_revision": 1, "changes": {"model.capability": "accepted"}},
+            json={"expected_revision": revision, "changes": {"model.capability": "accepted"}},
         )
         assert fake.status_code == 400
-        assert app.state.store.settings().model == "other-window"
+        assert store.settings().cache.request["flags"][0] is True
 
 
 def test_unsupported_version_is_rejected_without_touching_database(tmp_path):

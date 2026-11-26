@@ -10,6 +10,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tavern.core.gemini_capabilities import gemini_controls
+from tavern.core.json_values import same_json
 
 API_MODES = ("chat_completions", "responses", "anthropic", "gemini")
 RESERVED = {
@@ -60,6 +61,12 @@ class CacheSettings(BaseModel):
     value: Any = Field(default_factory=lambda: {"type": "ephemeral"})
     request: dict = Field(default_factory=dict)
     retention: Literal["default", "5m", "15m", "1h", "12h", "24h", "30m", "in_memory"] = "default"
+
+    def __eq__(self, other: object) -> bool:
+        if type(self) is not type(other):
+            return NotImplemented
+        # Parent profiles use model equality to decide whether to persist a new revision.
+        return all(same_json(getattr(self, key), getattr(other, key)) for key in type(self).model_fields)
 
     @model_validator(mode="before")
     @classmethod

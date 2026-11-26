@@ -82,7 +82,9 @@ async def test_upload_read_rollover_restore_and_remove(tmp_path):
             latest_user = [m for m in outbound if m["role"] == "user"][-1]
             assert "F1" not in latest_user["content"]
             workspace = editor.edits.conversation(wid)
-            assert workspace["messages"][-2]["attachments"] == []
+            saved_user = workspace["messages"][-2]
+            assert saved_user["attachments"] == []
+            assert editor.edits.messages(wid, ref=saved_user["ref"]) == [saved_user]
             response = await client.post(
                 endpoint,
                 data={"expected_revision": workspace["revision"]},

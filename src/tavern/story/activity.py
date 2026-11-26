@@ -253,6 +253,8 @@ def turn_items(store, sid: str, tid: str, *, summary: bool = False) -> list[dict
     items = {}
     for row in rows:
         event = {**dict(row), "payload": json.loads(row["payload"])}
+        if event["payload"].get("detail_expired"):
+            continue
         item = event_activity(
             event,
             items,
