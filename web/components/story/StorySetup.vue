@@ -2,7 +2,9 @@
 import Icon from '../common/Icon.vue';
 import { useTimedError } from '../../composables/useTimedError';
 import { computed, onMounted, ref, watch } from 'vue';
-import { api } from '../../lib/api';
+import { api, rawApi } from '../../lib/api';
+import { settingsQuery } from '../../lib/settingsApi';
+import { applySettingsUpdate, latestSettings, type SettingsDocument } from '../../lib/settingsDocument';
 import StoryProse from './StoryProse.vue';
 import StoryLoading from './StoryLoading.vue';
 import { openingProse } from '../../lib/storyText';
@@ -12,15 +14,17 @@ import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { channelLabels, type Channel } from '../../lib/channels';
 import type { CardDefaults, CardRecord, WorldbookSummary } from '../../lib/types';
 
-const props = defineProps<{ card: CardRecord; settings?: any }>();
+const props = defineProps<{ card: CardRecord; settings?: SettingsDocument | null }>();
 const emit = defineEmits<{
   started: [session: any];
   back: [];
   settings: [channel: Channel];
   cardChanged: [card: CardRecord];
+  settingsUpdated: [settings: SettingsDocument];
 }>();
 const channel = ref<Channel>('standard');
-const settings = ref<any>(null);
+const standaloneSettings = ref<SettingsDocument | null>(null);
+const settings = computed(() => props.settings ?? standaloneSettings.value);
 const personas = ref<any[]>([]),
   personaId = ref(''),
   personaName = ref('用户');
@@ -34,12 +38,12 @@ const worldbooks = ref<WorldbookSummary[]>([]),
   defaults = ref<CardDefaults | null>(null);
 // Kemini conversations are fixed at creation and exist only on the standard channel.
 const kemini = ref(false);
-const keminiAvailable = computed(() => !!(props.settings || settings.value)?.shared?.kemini?.enabled);
+const keminiAvailable = computed(() => !!settings.value?.shared?.kemini?.enabled);
 watch(channel, (value) => {
   if (value !== 'standard') kemini.value = false;
 });
 const modelLabel = computed(() => {
-  const scope = (props.settings || settings.value)?.story;
+  const scope = settings.value?.story;
   return scope?.[channel.value === 'chatgpt' ? 'official_model' : 'model']?.model || '待配置';
 });
 const data = computed<any>(() => props.card.document.data || props.card.document);
@@ -104,13 +108,20 @@ async function start() {
 }
 onMounted(async () => {
   try {
-    [personas.value, settings.value, worldbooks.value, defaults.value] = await Promise.all([
+    const base = props.settings;
+    const query = base ? '&' + settingsQuery(base) : '';
+    const [people, books, { settings: result, ...cardDefaults }] = await Promise.all([
       api('/personas'),
-      api('/settings'),
       api('/worldbooks'),
-      api(`/cards/${props.card.id}/defaults`),
+      rawApi(`/cards/${props.card.id}/defaults?setup=true${query}`),
     ]);
-    channel.value = settings.value?.story?.default_channel || 'standard';
+    personas.value = people;
+    worldbooks.value = books;
+    defaults.value = cardDefaults as CardDefaults;
+    const current = latestSettings(props.settings, base ? applySettingsUpdate(base, result) : result);
+    if (!props.settings) standaloneSettings.value = current;
+    if (current !== props.settings) emit('settingsUpdated', current);
+    channel.value = current.story.default_channel;
     // Card defaults only preselect; deleted targets were already dropped with them.
     personaId.value = defaults.value?.persona_id || '';
     chosen.value = new Set(defaults.value?.worldbook_ids);

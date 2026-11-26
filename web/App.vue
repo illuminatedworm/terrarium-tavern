@@ -22,7 +22,13 @@ import { api } from './lib/api';
 import { appendVisualInput, hasVisuals } from './lib/visuals';
 import { saveDownload } from './lib/download';
 import { androidHost } from './lib/hostCapabilities';
-import type { ConversationModelSelection, SettingsDocument, SettingsObject } from './lib/settingsDocument';
+import {
+  latestSettings,
+  type ConversationModelSelection,
+  type SettingsDocument,
+  type SettingsObject,
+} from './lib/settingsDocument';
+import { refreshSettings, saveSettings } from './lib/settingsApi';
 import { conversationModelProfile } from './lib/modelConnections';
 import { usesChatGPT } from './lib/chatgptAccounts';
 import { canRetryTurn, createTurnContinuation, resumeBlocker } from './lib/turnRetry';
@@ -254,6 +260,12 @@ function managePreferencePresets() {
 function loadedSettings(): SettingsDocument {
   if (!settings.value) throw new Error('设置尚未载入');
   return settings.value;
+}
+function acceptSettings(incoming: SettingsDocument, refreshContext = false) {
+  const next = latestSettings(settings.value, incoming);
+  if (next === settings.value) return;
+  settings.value = next;
+  if (refreshContext) void refreshContextStats();
 }
 const activeSettings = computed<SettingsObject>(() => settings.value?.story ?? {});
 const configuredModel = computed(
@@ -1049,21 +1061,17 @@ async function guarded(fn: () => Promise<any>) {
   }
 }
 async function load() {
-  [
-    cards.value,
-    sessions.value,
-    settings.value,
-    orphanDrafts.value,
-    cardConversations.value,
-    worldbooks.value,
-  ] = await Promise.all([
-    api('/cards?summary=true'),
-    api('/sessions?summary=true'),
-    api('/settings'),
-    api('/card-edits'),
-    api('/card-author/conversations'),
-    api('/worldbooks'),
-  ]);
+  let received: SettingsDocument;
+  [cards.value, sessions.value, received, orphanDrafts.value, cardConversations.value, worldbooks.value] =
+    await Promise.all([
+      api('/cards?summary=true'),
+      api('/sessions?summary=true'),
+      refreshSettings(settings.value),
+      api('/card-edits'),
+      api('/card-author/conversations'),
+      api('/worldbooks'),
+    ]);
+  settings.value = latestSettings(settings.value, received);
 }
 async function afterDataImport(result: {
   settings_restored: boolean;
@@ -2190,14 +2198,7 @@ async function saveCacheRetention(value: string) {
   cacheBreakpointBusy.value = true;
   try {
     await guarded(async () => {
-      settings.value = await api(
-        `/settings/${scope}`,
-        {
-          expected_revision: loadedSettings().revisions[scope],
-          changes: { [path]: value },
-        },
-        'PATCH',
-      );
+      acceptSettings(await saveSettings(loadedSettings(), scope, { [path]: value }));
       notify('缓存时效已保存，从下一次请求生效。');
     });
   } finally {
@@ -2530,6 +2531,7 @@ useTimedError(error);
         :cards="cards"
         :settings="settings"
         @started="cardStarted"
+        @settings-updated="acceptSettings"
         @card-changed="
           (card) => {
             const item = cards.find((item) => item.id === card.id);
@@ -3320,14 +3322,14 @@ useTimedError(error);
             :permission-disabled="scriptPermissionDisabled"
             :preference-prompt="activeSettings.preference_prompt || ''"
             :inherited-policy="activeSettings.policy"
-            :presets="settings?.shared.preference_presets || []"
+            :settings="loadedSettings()"
             @message-adapter="panel = 'message-adapter'"
             :export-disabled="storyLocked || previewMessagesBusy"
             :exporting="previewMessagesBusy"
             @export-request="exportNextMessages"
             @save="saveOptions"
             @script-permission="setSessionScriptPermission"
-            @presets-saved="settings = $event"
+            @presets-saved="acceptSettings"
             @manage-presets="managePreferencePresets"
           />
         </div>
@@ -3410,14 +3412,12 @@ useTimedError(error);
           <SettingsPanel
             v-if="panel === 'settings'"
             ref="settingsPanel"
+            :settings="settings"
             :initial-channel="settingsChannel || session?.channel_origin || undefined"
             :initial-page="settingsInitialPage"
             :warmup="modelWarmup"
             :effort-options="effortOptions"
-            @updated="
-              settings = $event;
-              void refreshContextStats();
-            "
+            @updated="acceptSettings($event, true)"
             @imported="afterDataImport"
             @open-session="
               panel = '';

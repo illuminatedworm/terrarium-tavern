@@ -6,13 +6,15 @@ import CharacterPortrait from '../character/CharacterPortrait.vue';
 import { cardPortraitUrl } from '../../lib/portraits';
 import { api } from '../../lib/api';
 import type { CardRecord, CardSummary } from '../../lib/types';
+import type { SettingsDocument } from '../../lib/settingsDocument';
 import type { Channel } from '../../lib/channels';
-const props = defineProps<{ cards: CardSummary[]; settings?: any }>();
+const props = defineProps<{ cards: CardSummary[]; settings?: SettingsDocument | null }>();
 const emit = defineEmits<{
   started: [session: any];
   back: [];
   settings: [channel: Channel];
   cardChanged: [card: CardRecord];
+  settingsUpdated: [settings: SettingsDocument];
 }>();
 const selected = ref<CardRecord | null>(null),
   loading = ref(''),
@@ -56,6 +58,7 @@ watch(
     @started="emit('started', $event)"
     @settings="emit('settings', $event)"
     @card-changed="cardChanged"
+    @settings-updated="emit('settingsUpdated', $event)"
   />
   <section v-else class="editor-page story-setup">
     <button class="quiet editor-back" @click="emit('back')"><Icon name="arrow-left" :size="16" />返回</button>

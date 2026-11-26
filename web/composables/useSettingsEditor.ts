@@ -1,6 +1,8 @@
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { api } from '../lib/api';
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
+import { rawApi } from '../lib/api';
+import { refreshSettings, saveSettings } from '../lib/settingsApi';
 import {
+  applySettingsUpdate,
   clone,
   difference,
   equal,
@@ -12,12 +14,14 @@ import {
   type SettingsObject,
   type SettingsPage,
   type SettingsScope,
+  type SettingsUpdate,
+  withFields,
 } from '../lib/settingsDocument';
 
 export function useSettingsEditor(updated: (settings: SettingsDocument) => void) {
-  const saved = ref<SettingsDocument>();
+  const saved = shallowRef<SettingsDocument>();
   const draft = ref<SettingsDocument>();
-  const baseline = ref<SettingsDocument>();
+  const baseline = shallowRef<SettingsDocument>();
   const error = ref('');
   const busy = ref(false);
   const textBusy = ref('');
@@ -32,16 +36,13 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
   let blurSave: Promise<void> | undefined;
   let disposed = false;
   let applying = false;
-  const changes = computed(
-    () =>
-      Object.fromEntries(
-        scopes.map((scope) => [
-          scope,
-          saved.value && draft.value ? difference(saved.value[scope], draft.value[scope]) : {},
-        ]),
-      ) as Record<SettingsScope, SettingsObject>,
-  );
-  const pending = computed(() => scopes.some((scope) => Object.keys(changes.value[scope]).length));
+  function scopeChanges(scope: SettingsScope) {
+    return computed(() =>
+      saved.value && draft.value ? difference(saved.value[scope], draft.value[scope]) : {},
+    );
+  }
+  const changes = { story: scopeChanges('story'), shared: scopeChanges('shared') };
+  const pending = computed(() => scopes.some((scope) => Object.keys(changes[scope].value).length));
   const textDirty = computed(() =>
     Object.keys(textDrafts.value).filter((key) => {
       const [scope, ...path] = key.split('.');
@@ -52,18 +53,21 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
     }),
   );
 
-  async function initialize() {
+  async function initialize(base?: SettingsDocument) {
     try {
-      const result = await api('/settings/edit-sessions', {});
+      const result = await rawApi('/settings/edit-sessions', base ? { known_revisions: base.revisions } : {});
       if (disposed) {
-        await api(`/settings/edit-sessions/${result.id}`, undefined, 'DELETE');
+        await rawApi(`/settings/edit-sessions/${result.id}`, undefined, 'DELETE');
         return;
       }
+      const previousToken = token.value;
       token.value = result.id;
-      saved.value = clone(result.settings);
-      draft.value = clone(result.settings);
-      baseline.value = clone(result.settings);
-      updated(result.settings);
+      const current: SettingsDocument = base ? applySettingsUpdate(base, result.settings) : result.settings;
+      saved.value = baseline.value = current;
+      draft.value = { ...current, story: clone(current.story), shared: clone(current.shared) };
+      secretChanged.value = webSecretChanged.value = false;
+      updated(current);
+      if (previousToken) await rawApi(`/settings/edit-sessions/${previousToken}`, undefined, 'DELETE');
     } catch (e) {
       error.value = String(e);
     }
@@ -77,21 +81,15 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
     if (!saved.value || !draft.value || !Object.keys(sent).length) return;
     busy.value = true;
     try {
-      const before = clone(saved.value);
-      const response: SettingsDocument = await api(
-        `/settings/${scope}`,
-        {
-          expected_revision: before.revisions[scope],
-          changes: sent,
-          edit_session: token.value,
-        },
-        'PATCH',
-      );
+      const before = saved.value;
+      const response = await saveSettings(before, scope, sent, token.value);
       applying = true;
-      const current = clone(draft.value);
-      if (manual) for (const [path, value] of Object.entries(sent)) setPath(current[scope], path, value);
+      // Manual controls keep a separate text/collection draft until Save.
+      const current = manual
+        ? { ...draft.value, [scope]: withFields(draft.value[scope], sent) }
+        : draft.value;
       draft.value = rebaseSettings(before, current, response, scope, sent);
-      saved.value = clone(response);
+      saved.value = response;
       applying = false;
       error.value = '';
       if (scope === 'shared' && sent.providers?.some((provider: { api_key?: string }) => provider.api_key))
@@ -112,7 +110,7 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
     return enqueue(async () => {
       const failures: string[] = [];
       for (const scope of scopes) {
-        const sent = clone(changes.value[scope]);
+        const sent = changes[scope].value;
         try {
           await commit(scope, sent);
         } catch (e) {
@@ -139,7 +137,7 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
       immediate ? 0 : 600,
     );
   }
-  watch(draft, () => schedule(), { deep: true, flush: 'sync' });
+  watch([changes.story, changes.shared], () => schedule(), { flush: 'sync' });
 
   function textValue(scope: SettingsScope, path: string) {
     return draftValue(scope, path) ?? '';
@@ -196,8 +194,11 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
     if (!draft.value || !saved.value) return;
     applying = true;
     if (page) {
-      for (const path of page.paths)
-        setPath(draft.value[page.scope], path, getPath(saved.value[page.scope], path));
+      for (const path of page.paths) {
+        const value = getPath(saved.value[page.scope], path);
+        if (!equal(getPath(draft.value[page.scope], path), value))
+          setPath(draft.value[page.scope], path, value);
+      }
       for (const key of Object.keys(textDrafts.value))
         if (
           page.paths.some(
@@ -206,7 +207,7 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
         )
           delete textDrafts.value[key];
     } else {
-      draft.value = clone(saved.value);
+      draft.value = { ...saved.value, story: clone(saved.value.story), shared: clone(saved.value.shared) };
       textDrafts.value = {};
     }
     applying = false;
@@ -233,23 +234,22 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
     await enqueue(async () => {
       busy.value = true;
       try {
-        const response: SettingsDocument = await api(`/settings/edit-sessions/${token.value}/undo`, {
+        const before = saved.value!;
+        const update: SettingsUpdate = await rawApi(`/settings/edit-sessions/${token.value}/undo`, {
           page: page.id,
-          expected_revision: saved.value!.revisions[page.scope],
+          expected_revision: before.revisions[page.scope],
+          known_revisions: before.revisions,
         });
-        const sent = Object.fromEntries(
-          page.paths.map((path) => [path, getPath(response[page.scope], path)]),
-        );
+        const response = applySettingsUpdate(before, update);
         applying = true;
-        // Preserve other pages, but deliberately discard all local changes on this page.
-        for (const [path, value] of Object.entries(sent)) setPath(draft.value![page.scope], path, value);
-        draft.value = rebaseSettings(saved.value!, draft.value!, response, page.scope, sent);
-        saved.value = clone(response);
+        draft.value = rebaseSettings(before, draft.value!, response, page.scope, {});
+        saved.value = response;
+        // An undo acknowledges the entire page; pending edits on other pages survive.
         discard(page);
-        applying = false;
         updated(response);
         if (page.id === 'shared.providers') secretChanged.value = false;
         if (page.id === 'shared.web') webSecretChanged.value = false;
+        if (pending.value) schedule();
       } catch (e) {
         error.value = String(e);
       } finally {
@@ -270,17 +270,22 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
     window.removeEventListener('beforeunload', beforeUnload);
     void queue.finally(() => {
       if (token.value)
-        void api(`/settings/edit-sessions/${token.value}`, undefined, 'DELETE').catch(() => undefined);
+        void rawApi(`/settings/edit-sessions/${token.value}`, undefined, 'DELETE').catch(() => undefined);
     });
   });
-  function acceptRefresh(response: SettingsDocument) {
-    if (!saved.value || !draft.value) return;
-    applying = true;
-    draft.value = rebaseSettings(saved.value, draft.value, response, 'story', {});
-    saved.value = clone(response);
-    applying = false;
-    updated(response);
-    if (pending.value) schedule();
+  function refreshAfterProbe() {
+    return enqueue(async () => {
+      if (!saved.value || !draft.value) return;
+      const before = saved.value;
+      const response = await refreshSettings(before);
+      if (disposed || response === before) return;
+      applying = true;
+      draft.value = rebaseSettings(before, draft.value, response, 'story', {});
+      saved.value = response;
+      applying = false;
+      updated(response);
+      if (pending.value) schedule();
+    });
   }
   return {
     saved,
@@ -306,6 +311,6 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
     discard,
     pageChanged,
     undo,
-    acceptRefresh,
+    refreshAfterProbe,
   };
 }

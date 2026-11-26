@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { api } from '../../lib/api';
-import type { PreferencePreset, SettingsDocument } from '../../lib/settingsDocument';
+import { rawApi } from '../../lib/api';
+import { applySettingsUpdate, type SettingsDocument, type SettingsUpdate } from '../../lib/settingsDocument';
 
-const props = defineProps<{ modelValue: string; revision: number; presets: PreferencePreset[] }>();
+const props = defineProps<{ modelValue: string; revision: number; settings: SettingsDocument }>();
 const emit = defineEmits<{
   'update:modelValue': [value: string];
   saved: [settings: SettingsDocument];
   manage: [];
 }>();
 const selectedId = ref('');
-const selected = computed(() => props.presets.find((preset) => preset.id === selectedId.value));
+const presets = computed(() => props.settings.shared.preference_presets);
+const selected = computed(() => presets.value.find((preset) => preset.id === selectedId.value));
 const naming = ref(false);
 const name = ref('');
 const nameInput = ref<HTMLInputElement>();
@@ -18,12 +19,9 @@ const saveButton = ref<HTMLButtonElement>();
 const saving = ref(false);
 const error = ref('');
 const notice = ref('');
-watch(
-  () => props.presets,
-  () => {
-    if (!selected.value) selectedId.value = '';
-  },
-);
+watch(presets, () => {
+  if (!selected.value) selectedId.value = '';
+});
 watch(
   () => [props.modelValue, props.revision],
   () => {
@@ -63,29 +61,14 @@ async function save() {
   saving.value = true;
   error.value = '';
   try {
-    // Read first so adding an item never overwrites another window's saved list.
-    const current: SettingsDocument = await api('/settings');
-    const duplicate = current.shared.preference_presets.find(
-      (preset) => preset.content.trim() === content.trim(),
+    const base = props.settings;
+    const result: { id: string; name: string; created: boolean; settings: SettingsUpdate } = await rawApi(
+      '/settings/preference-presets',
+      { preset: { id: crypto.randomUUID(), name: presetName, content }, known_revisions: base.revisions },
     );
-    if (duplicate) {
-      emit('saved', current);
-      selectedId.value = duplicate.id;
-      notice.value = `此偏好已保存为“${duplicate.name}”。`;
-    } else {
-      const preset: PreferencePreset = { id: crypto.randomUUID(), name: presetName, content };
-      const updated: SettingsDocument = await api(
-        '/settings/shared',
-        {
-          expected_revision: current.revisions.shared,
-          changes: { preference_presets: [...current.shared.preference_presets, preset] },
-        },
-        'PATCH',
-      );
-      emit('saved', updated);
-      selectedId.value = preset.id;
-      notice.value = '已保存为常用偏好。';
-    }
+    emit('saved', applySettingsUpdate(base, result.settings));
+    selectedId.value = result.id;
+    notice.value = result.created ? '已保存为常用偏好。' : `此偏好已保存为“${result.name}”。`;
     naming.value = false;
     await nextTick();
     saveButton.value?.focus();

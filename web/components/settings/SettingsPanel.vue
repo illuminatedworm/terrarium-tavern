@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, provide, ref } from 'vue';
-import { api } from '../../lib/api';
 import { useSettingsEditor } from '../../composables/useSettingsEditor';
 import type {
   SettingsDocument,
@@ -44,6 +43,7 @@ import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { blankChannelProfile, channelProviders, storyProfileKey, type Channel } from '../../lib/channels';
 import type { ModelWarmupState } from '../../composables/useModelWarmup';
 const props = defineProps<{
+  settings?: SettingsDocument | null;
   initialPage?: string;
   initialChannel?: Channel;
   effortOptions: Array<{ value: string; label: string }>;
@@ -190,14 +190,13 @@ function changed(event: Event) {
 }
 async function refreshAfterProbe() {
   try {
-    const latest: SettingsDocument = await api('/settings');
-    editor.acceptRefresh(latest);
+    await editor.refreshAfterProbe();
   } catch (e) {
     error.value = String(e);
   }
 }
 async function afterImport(result: TransferResult) {
-  if (result.settings_restored) await editor.initialize();
+  if (result.settings_restored) await editor.initialize(props.settings ?? undefined);
   emit('imported', result);
 }
 async function savePresets() {
@@ -274,7 +273,7 @@ function selectSearch(result: { page: SettingsPage; label: string; path: string 
   });
 }
 onMounted(async () => {
-  await editor.initialize();
+  await editor.initialize(props.settings ?? undefined);
   const previous = props.initialPage || localStorage.getItem('tavern-settings-page');
   const pages = draft.value?.pages;
   const page = pages?.find((p) => p.id === previous);
@@ -310,7 +309,8 @@ onMounted(async () => {
       <SaveStatus :state="status" :revision="JSON.stringify(saved?.revisions || {})" />
     </header>
     <p v-if="!draft" class="settings-loading">
-      {{ error || '正在读取设置…' }}<button v-if="error" @click="editor.initialize">重试</button>
+      {{ error || '正在读取设置…'
+      }}<button v-if="error" @click="editor.initialize(props.settings ?? undefined)">重试</button>
     </p>
     <div v-else class="settings-layout">
       <nav class="settings-pages" aria-label="设置页面">

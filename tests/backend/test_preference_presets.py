@@ -1,5 +1,6 @@
 """Reusable preferences stay shared, revision checked, and separate from session text."""
 
+import asyncio
 from copy import deepcopy
 
 import pytest
@@ -78,6 +79,36 @@ async def test_shared_presets_crud_revisions_persistence_and_page_undo(tmp_path)
         assert undo.status_code == 200, undo.text
         assert undo.json()["shared"]["preference_presets"] == []
         assert Store(tmp_path).settings_document().shared.preference_presets == []
+
+
+async def test_appending_presets_from_two_windows_keeps_both_and_deduplicates_retries(tmp_path):
+    app = create_app(tmp_path)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        known = (await client.get("/api/settings")).json()["revisions"]
+
+        async def append(preset, revisions):
+            response = await client.post(
+                "/api/settings/preference-presets", json={"preset": preset, "known_revisions": revisions}
+            )
+            response.raise_for_status()
+            return response.json()
+
+        first = {"id": "pace", "name": "节奏", "content": " 放缓节奏。\n"}
+        second = {"id": "dialogue", "name": "对白", "content": "多用对白。"}
+        writes = await asyncio.gather(append(first, known), append(second, known))
+        earlier, later = sorted(writes, key=lambda w: w["settings"]["revisions"]["shared"])
+        items = {p["id"]: p for p in (first, second)}
+        assert earlier["created"] and later["created"]
+        assert earlier["settings"]["changes"] == {"shared": {"preference_presets.0": items[earlier["id"]]}}
+        persisted = (await client.get("/api/settings")).json()
+        assert persisted["shared"]["preference_presets"] == [items[earlier["id"]], items[later["id"]]]
+        assert later["settings"]["changes"] == {"shared": persisted["shared"]}
+        assert persisted["revisions"]["shared"] == known["shared"] + 2
+        retry = await append(
+            {"id": "retry", "name": "新名称", "content": first["content"].strip()}, persisted["revisions"]
+        )
+        assert (retry["created"], retry["id"], retry["name"]) == (False, first["id"], first["name"])
+        assert retry["settings"] == {"revisions": persisted["revisions"], "changes": {}}
 
 
 @pytest.mark.parametrize(

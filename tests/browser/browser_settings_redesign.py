@@ -383,7 +383,9 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                             for key, value in (await read())["shared"]["kemini"].items()
                             if isinstance(value, str)
                         }
-                        assert len(prompts) == 13
+                        await expect(dialog.locator('[data-setting-path^="kemini."] textarea')).to_have_count(
+                            len(prompts)
+                        )
                         for key, text in prompts.items():
                             field = page.locator(f'[data-setting-path="kemini.{key}"] textarea')
                             await expect(field).to_have_value(text)

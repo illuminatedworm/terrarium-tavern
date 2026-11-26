@@ -6,6 +6,7 @@ from urllib.parse import quote
 from fastapi import File, UploadFile
 from fastapi.responses import Response
 
+from tavern.application.settings_view import public_settings, settings_since
 from tavern.character.cards import MAX_BYTES, export_lorebook
 from tavern.character.lore_purpose import upgrade_lore_purposes
 from tavern.character.worldbooks import validate_book
@@ -58,8 +59,22 @@ def register_worldbook_routes(app, store):
         )
 
     @app.get("/api/cards/{cid}/defaults")
-    async def card_defaults(cid: str):
-        return worldbooks.card_defaults(store, cid)
+    def card_defaults(
+        cid: str, setup: bool = False, story_revision: int | None = None, shared_revision: int | None = None
+    ):
+        if not setup:
+            return worldbooks.card_defaults(store, cid)
+        # The wizard already needs these defaults. Check its settings in the
+        # same read snapshot, including when a second window changed channels.
+        with store.connection() as db:
+            db.execute("BEGIN")
+            defaults = worldbooks.read_defaults(db, cid)
+            settings = (
+                settings_since(db, story_revision, shared_revision)
+                if story_revision is not None and shared_revision is not None
+                else public_settings(store.settings_document(db=db))
+            )
+        return {**defaults, "settings": settings}
 
     @app.put("/api/cards/{cid}/defaults")
     async def save_card_defaults(cid: str, edit: CardDefaultsEdit):

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { clone, difference, rebaseSettings, type SettingsDocument } from '../../web/lib/settingsDocument';
+import {
+  applySettingsUpdate,
+  clone,
+  difference,
+  latestSettings,
+  rebaseSettings,
+  type SettingsDocument,
+} from '../../web/lib/settingsDocument';
 
 const fixture = () =>
   ({
@@ -46,13 +53,23 @@ describe('settings acknowledgements', () => {
     const draft = clone(saved);
     draft.story.model.reply_tokens = 4096;
     draft.shared.send_shortcut = 'enter';
-    const response = clone(saved);
-    response.story.model.reply_tokens = 3000;
-    response.revisions.story = 1;
+    const response = applySettingsUpdate(saved, {
+      revisions: { story: 1, shared: 0 },
+      changes: { story: { 'model.reply_tokens': 3000 } },
+    });
+    expect(saved.story.model.reply_tokens).toBe(2048);
     const rebased = rebaseSettings(saved, draft, response, 'story', { 'model.reply_tokens': 3000 });
     expect(rebased.story.model.reply_tokens).toBe(4096);
     expect(rebased.shared.send_shortcut).toBe('enter');
     expect(rebased.revisions.story).toBe(1);
+    const other = applySettingsUpdate(saved, {
+      revisions: { story: 0, shared: 1 },
+      changes: { shared: { 'providers.0.name': 'Changed elsewhere' } },
+    });
+    const combined = latestSettings(other, response);
+    expect(combined.story.model.reply_tokens).toBe(3000);
+    expect(combined.shared.providers[0].name).toBe('Changed elsewhere');
+    expect(saved.shared.providers[0].name).toBe('Provider');
   });
   it('does not repeatedly send an acknowledged secret omitted from the response', () => {
     const saved = fixture();

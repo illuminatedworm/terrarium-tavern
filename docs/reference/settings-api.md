@@ -30,6 +30,8 @@
 
 `GET /api/settings` 返回 `version`、两个配置范围、`revisions`、设置页面目录 `pages` 和提示词目录 `prompt_definitions`。提供商只返回 `has_api_key`，不返回密钥原文。
 
+已持有完整设置的客户端可传 `story_revision` 和 `shared_revision` 两个查询参数。响应包含最新 `revisions` 和按范围分组的 `changes`。两者均已是最新时，`changes` 为 `{}`。读取时只补回修订号不同的范围，页面和提示词目录沿用初次读取的内容。
+
 `GET /api/settings/reasoning?api_mode=...&model=...` 只读取普通 API 的本地思考规则，返回 `id/display_name`、`supported_reasoning_levels: [{effort, description}]` 和说明 `note`。它不联网，不修改设置或模型列表缓存；在 Gemini 原生预算档位中，`description` 包含对应的思考 tokens。设置页和输入框共用此接口，SIWC 使用账号模型目录。
 
 `PATCH /api/settings/{scope}` 接受：
@@ -39,6 +41,9 @@
 | `expected_revision` | 是 | 从最新读取结果取得的该范围修订号 |
 | `changes` | 是 | 相对于该范围的字段路径到新值的映射 |
 | `edit_session` | 否 | 将修改关联到一个可撤回的设置编辑会话 |
+| `known_revisions` | 否 | 客户端持有的 `story` 和 `shared` 修订号。提供时返回增量回执，省略时返回完整公开设置 |
+
+增量回执使用写入后实际生效的值。例如单独切换发送快捷键后，`changes` 可为 `{"shared":{"send_shortcut":"enter"}}`。客户端按字段路径合并到发起请求时的已保存设置，并更新两个范围的修订号。服务端会附上连带变化的模型能力等字段。若客户端错过另一范围的修改，将收到该范围的全部公开字段。数组增删或对象形状改变时按整个字段替换。常用偏好列表只在末尾新增一项时，按新项下标返回。密钥只以公开状态表示。写入范围仍单独检查 `expected_revision`。
 
 例如，读取到 `revisions.story` 为 3 后，调整剧情模型输出预算：
 
@@ -52,12 +57,14 @@ Content-Type: application/json
 }
 ```
 
-- 成功响应为完整的公开设置文档，下一次修改使用其中的修订号。
+- 下一次修改使用成功响应中的修订号。上例省略了 `known_revisions`，会收到完整的公开设置文档。
 - 字段路径使用点分形式，如 `model.reply_tokens`。提供商引用、预算关联和字段类型整体校验后写入。
 - 更新 `shared.providers` 时应带上其余提供商。已有提供商的 `api_key` 留空或省略表示保留密钥，不能用空字符串清空。
 - `capability` 与 `capability_key` 由连接检查维护，不能通过 PATCH 写入。
 
 常用偏好保存在 `shared.preference_presets`，默认为空数组。每项包含唯一的 `id`、`name`（最多 80 个字符）和 `content`，三者都不能只含空白，偏好原文保留换行和空格。通过 `PATCH /api/settings/shared` 整体更新列表；设置页标识为 `shared.preference_presets`，支持修订检查和页级撤回。常用偏好只是可复用内容，不会自动关联或更新会话的 `turn_preference`。
+
+会话内“保存为常用偏好”使用 `POST /api/settings/preference-presets`，请求包含单个 `preset` 和可选的 `known_revisions`。服务端在同一事务内比较去除首尾空白的内容，已存在时返回原项，否则按原文追加到最新列表。响应包含 `id`、`name`、`created` 和对应的 `settings` 回执。两个窗口同时保存不同条目时会保留两项，重试相同内容时沿用原项及修订号。
 
 ## 单项设置字段
 
@@ -138,7 +145,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 | `PUT /api/worldbooks/{id}` | `{name, book, expected_revision}`；修订号不一致返回 409 |
 | `DELETE /api/worldbooks/{id}` | 删除书库记录；已挂载的对话保留各自副本 |
 | `GET /api/worldbooks/{id}/export` | JSON 附件，条目旗标按角色卡导出的规范名写入 `extensions` |
-| `GET /api/cards/{cid}/defaults` | `{persona_id, worldbook_ids, version}`，未设置时 `version` 为 0 |
+| `GET /api/cards/{cid}/defaults` | `{persona_id, worldbook_ids, version}`，未设置时 `version` 为 0。新故事向导使用 `setup=true` 同时取得 `settings`，带两个设置修订号时只返回对应设置增量 |
 | `PUT /api/cards/{cid}/defaults` | `{persona_id, worldbook_ids, expected_version}`；只影响新建对话的预选项 |
 | `PUT /api/sessions/{sid}/worldbooks` | `{worldbook_ids, reload, expected_revision, operation_id}`；按顺序设定挂载，`reload` 只能包含仍挂载的书 |
 
@@ -209,13 +216,15 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 ## 页级撤回
 
-1. `POST /api/settings/edit-sessions` 返回 `id` 和当前 `settings`，服务器同时保存基线快照。
+1. `POST /api/settings/edit-sessions` 返回 `id` 和当前 `settings`，服务器同时保存基线快照。请求体携带 `known_revisions` 时，`settings` 为相对这两个修订号的回执。
 2. 后续 PATCH 携带这个 `edit_session`，服务器记录该编辑会话最近写入的值。
 3. `POST /api/settings/edit-sessions/{id}/undo` 接受页面标识和该页面所属范围的修订号，例如：
 
    ```json
    {"page": "story.model", "expected_revision": 4}
    ```
+
+   撤回也可传入 `known_revisions` 取得增量回执。
 
 4. `DELETE /api/settings/edit-sessions/{id}` 释放快照。
 
@@ -366,7 +375,8 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 | 入口 | 职责 |
 |---|---|
 | [core/settings.py](../../src/tavern/core/settings.py) | 设置模型、迁移、运行时投影 |
-| [application/settings_api.py](../../src/tavern/application/settings_api.py) | 页面目录、修订校验、公开视图和撤回 |
+| [application/settings_api.py](../../src/tavern/application/settings_api.py) | 修订校验、保存和页级撤回 |
+| [application/settings_view.py](../../src/tavern/application/settings_view.py) | 页面和提示词目录、密钥脱敏与增量回执 |
 | [storage/store.py](../../src/tavern/storage/store.py) | 数据库版本检查、备份与持久化 |
 | [useSettingsEditor.ts](../../web/composables/useSettingsEditor.ts) | 保存队列、草稿与响应合并 |
 | [test_settings_document.py](../../tests/backend/test_settings_document.py) | 设置范围、迁移、密钥保护与并发行为 |

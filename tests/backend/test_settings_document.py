@@ -375,6 +375,62 @@ async def test_scoped_updates_undo_and_secret_preservation(tmp_path):
         assert (await client.put("/api/settings", json={})).status_code == 405
 
 
+async def test_settings_delta_preserves_other_scopes_and_redacts_rotated_keys(tmp_path):
+    app = create_app(tmp_path)
+    store = app.state.store
+    doc = store.settings_document()
+    doc.story.model.provider_id, doc.story.model.model = "default", "fixture"
+    doc.story.model.capability, doc.story.model.capability_key = "accepted", "checked"
+    doc.shared.providers[0].api_key = "old-private"
+    store.save_settings(doc)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        original = (await client.get("/api/settings")).json()
+        known = original["revisions"]
+        opened = (await client.post("/api/settings/edit-sessions", json={"known_revisions": known})).json()
+        assert opened["settings"] == {"revisions": known, "changes": {}}
+        token = opened["id"]
+        providers = deepcopy(original["shared"]["providers"])
+        providers[0].update(base_url="https://changed.example", api_key="new-private")
+        write = await client.patch(
+            "/api/settings/shared",
+            json={
+                "edit_session": token,
+                "expected_revision": known["shared"],
+                "known_revisions": known,
+                "changes": {"providers": providers},
+            },
+        )
+        write.raise_for_status()
+        delta = write.json()
+        assert delta["changes"]["story"] == {"model.capability": "unknown", "model.capability_key": ""}
+        assert delta["changes"]["shared"]["providers.0.base_url"] == providers[0]["base_url"]
+        assert "private" not in write.text and "prompt_definitions" not in delta
+        assert store.settings_document().shared.providers[0].api_key == "new-private"
+
+        # The editor later undoes its own provider change, after missing a write
+        # from another window to a different scope. Both revisions must match the values.
+        known = delta["revisions"]
+        other = await client.patch(
+            "/api/settings/story",
+            json={"expected_revision": known["story"], "changes": {"lore_preview_chars": 51}},
+        )
+        other.raise_for_status()
+        undo = await client.post(
+            f"/api/settings/edit-sessions/{token}/undo",
+            json={
+                "expected_revision": known["shared"],
+                "known_revisions": known,
+                "page": "shared.providers",
+            },
+        )
+        undo.raise_for_status()
+        current = (await client.get("/api/settings")).json()
+        assert undo.json()["changes"]["story"] == current["story"]
+        assert undo.json()["revisions"] == current["revisions"] and "private" not in undo.text
+        assert current["story"]["lore_preview_chars"] == 51
+        assert store.settings_document().shared.providers[0].api_key == "old-private"
+
+
 async def test_other_window_changes_cannot_be_undone_and_capabilities_cannot_be_forged(tmp_path):
     app = create_app(tmp_path)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:

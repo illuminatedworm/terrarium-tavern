@@ -6,7 +6,7 @@ import Icon from '../common/Icon.vue';
 import PreferencePresetPicker from '../settings/PreferencePresetPicker.vue';
 import PolicySelect from '../settings/PolicySelect.vue';
 import { clone } from '../../lib/settingsDocument';
-import type { PreferencePreset, SettingsDocument } from '../../lib/settingsDocument';
+import type { SettingsDocument } from '../../lib/settingsDocument';
 import type { Session } from '../../lib/types';
 
 export type SessionOptionsDraft = Pick<Session, 'persona' | 'persona_data' | 'policy' | 'turn_preference'>;
@@ -19,7 +19,7 @@ const props = defineProps<{
   permissionDisabled: boolean;
   preferencePrompt: string;
   inheritedPolicy?: string;
-  presets: PreferencePreset[];
+  settings: SettingsDocument;
   exportDisabled: boolean;
   exporting: boolean;
 }>();
@@ -88,7 +88,7 @@ const advanced = ref(false);
         :key="session.id"
         v-model="draft.turn_preference"
         :revision="session.revision"
-        :presets="presets"
+        :settings="settings"
         @saved="emit('presets-saved', $event)"
         @manage="emit('manage-presets')"
       />

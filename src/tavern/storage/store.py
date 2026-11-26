@@ -505,9 +505,9 @@ class Store(MessageAdapters):
             current = SettingsDocument.model_validate_json(
                 db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
             )
-            for scope in document.revisions:
-                if getattr(current, scope) != getattr(document, scope):
-                    document.revisions[scope] = current.revisions[scope] + 1
+            for scope, revision in current.revisions.items():
+                changed = getattr(current, scope) != getattr(document, scope)
+                document.revisions[scope] = revision + int(changed)
             self.write_settings(db, current, document)
 
     def write_settings(

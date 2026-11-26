@@ -3,26 +3,25 @@
 import time
 import uuid
 from copy import deepcopy
-from typing import Literal
 from uuid import UUID
 
 from fastapi import Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from tavern.application.settings_view import (
+    Scope,
+    get_path,
+    page_catalog,
+    public_settings,
+    settings_since,
+    settings_view,
+)
 from tavern.core.channels import profile_key
 from tavern.core.errors import NotFound
-from tavern.core.prompts import PROMPT_DEFINITIONS, STORY_SYSTEM_PROMPT_DEFINITION
+from tavern.core.models import PreferencePreset
 from tavern.core.settings import SettingsDocument
 from tavern.storage.store import Conflict
-
-Scope = Literal["story", "shared"]
-
-
-def get_path(value, path):
-    for part in path.split("."):
-        value = value[int(part)] if isinstance(value, list) else value[part]
-    return value
 
 
 def put_path(value, path, replacement):
@@ -44,108 +43,44 @@ def editable(value):
     return value
 
 
-def prompt_catalog():
-    result = []
-    from tavern.advisor.config import SYSTEM
-    from tavern.character.editor_config import SYSTEM as EDITOR_SYSTEM
-
-    result.append(
-        {
-            "scope": "shared",
-            "path": "advisor.system_prompt",
-            "label": "参谋 agent 系统提示词",
-            "description": "参谋 agent 的咨询方式与项目资料说明；实际写入权限由 Runtime 控制。",
-            "default": SYSTEM,
-            "choices": True,
-        }
-    )
-    result.append(
-        {
-            "scope": "shared",
-            "path": "card_author_config.system_prompt",
-            "label": "制卡 agent 系统提示词",
-            "description": "制卡 agent 的创作方式与工作规则；保存后从下一次发送或继续生效，工具权限仍由 Runtime 控制。",
-            "default": EDITOR_SYSTEM,
-            "choices": True,
-        }
-    )
-    defaults = SettingsDocument().story.model_dump()
-    for prompt in (STORY_SYSTEM_PROMPT_DEFINITION, *PROMPT_DEFINITIONS):
-        path = prompt["path"]
-        default = get_path(defaults, path)
-        definition = {
-            **prompt,
-            "scope": "story",
-            "path": path,
-            "label": prompt["label"].replace("Reranker", "重排模型"),
-            "default": default,
-        }
-        if isinstance(default, dict):
-            definition.update(choices=True, default=default["options"][0]["text"])
-        result.append(definition)
-    return result
+class SettingsRead(BaseModel):
+    known_revisions: dict[Scope, int] | None = None
 
 
-def page_catalog():
-    result = []
-    prompts = prompt_catalog()
-    fields = SettingsDocument().story.model_dump()
-    retrieval = [f"retrieval.{key}" for key in fields["retrieval"]]
-    retrieval += [f"local_runtime.{key}" for key in ("reranker_enabled", "rerank_fragments")]
-    retrieval += [key for key in fields if key.startswith("lore_")]
-    for key, label, paths in [
-        ("model", "模型与生成", ["model", "official_model", "default_channel", "policy"]),
-        ("retrieval", "检索与世界书", retrieval),
-        ("memory", "工具与记忆", ["tools"]),
-        ("media", "配音与生图", ["media"]),
-        ("prompts", "提示词", [p["path"] for p in prompts if p["scope"] == "story"]),
-        ("novel", "资料调查", ["novel_research", "model.message_adapter"]),
-    ]:
-        result.append({"id": f"story.{key}", "scope": "story", "key": key, "label": label, "paths": paths})
-    for key, label, paths in [
-        ("providers", "提供商", ["providers"]),
-        ("advisor", "参谋 agent", ["advisor"]),
-        ("editor", "制卡 agent", ["card_author", "card_author_config"]),
-        ("preference_presets", "常用偏好", ["preference_presets"]),
-        ("web", "联网与代理", ["web", "network", "model_request_mode"]),
-        ("local", "本地资源", ["local_models"]),
-        ("storage", "数据与存储", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"]),
-        (
-            "misc",
-            "杂项",
-            [
-                "send_shortcut",
-                "debug_failed_requests",
-                "debug_story_prefix",
-                "kemini",
-                "unicode_story_enabled",
-            ],
-        ),
-    ]:
-        result.append({"id": f"shared.{key}", "scope": "shared", "key": key, "label": label, "paths": paths})
-    return result
-
-
-def public_settings(doc):
-    from tavern.web.config import public_web
-
-    result = doc.model_dump()
-    result["shared"]["web"] = public_web(doc.shared.web)
-    for provider in result["shared"]["providers"]:
-        provider["has_api_key"] = bool(provider.pop("api_key"))
-    result.update(pages=page_catalog(), prompt_definitions=prompt_catalog())
-    return result
-
-
-class SettingsPatch(BaseModel):
+class SettingsPatch(SettingsRead):
     expected_revision: int = Field(ge=0)
     changes: dict
     edit_session: str | None = None
 
 
-class UndoRequest(BaseModel):
+class UndoRequest(SettingsRead):
     page: str
     expected_revision: int = Field(ge=0)
+
+
+class PresetAppend(SettingsRead):
+    preset: PreferencePreset
+
+
+def remember_edits(editor, scope, paths, document):
+    latest = editor["latest"][scope]
+    fields = {path.split(".", 1)[0] for path in paths}
+    saved = getattr(document, scope).model_dump(include=fields)
+    for path in paths:
+        root, dot, _ = path.partition(".")
+        if not dot:
+            latest[root] = saved[root]
+        else:
+            if root not in latest:
+                # Start with this editor's baseline, not another window's changes
+                # to sibling paths. Undo must still detect those conflicts.
+                latest[root] = deepcopy(editor["baseline"][scope][root])
+            try:
+                put_path(latest, path, get_path(saved, path))
+            except (IndexError, KeyError, TypeError, ValueError):
+                # Another window can create a nullable profile or a list slot absent
+                # from our baseline. Keep that ancestor divergent for the undo check.
+                continue
 
 
 def validate_document(raw):
@@ -161,25 +96,32 @@ def validate_document(raw):
 
 
 def invalidate_capabilities(old, new):
+    providers_changed = old.shared.providers != new.shared.providers
     for key in ("model", "official_model"):
         before, after = (
             getattr(old.story.novel_research, key),
             getattr(new.story.novel_research, key),
         )
         if after is not None and (
-            before is None
-            or before.model_dump(exclude={"capability", "capability_key"})
-            != after.model_dump(exclude={"capability", "capability_key"})
-            or old.shared.providers != new.shared.providers
+            providers_changed
+            or before is None
+            or (
+                before != after
+                and before.model_dump(exclude={"capability", "capability_key"})
+                != after.model_dump(exclude={"capability", "capability_key"})
+            )
         ):
             after.capability, after.capability_key = "unknown", ""
     for key in ("model", "official_model"):
         before, after = getattr(old.shared.advisor, key), getattr(new.shared.advisor, key)
         if after is not None and (
-            before is None
-            or before.model_dump(exclude={"capability", "capability_key"})
-            != after.model_dump(exclude={"capability", "capability_key"})
-            or old.shared.providers != new.shared.providers
+            providers_changed
+            or before is None
+            or (
+                before != after
+                and before.model_dump(exclude={"capability", "capability_key"})
+                != after.model_dump(exclude={"capability", "capability_key"})
+            )
         ):
             after.capability, after.capability_key = "unknown", ""
     for scope, key, after in new.profiles():
@@ -207,6 +149,17 @@ def invalidate_capabilities(old, new):
             provider.chatgpt_account_id,
         ):
             after.capability, after.capability_key = "unknown", ""
+
+
+def save_changes(store, db, old: SettingsDocument, raw: dict) -> SettingsDocument:
+    new = validate_document(raw)
+    invalidate_capabilities(old, new)
+    for scope in new.revisions:
+        if getattr(new, scope) != getattr(old, scope):
+            new.revisions[scope] += 1
+    if new.revisions != old.revisions:
+        store.write_settings(db, old, new)
+    return new
 
 
 def register_settings_routes(app, store):
@@ -258,11 +211,14 @@ def register_settings_routes(app, store):
         )
 
     @app.get("/api/settings")
-    async def read_settings():
+    def read_settings(story_revision: int | None = None, shared_revision: int | None = None):
+        if story_revision is not None and shared_revision is not None:
+            with store.connection() as db:
+                return settings_since(db, story_revision, shared_revision)
         return public_settings(store.settings_document())
 
     @app.post("/api/settings/edit-sessions")
-    async def open_editor():
+    async def open_editor(payload: SettingsRead | None = None):
         prune()
         if len(snapshots) >= 64:
             raise Conflict("设置编辑窗口过多，请先关闭其他窗口")
@@ -270,24 +226,45 @@ def register_settings_routes(app, store):
         token = uuid.uuid4().hex
         snapshots[token] = {
             "baseline": doc.model_dump(),
-            "latest": doc.model_dump(),
+            "latest": {"story": {}, "shared": {}},
             "expires": time.monotonic() + 7200,
         }
-        return {"id": token, "settings": public_settings(doc)}
+        return {"id": token, "settings": settings_view(doc, payload.known_revisions if payload else None)}
 
     @app.delete("/api/settings/edit-sessions/{token}")
     async def close_editor(token: str):
         snapshots.pop(token, None)
         return {"ok": True}
 
+    @app.post("/api/settings/preference-presets")
+    def append_preset(payload: PresetAppend):
+        # Deduplicate and append to the current list under the same write lock.
+        # Independent windows may hold older copies of the list.
+        with store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            old = store.settings_document(db=db)
+            content = payload.preset.content.strip()
+            existing = next((p for p in old.shared.preference_presets if p.content.strip() == content), None)
+            if existing is None:
+                raw = old.model_dump()
+                raw["shared"]["preference_presets"].append(payload.preset.model_dump())
+                new = save_changes(store, db, old, raw)
+            else:
+                new = old
+        preset = existing or payload.preset
+        return {
+            "id": preset.id,
+            "name": preset.name,
+            "created": existing is None,
+            "settings": settings_view(new, payload.known_revisions, old),
+        }
+
     @app.patch("/api/settings/{scope}")
     async def patch(scope: Scope, payload: SettingsPatch):
         editor = snapshot(payload.edit_session) if payload.edit_session else None
         with store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            old = SettingsDocument.model_validate_json(
-                db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
-            )
+            old = store.settings_document(db=db)
             if old.revisions[scope] != payload.expected_revision:
                 raise Conflict("设置已在其他窗口改变，请重新载入后再修改；当前草稿仍保留")
             raw = old.model_dump()
@@ -333,17 +310,10 @@ def register_settings_routes(app, store):
 
                     protect(value, original if isinstance(original, dict) else {})
                 put_path(raw[scope], path, value)
-            new = validate_document(raw)
-            invalidate_capabilities(old, new)
-            # A shared connection edit can invalidate saved probe results.
-            for name in new.revisions:
-                if getattr(new, name) != getattr(old, name):
-                    new.revisions[name] += 1
-            store.write_settings(db, old, new)
+            new = save_changes(store, db, old, raw)
         if editor:
-            for path in payload.changes:
-                put_path(editor["latest"][scope], path, get_path(new.model_dump()[scope], path))
-        return public_settings(new)
+            remember_edits(editor, scope, payload.changes, new)
+        return settings_view(new, payload.known_revisions, old)
 
     @app.post("/api/settings/edit-sessions/{token}/undo")
     async def undo(token: str, payload: UndoRequest):
@@ -354,30 +324,27 @@ def register_settings_routes(app, store):
         scope = page["scope"]
         with store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            old = SettingsDocument.model_validate_json(
-                db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
-            )
+            old = store.settings_document(db=db)
             if old.revisions[scope] != payload.expected_revision:
                 raise Conflict("设置已在其他窗口改变，未执行撤回")
             raw = old.model_dump()
+            latest = editor["baseline"][scope] | editor["latest"][scope]
             for path in page["paths"]:
                 current = get_path(raw[scope], path)
-                if editable(current) != editable(get_path(editor["latest"][scope], path)):
+                expected = get_path(latest, path)
+                if current != expected and editable(current) != editable(expected):
                     raise Conflict("本页设置已被其他操作修改，未执行撤回")
-                replacement = deepcopy(get_path(editor["baseline"][scope], path))
-                if isinstance(replacement, dict) and "capability" in replacement:
-                    for field in ("capability", "capability_key"):
-                        replacement[field] = current[field]
+                replacement = get_path(editor["baseline"][scope], path)
+                if current is not None and isinstance(replacement, dict) and "capability" in replacement:
+                    replacement = {
+                        **replacement,
+                        "capability": current["capability"],
+                        "capability_key": current["capability_key"],
+                    }
                 put_path(raw[scope], path, replacement)
-            new = validate_document(raw)
-            invalidate_capabilities(old, new)
-            for name in new.revisions:
-                if getattr(new, name) != getattr(old, name):
-                    new.revisions[name] += 1
-            store.write_settings(db, old, new)
-        for path in page["paths"]:
-            put_path(editor["latest"][scope], path, get_path(new.model_dump()[scope], path))
-        return public_settings(new)
+            new = save_changes(store, db, old, raw)
+        remember_edits(editor, scope, page["paths"], new)
+        return settings_view(new, payload.known_revisions, old)
 
 
 def save_probe(store, role, result, captured):
