@@ -8,7 +8,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
-from tavern.core.models import TurnRequest
+from tavern.core.context_usage import ContextMeter
+from tavern.core.models import SessionCreate, TurnRequest
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.store import Conflict, Store
 from tavern.story.activity import message_items, turn_items
@@ -136,9 +137,10 @@ def connect(store, service, *streams, api="chat_completions", mode="stream", sta
         body = json.loads(request.content)
         bodies.append(body)
         assert bool(body.get("stream")) is (mode == "stream")
-        return httpx.Response(
-            status, headers={"content-type": "text/event-stream"}, stream=streams[len(bodies) - 1]
-        )
+        stream = streams[len(bodies) - 1]
+        if isinstance(stream, httpx.Response):
+            return stream
+        return httpx.Response(status, headers={"content-type": "text/event-stream"}, stream=stream)
 
     provider = ModelTransport(
         settings, "fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
@@ -531,17 +533,40 @@ async def test_cancelled_preview_and_resume_after_restart_do_not_replay_partial_
 
 async def test_story_and_tools_keep_running_until_native_end(tmp_path):
     store, service, session = game(tmp_path, "chat_completions")
-    tool_gate, next_gate = Gate(), Gate()
-    first = WireStream(*story_events("唯一正文")[:-1], *tool_events()[:1], tool_gate, *tool_events()[1:])
-    second = WireStream(next_gate, *tool_events("read_history", {"ref": "H3"}))
-    _, sent = connect(store, service, first, second, WireStream(terminal()))
+    tool_gate, next_gate, final_gate = Gate(), Gate(), Gate()
+    first = WireStream(
+        *story_events("唯一正文")[:-1],
+        *tool_events()[:1],
+        tool_gate,
+        *tool_events()[1:],
+        {"usage": {"prompt_tokens": 120}},
+    )
+    second = WireStream(
+        next_gate, *tool_events("read_history", {"ref": "H3"}), {"usage": {"prompt_tokens": 152}}
+    )
+    _, sent = connect(store, service, first, second, WireStream(final_gate, terminal()))
+
+    def context_events(tid, after=0):
+        return [e for e in store.events(tid, after, reader=True) if "context_input" in e["payload"]]
+
     try:
         tid = submit(service, session)
         await asyncio.wait_for(tool_gate.reached.wait(), 5)
         assert store.turn(tid)["draft"] == "唯一正文"
         assert not any(e["kind"] == "story_tool_started" for e in store.events(tid))
+        assert not context_events(tid)
         tool_gate.release.set()
         await asyncio.wait_for(next_gate.reached.wait(), 5)
+        [first_sample] = context_events(tid)
+        assert first_sample["payload"] == {
+            "context_input": {
+                "request_number": 1,
+                "tokens": 120,
+                "context_limit": store.settings().context_tokens,
+                "input_scope": "request",
+                "delta": None,
+            }
+        }
         assert store.turn(tid)["draft"] == replay(store, tid) == "唯一正文"
         assert any(
             e["kind"] == "story_tool" and e["payload"].get("name") == "submit_story"
@@ -550,17 +575,118 @@ async def test_story_and_tools_keep_running_until_native_end(tmp_path):
         assert store.session(session["id"])["snapshot"] == session["snapshot"]
         assert current_text(store.story_progress(tid)["snapshot"]["story"]) == "已确认的工具进度"
         next_gate.release.set()
+        await asyncio.wait_for(final_gate.reached.wait(), 5)
+        [second_sample] = context_events(tid, first_sample["seq"])
+        assert second_sample["payload"]["context_input"] == {
+            **first_sample["payload"]["context_input"],
+            "request_number": 2,
+            "tokens": 152,
+            "delta": 32,
+        }
+        final_gate.release.set()
         await service.story.tasks[tid]
         assert store.turn(tid)["status"] == "committed", store.turn(tid)["error"]
         assert store.turn(tid)["draft"] == replay(store, tid) == "唯一正文"
         assert store.session(session["id"])["messages"][-1]["raw"] == "唯一正文"
         assert any(m["role"] == "tool" for m in sent[1]["messages"])
         assert len(sent) == 3
+        [final_sample] = context_events(tid, second_sample["seq"])
+        assert final_sample["payload"]["context_input"] == {
+            **first_sample["payload"]["context_input"],
+            "request_number": 3,
+            "tokens": None,
+        }
+        work = store.work_events(session["id"], tid)["items"]
+        assert [row["description"] for row in work if row["kind"] == "usage"] == [
+            "第 1 次请求 · 实测输入 120 tokens",
+            "第 2 次请求 · 实测输入 152 tokens（较上次 +32）",
+            "第 3 次请求 · 暂无实测",
+        ]
         assert [e["payload"]["name"] for e in store.events(tid) if e["kind"] == "story_tool"] == [
             "submit_story",
             "write_handoff",
             "read_history",
         ]
+    finally:
+        await service.close()
+
+
+async def test_cancel_during_cache_retry_measurement_keeps_billed_requests_once(tmp_path, monkeypatch):
+    store, service, session = game(tmp_path, "chat_completions")
+    provider, sent = connect(
+        store,
+        service,
+        WireStream(*tool_events(), {"usage": {"prompt_tokens": 120}}),
+        httpx.Response(400, json={"error": {"message": "unsupported cache_control"}}),
+        WireStream(*story_events("未提交"), {"usage": {"prompt_tokens": 152}}),
+    )
+    provider.settings.cache.mode = "runtime"
+    provider.settings.cache.preset = "custom"
+    monkeypatch.setattr("tavern.scripting.model_transport.DISABLED", {})
+    finish = ContextMeter.finish
+    loop = asyncio.get_running_loop()
+
+    def cancel_during_finish(meter, current, lane, sequence, usage, response):
+        if sequence == 3:
+            loop.call_soon_threadsafe(service.story.tasks[tid].cancel)
+        return finish(meter, current, lane, sequence, usage, response)
+
+    monkeypatch.setattr(ContextMeter, "finish", cancel_during_finish)
+    try:
+        tid = submit(service, session)
+        await service.story.tasks[tid]
+        assert len(sent) == 3
+        assert store.turn_status(tid) == "cancelled"
+        assert store.session(session["id"])["head"] == session["head"]
+        usages = [e["payload"] for e in store.events(tid) if e["kind"] == "usage"]
+        assert [item["usage"]["raw_usage"]["prompt_tokens"] for item in usages] == [120, 152]
+        assert [
+            (sample["request_number"], sample["tokens"], sample["delta"])
+            for item in usages
+            if (sample := item.get("context_input"))
+        ] == [(1, 120, None), (3, 152, None)]
+    finally:
+        await service.close()
+
+
+async def test_preview_matches_the_effort_used_to_send_the_story(tmp_path, monkeypatch):
+    app = create_app(tmp_path)
+    store, service = app.state.store, app.state.service
+    service.story.runtime = ScriptHost()
+    document = store.settings_document()
+    document.story.model.model = "fixture"
+    document.story.model.reasoning_effort = "high"
+    document.story.tools.auto_retrieval = False
+    document.shared.providers[0].api_key = "fixture"
+    document.shared.model_request_mode = "non_stream"
+    store.save_settings(document)
+    card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}')
+    session = store.new_session(SessionCreate(card_id=card["id"]))
+
+    def reply(request):
+        assert json.loads(request.content)["reasoning_effort"] == "low"
+        return httpx.Response(200, json={**story_reply("chat_completions"), "usage": {"prompt_tokens": 100}})
+
+    async def provider(settings, capture, *, request_context):
+        return ModelTransport(
+            settings,
+            settings.api_key,
+            capture,
+            request_context=request_context,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(reply)),
+        )
+
+    monkeypatch.setattr("tavern.story.agent.make_provider", provider)
+    try:
+        tid = submit(service, session, reasoning_effort="low")
+        await service.story.tasks[tid]
+        assert store.turn_status(tid) == "committed", store.turn(tid)["error"]
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            url = f"/api/sessions/{session['id']}/preview?stats_only=true"
+            selected = (await client.post(url, json={"reasoning_effort": "low"})).json()
+            inherited = (await client.post(url, json={})).json()
+            assert selected["context_usage"]["tokens"] == 100
+            assert inherited["context_usage"]["unavailable_reason"] == "source_changed"
     finally:
         await service.close()
 

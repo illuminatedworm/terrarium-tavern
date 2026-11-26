@@ -584,6 +584,7 @@ class StoryAgent:
             compiled, self.settings, provider, progress=self.state.get("compact_replay"), save=save_replay
         )
         self.state.pop("compact_replay", None)
+        self.event("context_compacted", {"message": "云端上下文压缩已完成"})
 
     async def run(self, provider=None, *, provider_factory=None, request_observer=None):
         try:
@@ -652,6 +653,37 @@ class StoryAgent:
                 self.request_context.bind(response_origin(provider.settings, provider.key))
             if hasattr(provider, "echo_reasoning"):
                 provider.echo_reasoning = True
+            request_number = 0
+            previous_context = None
+
+            def record_usage(attempts: int, usage: dict, observation: dict | None, identity: str | None):
+                nonlocal request_number, previous_context
+                request_number += attempts
+                payload = {"usage": usage, "calls": 1, "duration_s": time.perf_counter() - started}
+                if observation is not None:
+                    tokens = observation["tokens"]
+                    comparison = (identity, observation["input_scope"], observation["model"])
+                    # A cache retry follows an unmeasured request, even in the same tool step.
+                    delta = None
+                    if (
+                        tokens is not None
+                        and attempts == 1
+                        and previous_context
+                        and previous_context[0] == comparison
+                    ):
+                        delta = tokens - previous_context[1]
+                    payload["context_input"] = {
+                        "request_number": request_number,
+                        "tokens": tokens,
+                        "context_limit": self.settings.context_tokens,
+                        "input_scope": observation["input_scope"],
+                        "delta": delta,
+                    }
+                    previous_context = (comparison, tokens) if identity and tokens is not None else None
+                else:
+                    previous_context = None
+                self.event("usage", payload)
+
             for step in range(self.settings.story_config.max_steps):
                 # Publish the catalog once per turn/window, after the fixed prefix.
                 # Its contents are user-visible configuration and short resource names.
@@ -706,6 +738,7 @@ class StoryAgent:
                         response = await complete(
                             messages,
                             preview_story if remaining and plain_story else None,
+                            on_usage=record_usage,
                             _submit_story=plain_story,
                             _story_segments_remaining=remaining,
                             extra_body=tool_options,
@@ -723,10 +756,14 @@ class StoryAgent:
                     raise TurnError("PROVIDER_ERROR", str(error) or type(error).__name__) from error
                 finally:
                     dispatching_reports.clear()
-                self.event(
-                    "usage",
-                    {"usage": response.usage or {}, "calls": 1, "duration_s": time.perf_counter() - started},
-                )
+                record = getattr(provider, "last_response_record", {})
+                if not complete:
+                    record_usage(
+                        1,
+                        response.usage or {},
+                        record.get("context_observation"),
+                        getattr(provider, "last_context_identity", None),
+                    )
                 calls = getattr(provider, "last_tool_calls", []) or []
                 completion = provider.last_completion
                 self.event(
@@ -736,7 +773,7 @@ class StoryAgent:
                         "finish_reason": getattr(response, "finish_reason", None),
                         "completion": {"action": completion.action, "reason": completion.reason},
                         "tool_calls": [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in calls],
-                        "provider_response": copy.deepcopy(getattr(provider, "last_response_record", {})),
+                        "provider_response": copy.deepcopy(record),
                     },
                 )
                 if completion.action == "incomplete":

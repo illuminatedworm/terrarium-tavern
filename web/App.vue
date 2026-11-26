@@ -86,7 +86,13 @@ import PersonaEditor from './components/settings/PersonaEditor.vue';
 import WorkRecords from './components/records/WorkRecords.vue';
 import AppModal from './components/common/AppModal.vue';
 import StartupWarmup from './components/story/StartupWarmup.vue';
-import { observeTurn, turnDraft, type TraceEvent } from './lib/turnStream';
+import {
+  observeTurn,
+  turnContextInput,
+  turnDraft,
+  type TraceEvent,
+  type TurnContextInput,
+} from './lib/turnStream';
 import { createSessionController, StaleView } from './lib/sessionController';
 import { contextKind, groupContext, summarizeBudgetSources } from './lib/contextPreview';
 import { localEstimateSources } from './lib/localEstimate';
@@ -339,6 +345,7 @@ const modelWarmup = useModelWarmup(() => panel.value === 'warmup');
 const japaneseDictionary = useJapaneseDictionary();
 provide(japaneseDictionaryKey, japaneseDictionary);
 const contextStats = ref<StoryContextStats | null>(null);
+const storyRequestInput = ref<TurnContextInput>(null);
 const cacheUsage = ref<ConversationCacheUsage | null>(null);
 const cacheUsageExpiresAt = ref<number | null>(null);
 let cacheUsageTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1070,16 +1077,35 @@ function contextItemTitle(item: JsonObject) {
 }
 const cacheRateLabel = computed(() => conversationCacheRate(cacheUsage.value));
 const composerContextLabel = computed(() => {
+  const measured = storyRequestInput.value;
+  const limit = contextStats.value?.context_limit ?? activeModel.value.context_tokens;
+  if (measured === 'new_window') return `— / ${limit.toLocaleString()} tokens · 等待新窗口实测`;
+  if (measured) {
+    const { tokens, context_limit, request_number, input_scope, delta } = measured;
+    const sample =
+      tokens == null ? '暂无实测' : input_scope === 'last_iteration' ? '主模型采样实测输入' : '实测输入';
+    const change =
+      delta == null
+        ? ''
+        : delta === 0
+          ? ' · 与上次相同'
+          : ` · 较上次 ${delta > 0 ? '+' : ''}${delta.toLocaleString()}`;
+    return `${tokens?.toLocaleString() ?? '—'} / ${context_limit.toLocaleString()} tokens · 本轮第 ${request_number} 次${sample}${change}`;
+  }
   const current = contextEstimateError.value
     ? '—'
     : (contextTokens(contextStats.value)?.toLocaleString() ?? '—');
-  const limit = contextStats.value?.context_limit ?? activeModel.value.context_tokens;
-  return `${current} / ${limit.toLocaleString()} tokens · ${contextUsageLabel(contextStats.value)}${busy.value ? ' · 进行中，显示此前快照' : ''}`;
+  const running = busy.value ? (current === '—' ? ' · 等待本轮实测' : ' · 进行中，显示此前快照') : '';
+  return `${current} / ${limit.toLocaleString()} tokens · ${contextUsageLabel(contextStats.value)}${running}`;
 });
-const composerContextTitle = computed(
-  () =>
-    contextEstimateError.value || `上次实测输入 / 上下文窗口上限；${contextUsageDetails(contextStats.value)}`,
-);
+const composerContextTitle = computed(() => {
+  if (storyRequestInput.value === 'new_window') return '窗口已切换，等待新窗口的首次剧情请求返回输入用量。';
+  if (storyRequestInput.value)
+    return `${composerContextLabel.value}。接口在响应结束后报告该次输入用量，随后执行的工具结果随下一次请求计量。`;
+  return (
+    contextEstimateError.value || `上次实测输入 / 上下文窗口上限；${contextUsageDetails(contextStats.value)}`
+  );
+});
 async function guarded(fn: () => Promise<any>) {
   error.value = '';
   try {
@@ -1131,18 +1157,20 @@ async function refreshContextStats() {
     token = viewScope.current();
   const running = busy.value || contextBusy.value;
   try {
-    const stats: StoryContextStats = await api(`/sessions/${sid}/preview?stats_only=true`, {
-      text: input.value,
-      ooc: ooc.value,
-      update_variables: updateVariables.value,
-      allow_content_edit: allowEdit.value,
-    });
+    const stats: StoryContextStats = await api(
+      `/sessions/${sid}/preview?stats_only=true`,
+      storyPreviewInput(),
+    );
     if (!viewScope.owns(token) || request !== contextStatsRequest) return;
+    if (!running && !busy.value) storyRequestInput.value = null;
     contextStats.value = stats;
     applyPreviewCacheUsage(stats, running);
     contextEstimateError.value = '';
   } catch (cause) {
-    if (viewScope.owns(token) && request === contextStatsRequest) contextEstimateError.value = String(cause);
+    if (viewScope.owns(token) && request === contextStatsRequest) {
+      if (!running && !busy.value) storyRequestInput.value = null;
+      contextEstimateError.value = String(cause);
+    }
   }
 }
 async function openSession(id: string, creating = false, createdSession?: Session) {
@@ -1160,6 +1188,7 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
   session.value = null;
   activeTurn.value = null;
   contextStats.value = null;
+  storyRequestInput.value = null;
   setCacheUsage(null);
   contextEstimateError.value = '';
   clearTimeout(contextRefreshTimer);
@@ -1295,6 +1324,7 @@ async function deleteSession(item: SessionSummary) {
       draft.value = '';
       trace.value = [];
       contextStats.value = null;
+      storyRequestInput.value = null;
       setCacheUsage(null);
     }
     await load();
@@ -1735,15 +1765,26 @@ async function cardStarted(s: any) {
 }
 function setEffort(value: string) {
   quickEffort.value = value;
-  if (session.value) localStorage.setItem(`tavern-effort-${openStory().id}`, value);
+  if (session.value) {
+    localStorage.setItem(`tavern-effort-${openStory().id}`, value);
+    void refreshContextStats();
+  }
+}
+function storyRequestOptions() {
+  return {
+    allow_content_edit: allowEdit.value,
+    update_variables: updateVariables.value,
+    reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
+  };
+}
+function storyPreviewInput() {
+  return { text: input.value, ooc: ooc.value, ...storyRequestOptions() };
 }
 function storyTurnOptions() {
   return {
     operation_id: crypto.randomUUID(),
     expected_revision: openStory().revision,
-    allow_content_edit: allowEdit.value,
-    update_variables: updateVariables.value,
-    reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
+    ...storyRequestOptions(),
   };
 }
 async function send(
@@ -1795,6 +1836,7 @@ async function submitStoryTurn(request: TurnRequest, continueWithInput = false):
     token = viewScope.current();
   ++contextStatsRequest;
   clearTimeout(contextRefreshTimer);
+  storyRequestInput.value = null;
   busy.value = true;
   error.value = '';
   pendingInput.value = null;
@@ -1849,6 +1891,7 @@ function observe(id: string) {
       } else {
         const reading = draftReadingOffset();
         trace.value.push(event);
+        storyRequestInput.value = turnContextInput(storyRequestInput.value, event);
         if (event.kind === 'story_prefix_debug') notify(event.payload.message);
         if (event.kind === 'input_ready') {
           pendingInput.value = event.payload.message;
@@ -2095,10 +2138,7 @@ async function inspectContext() {
   await guarded(async () => {
     const running = busy.value || contextBusy.value;
     preview.value = await viewApi(`/sessions/${openStory().id}/preview`, {
-      text: input.value,
-      ooc: ooc.value,
-      update_variables: updateVariables.value,
-      allow_content_edit: allowEdit.value,
+      ...storyPreviewInput(),
       local_estimate: true,
     });
     contextStats.value = preview.value;
@@ -2113,12 +2153,7 @@ async function exportNextMessages() {
   try {
     await guarded(async () => {
       const sid = openStory().id;
-      const messages = await viewApi(`/sessions/${sid}/messages-preview`, {
-        text: input.value,
-        ooc: ooc.value,
-        update_variables: updateVariables.value,
-        allow_content_edit: allowEdit.value,
-      });
+      const messages = await viewApi(`/sessions/${sid}/messages-preview`, storyPreviewInput());
       const saved = await saveDownload(
         new Blob([JSON.stringify(messages, null, 2)], { type: 'application/json;charset=utf-8' }),
         `messages-preview-${sid}.json`,
@@ -3151,7 +3186,7 @@ useTimedError(error);
                 />
                 <span
                   :title="composerContextTitle"
-                  :class="{ 'composer-stats-error': contextEstimateError }"
+                  :class="{ 'composer-stats-error': contextEstimateError && !storyRequestInput }"
                   >{{ composerContextLabel }}</span
                 >
                 <CacheRateStat :usage="cacheUsage" segmented />

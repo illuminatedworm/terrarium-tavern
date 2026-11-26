@@ -16,6 +16,8 @@ def reader_events(db, tid, after, limit):
             THEN e.payload
         WHEN e.kind='provider_request' THEN json_object('purpose',json_extract(e.payload,'$.purpose'),
             'cache',json_extract(e.payload,'$.cache'))
+        WHEN e.kind='usage' AND json_type(e.payload,'$.context_input')='object'
+            THEN json_object('context_input',json_extract(e.payload,'$.context_input'))
         WHEN e.kind='input_ready' THEN json_object('message',json_object(
             'id',json_extract(e.payload,'$.message.id'),'raw',json_extract(e.payload,'$.message.raw'),
             'display',json_extract(e.payload,'$.message.display'),'ooc',json_extract(e.payload,'$.message.ooc')),
@@ -66,6 +68,7 @@ def work_page(db, tid, after, limit):
             ELSE substr(json_extract(payload,'$.reason'),1,180) END AS reason,
         json_extract(payload,'$.status') AS status,json_extract(payload,'$.kind') AS activity_kind,
         json_extract(payload,'$.rebuild_reason') AS rebuild_reason,json_extract(payload,'$.model') AS model,
+        CASE WHEN kind='usage' THEN json_extract(payload,'$.context_input') END AS context_input,
         CASE WHEN kind='provider_request' THEN json_array_length(payload,'$.messages') END AS message_count,
         CASE WHEN kind='provider_request' THEN json_array_length(payload,'$.tools') END AS tool_count
         FROM events WHERE turn=? AND seq>? AND kind NOT IN ('text','text_reset') ORDER BY seq LIMIT ?""",
@@ -87,5 +90,7 @@ def work_page(db, tid, after, limit):
             )
         }
         payload["kind"] = event["activity_kind"]
+        if event["context_input"] is not None:
+            payload["context_input"] = json.loads(event["context_input"])
         items.append(compact_record({**event, "payload": payload}))
     return {"items": items, "next": items[-1]["seq"] if len(rows) > limit else None}

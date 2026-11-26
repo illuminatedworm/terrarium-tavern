@@ -1,4 +1,5 @@
 import { responseData } from './storyPresentation';
+import type { StoryRequestContextInput } from './types';
 
 /** Events are replayable. A subscription belongs to one view, never global state. */
 export interface TurnEvent {
@@ -8,6 +9,14 @@ export interface TurnEvent {
 }
 /** A row of the turn trace: a streamed event, or a script log added by the page. */
 export type TraceEvent = Pick<TurnEvent, 'kind' | 'payload'>;
+
+export type TurnContextInput = StoryRequestContextInput | 'new_window' | null;
+
+export function turnContextInput(current: TurnContextInput, event: TurnEvent): TurnContextInput {
+  if (event.kind === 'context_rollover' || event.kind === 'context_compacted') return 'new_window';
+  if (event.kind === 'usage' && event.payload.context_input) return event.payload.context_input;
+  return current;
+}
 
 /** A model step can become tool activity or be rejected after text was previewed. */
 export function turnDraft(current: string, event: TurnEvent): string {

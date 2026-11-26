@@ -220,6 +220,15 @@ export interface StoryContextStats {
   cache_usage_expires_at: number | null;
 }
 
+/** Input measured for one completed play request, independent of the next-request preview. */
+export interface StoryRequestContextInput {
+  request_number: number;
+  tokens: number | null;
+  context_limit: number;
+  input_scope: 'request' | 'last_iteration';
+  delta: number | null;
+}
+
 /** Complete next-request sources and the latest provider observation. */
 export type StoryContextPreview = JsonObject &
   StoryContextStats & {

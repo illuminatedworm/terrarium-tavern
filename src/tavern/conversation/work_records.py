@@ -40,6 +40,14 @@ def compact_record(event):
     if kind == "usage" and payload.get("status") == "failed":
         label = "失败请求用量"
         description = "接口返回的计费用量；正文未提交，不作为有效窗口实测"
+    elif kind == "usage" and (context := payload.get("context_input")) is not None:
+        request = f"第 {context['request_number']} 次请求"
+        tokens, delta = context["tokens"], context["delta"]
+        sample = "最后一次主模型采样实测输入" if context["input_scope"] == "last_iteration" else "实测输入"
+        amount = "暂无实测" if tokens is None else f"{sample} {tokens:,} tokens"
+        description = f"{request} · {amount}"
+        if delta is not None:
+            description += f"（较上次 {delta:+,}）" if delta else "（与上次相同）"
     if kind == "activity":
         label = str(payload.get("kind") or label)
     if kind == "context_baseline":

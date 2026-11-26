@@ -101,6 +101,8 @@ class ModelTransport(BaseLLMProvider):
         self.request_context = request_context
         self.last_native_response = None
         self.last_completion = None
+        self.last_context_identity: str | None = None
+        self._request_count = 0
         self.last_response_record = {}
         self.response_capture = None
         self.failed_usage_capture: Callable[[dict], None] | None = None
@@ -218,6 +220,8 @@ class ModelTransport(BaseLLMProvider):
         )
         clone.last_native_response, clone.last_response_record, clone._response_headers = None, {}, {}
         clone.last_completion = None
+        clone.last_context_identity = None
+        clone._request_count = 0
         clone._context_sample = None
         clone.request_context = copy.deepcopy(self.request_context)
         clone._sent_breakpoints = copy.deepcopy(self._sent_breakpoints)
@@ -551,6 +555,7 @@ class ModelTransport(BaseLLMProvider):
             self._context_sample = (meter, sample, lane, sequence)
             if cancellation is not None:
                 raise cancellation
+        self._request_count += 1
         if request is not None and self.request_observer is not None:
             self.request_observer(request)
         if not self.capture:
@@ -837,12 +842,14 @@ class ModelTransport(BaseLLMProvider):
         self._last_usage = normalize_usage(raw, api)
         sample = getattr(self, "_context_sample", None)
         cancellation = None
+        self.last_context_identity = None
         if sample:
             meter, current, lane, sequence = sample
             observation, cancellation = await _meter_write(
                 meter.finish, current, lane, sequence, self._last_usage, payload
             )
             self._context_sample = None
+            self.last_context_identity = current["identity"]
         else:
             observation = observed_usage(self._last_usage, api, payload)
         self.usage_history.append(copy.deepcopy(self._last_usage))
@@ -878,10 +885,36 @@ class ModelTransport(BaseLLMProvider):
         return ChatResponse(content=text, usage=self._last_usage, finish_reason=finish, model=model)
 
     async def chat_complete_with_preview(
-        self, messages, on_text: Callable[[str], None] | None, **kwargs
+        self,
+        messages,
+        on_text: Callable[[str], None] | None,
+        *,
+        on_usage: Callable[[int, dict, dict, str | None], None] | None = None,
+        **kwargs,
     ) -> ChatResponse:
         """Preview deltas without losing the authoritative response and metadata."""
-        return await self.chat_complete(messages, on_text=on_text, **kwargs)
+        requests_before = self._request_count
+        responses_before = len(self.usage_history)
+
+        def report_usage():
+            observation = self.last_response_record.get("context_observation")
+            if on_usage and len(self.usage_history) > responses_before and observation is not None:
+                on_usage(
+                    self._request_count - requests_before,
+                    self.usage_history[-1],
+                    observation,
+                    self.last_context_identity,
+                )
+
+        try:
+            response = await self.chat_complete(messages, on_text=on_text, **kwargs)
+        except asyncio.CancelledError:
+            # Cancellation can arrive while finish() persists a completed response
+            # or while the stream closes. Publish only this call's completed sample.
+            report_usage()
+            raise
+        report_usage()
+        return response
 
     async def _complete_chat(self, messages, *, on_text=None, **kwargs):
         if self.settings.model_request_mode == "stream":

@@ -4,7 +4,7 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -23,6 +23,7 @@ from tavern.core.models import (
     LoreInjectionRemoval,
     OpeningEdit,
     PersonaEdit,
+    ReasoningEffort,
     RevisionRequest,
     SessionCacheBreakpoint,
     SessionCreate,
@@ -896,6 +897,10 @@ def create_app(data_dir=None):
         story_settings = bind_adapter(
             store.session_settings(s, document=settings_document).for_role("story"), store, "story", sid
         )
+        if (effort := payload.get("reasoning_effort")) is not None:
+            if effort not in get_args(ReasoningEffort):
+                raise ValueError("无效的思考档位")
+            story_settings.reasoning_effort = effort
         result = compile_window(
             document,
             s,

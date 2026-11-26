@@ -1,5 +1,13 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { eventCursor, observeTurn, requestScope, turnDraft, type TurnEvent } from '../../web/lib/turnStream';
+import {
+  eventCursor,
+  observeTurn,
+  requestScope,
+  turnContextInput,
+  turnDraft,
+  type TurnContextInput,
+  type TurnEvent,
+} from '../../web/lib/turnStream';
 import { auxiliaryLabels, latestAuxiliary } from '../../web/lib/kemini';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -18,10 +26,22 @@ it('keeps experimental records separate from prose and replaces them on response
   expect(latestAuxiliary([])).toEqual([]);
 });
 
-it('does not append replayed stream events twice', () => {
+it('keeps old measurements out of the new window across event replay', () => {
   const accept = eventCursor();
-  const events = [1, 2, 2, 1, 3].filter((seq) => accept({ seq, kind: 'text', payload: {} }));
-  expect(events).toEqual([1, 2, 3]);
+  const sample = { request_number: 1, tokens: 120, context_limit: 1000, input_scope: 'request', delta: null };
+  const first = { seq: 1, kind: 'usage', payload: { context_input: sample } };
+  const rollover = { seq: 2, kind: 'context_rollover', payload: {} };
+  const second = {
+    seq: 3,
+    kind: 'usage',
+    payload: { context_input: { ...sample, request_number: 2, tokens: 40 } },
+  };
+  const compacted = { seq: 4, kind: 'context_compacted', payload: {} };
+  let current: TurnContextInput = null;
+  const states = [first, rollover, rollover, first, second, compacted, second]
+    .filter(accept)
+    .map((event) => (current = turnContextInput(current, event)));
+  expect(states).toEqual([sample, 'new_window', second.payload.context_input, 'new_window']);
 });
 
 it('invalidates pending responses on every view transition', () => {
