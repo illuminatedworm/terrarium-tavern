@@ -27,8 +27,8 @@
 | `read_lore_entry` | 完整读取一个普通条目 | `ref: string`（如 `L1`） | 返回标题、正文、主／辅助关键词及启用状态，登记当前读取记录；保护目标不可读写。 |
 | `search_history` | 搜索当前分支剧情原文 | `query: string`；`limit: integer=5` | 字面检索，返回 H 引用及可选摘要；`*` 列最近记录，不搜索旧工具过程。 |
 | `read_history` | 完整读取剧情原文 | `ref: string`（如 `H1` 或 `H52-H58`） | 可读取当前用户输入和已接收的正文草稿；区间最多 8 条，按分支顺序逐条返回完整原文，H 与角色随“返回编号和角色”设置附带。 |
-| `write_handoff` | 更新交接笔记，不换窗 | `chapters: array=[]`；`current: array` | 章节默认范围由程序记录，可 revise／merge；current 整体替换；要点的 H 引用可省略。 |
-| `new_context` | 换窗，可同时更新交接笔记 | `handoff: {chapters, current}\|null=null`；`keep_recent: integer=2` | 省略 handoff 沿用现有交接；仅实际退出的原文须有章节覆盖，保留的最新交流不要求归档；保留 0–12 条最近剧情消息并扩展至完整交流，当前输入另保留；必须单独调用，调用额度不重置。 |
+| `write_handoff` | 更新交接笔记，不换窗 | `chapters: array=[]`；`current: array` | 章节默认范围由程序记录，可 revise／merge。current 整体替换，可引用本轮输入和已接收的正文。要点的 H 引用可省略。 |
+| `new_context` | 换窗，可同时更新交接笔记 | `handoff: {chapters, current}\|null=null`；`keep_recent: integer=2` | 从最后一条已提交历史倒数 0–12 条，再扩展至完整交流。本轮输入和已接收正文另保留。退出的原文须有章节覆盖，省略 handoff 沿用现有交接。须单独调用，调用额度不重置。 |
 | `search_notes` | 搜索有效长期笔记 | `query: string`；`limit: integer=5` | 按键和正文做字面检索；`*` 列笔记，不含归档项。 |
 | `read_note` | 完整读取一条笔记 | `key: string` | 可读有效或归档项，可附类型与 H 来源；引用指向对应版本的不可变原文。 |
 | `write_note` | 新增或完整替换笔记 | `key: string`；`content: string`；`kind: string`；`sources: string[]=[]` | kind 为 fact／hypothesis／plan；事实必有有效 H 来源，最多 50 个；已有键须有当前全文上下文依据，否则先 read_note，并在当前版本上积累修订（语义要求，不做程序校验）。新 key 无需读取，覆盖归档键会激活。 |
@@ -304,7 +304,7 @@ Update the handoff without switching windows. Start from the latest <tavern_memo
 - add: usually give only a title and points. Leave through empty and the chapter covers all committed history not yet in a chapter; set through only to split chapters deliberately.
 - Do not rewrite finished chapters. Use revise only to fix an error; merge the oldest adjacent chapters when nearing the total limit.
 - current fully replaces the current handoff: the scene, relationships, constraints, unresolved issues and tone. Do not retell chapter events.
-- refs are optional. Cite a known H reference only when precise lookup will help later; never invent one.
+- refs are optional. Chapter refs stay inside their chapter. For precise lookup, current may cite any H readable with read_history, including this turn's input and accepted story.
 - Do not copy whole notes or the plot outline into the handoff.
 ```
 
@@ -323,12 +323,11 @@ Update the handoff without switching windows. Start from the latest <tavern_memo
 ### `new_context`
 
 ```text
-Switch to a fresh context window. Older messages and earlier tool calls leave the window; afterwards you continue the same turn, and the call budget does not reset.
-- When to switch: the runtime measures context usage for you, so do not estimate it yourself. Without a context notice, do not switch. A budget reminder means plan the switch, ideally at a natural break; a forced-rollover notice means switch now.
-- keep_recent sets how many recent messages stay. It is rounded up to whole user/assistant exchanges, and the current input always stays.
-- Every message that leaves must already be covered by a chapter. If it is, call with just keep_recent. Otherwise pass handoff with add operations for the missing part, leaving through empty. If all history stays, an empty handoff is fine.
-- Omitting handoff keeps the current one unchanged. When you pass it, chapters keep lasting events, relationship changes, promises, secrets and recurring people, items and places; current holds the scene, relationships, constraints, unresolved issues and tone. Do not copy whole notes or the plot outline.
-Call alone: a batch containing new_context is rejected and none of its tools run.
+Call alone to switch windows. A mixed batch is rejected in full. Earlier tool calls leave the window, and the turn continues with its remaining call budget.
+- Switch only on a runtime context notice. On a budget reminder, plan to switch at a natural break. On a forced-rollover notice, switch now.
+- Count keep_recent backward from the LAST committed H in the original history range (原始历史), rounding up to whole exchanges. This turn's user input and accepted story stay separately and use none of that count. With history H1-H9, input H10 and accepted story H11, keep_recent=2 keeps H8-H9 plus H10-H11. The last departing message is H7.
+- If chapters cover everything leaving, use just keep_recent. Otherwise add a chapter for the uncovered lasting events and changes. Give its title and points and omit through so the runtime sets the endpoint. Chapter refs must stay inside that chapter.
+- When supplying handoff, include current in full, covering the scene, relationships, constraints, open issues and tone. Refs are optional. Current may cite any H readable with read_history, including this turn's accepted story. Keep full notes and the plot outline separate.
 ```
 
 请求：

@@ -2394,9 +2394,12 @@ async def test_new_context_reuses_handoff_and_checks_only_exiting_history():
         definitions=tool_definitions({}),
         model_view=ModelView({}),
     )
+    owner.source_history = [*history, owner.user_message]
     tools = AgentTools(owner)
     # Keeping all story messages needs no summary and must not invent one.
     empty = copy.deepcopy(owner.state["handoff"])
+    with pytest.raises(ToolError, match="H9.*H1-H8"):
+        await tools.execute("new_context", '{"handoff":{"current":[{"text":"尚无回复","refs":["H9"]}]}}')
     await tools.execute("new_context", '{"keep_recent":7}')
     assert owner.state["window"]["start"] == 0
     assert owner.state["handoff"] == empty

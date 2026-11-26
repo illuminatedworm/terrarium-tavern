@@ -458,6 +458,7 @@ class StoryAgent:
             lore_replay=self.lore_replay,
             continuation=self.continuation,
             input_id=self.user_message["id"],
+            source_history=self.source_history,
             instruction=(
                 self.settings.regenerate_prompt + "\n" + self.request.regenerate_note
                 if self.request.regenerate_note

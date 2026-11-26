@@ -44,7 +44,7 @@ class Point(_Arguments):
     refs: list[str] = Field(
         default_factory=list,
         max_length=SOURCE_REFERENCE_LIMIT,
-        description="Optional known supporting H references or closed spans. Omit when unnecessary or the information comes from instructions, character material or the current input. Do not guess references; chapter citations must stay inside the chapter.",
+        description="Optional known H references or closed spans for precise lookup. Omit for instructions or character material without an H source. Chapter refs must lie inside that chapter. Current handoff refs can use any H readable with read_history, including this turn's input and accepted story.",
     )
     kind: Literal["fact", "inference"] = Field(
         default="fact", description="fact for established information; inference for your judgement."
@@ -95,13 +95,8 @@ class HandoffWrite(_Arguments):
     )
 
 
-def _span(history, first, last, *, current_input_id: str | None = None):
-    return {
-        key: current_input_id
-        if current_input_id is not None and position == len(history) + 1
-        else history[position - 1]["id"]
-        for key, position in (("start", first), ("end", last))
-    }
+def _span(history, first, last):
+    return {"start": history[first - 1]["id"], "end": history[last - 1]["id"]}
 
 
 def _positions(stored, positions):
@@ -120,8 +115,8 @@ def chapter_spans(handoff, history):
     return spans
 
 
-def _points(points, history, within, *, current_input_id: str | None = None):
-    last_source = len(history) + (current_input_id is not None)
+def _points(points, history, within):
+    last_source = len(history)
     result = []
     for point in points:
         refs = []
@@ -134,12 +129,12 @@ def _points(points, history, within, *, current_input_id: str | None = None):
                 )
             if within and not (within[0] <= span[0] and span[1] <= within[1]):
                 raise HandoffError("INVALID_REFERENCE", f"{ref} 不在所属章节 {span_ref(*within)} 内")
-            refs.append(_span(history, *span, current_input_id=current_input_id))
+            refs.append(_span(history, *span))
         result.append({"text": point.text.strip(), "kind": point.kind, "refs": refs})
     return result
 
 
-def apply_write(handoff, write, history, *, archive_through=None, current_input_id: str | None = None):
+def apply_write(handoff, write, history, *, archive_through=None, source_history: list[dict] | None = None):
     """Apply semantic edits; Runtime supplies the ordinary chapter endpoint."""
     result = copy.deepcopy(handoff)
     chapters = result["chapters"]
@@ -206,9 +201,10 @@ def apply_write(handoff, write, history, *, archive_through=None, current_input_
                 "points": _points(op.points, history, within),
             }
             chapters[first : last + 1] = [merged]
-    # Only current may cite the pending input's reserved identity. Chapters
-    # still cover committed history, so the input cannot be archived early.
-    result["current"] = _points(write.current, history, None, current_input_id=current_input_id)
+    # Chapters cover committed history. Current can also cite this turn's readable messages.
+    result["current"] = _points(
+        write.current, source_history if source_history is not None else history, None
+    )
     return result
 
 
@@ -249,12 +245,10 @@ def render_written_current(points):
     return "\n".join(lines)
 
 
-def render_current(handoff, history, *, current_input_id: str | None = None):
+def render_current(handoff, history):
     if not handoff["current"]:
         return ""
     positions = message_positions(history)
-    if current_input_id is not None:
-        positions[current_input_id] = len(history) + 1
     return "\n".join([f"## {CURRENT_HEADING}", *(_render_point(p, positions) for p in handoff["current"])])
 
 
@@ -286,7 +280,7 @@ def chapter_token_counts(handoff, history, settings):
     ]
 
 
-def check_limits(handoff, history, config, settings, *, current_input_id: str | None = None):
+def check_limits(handoff, history, config, settings):
     counts = chapter_token_counts(handoff, history, settings)
     for index, tokens in enumerate(counts, 1):
         if tokens > config.chapter_tokens:
@@ -301,7 +295,7 @@ def check_limits(handoff, history, config, settings, *, current_input_id: str | 
             "CONTENT_LIMIT",
             f"章节总量约 {total} tokens，超过上限 {config.chapters_total_tokens}；请用 merge {hint}",
         )
-    current = count_text(render_current(handoff, history, current_input_id=current_input_id), settings)
+    current = count_text(render_current(handoff, history), settings)
     if not handoff["current"] or current > config.handoff_tokens:
         raise HandoffError("CONTENT_LIMIT", f"当前交接不能为空，且须在 {config.handoff_tokens} tokens 内")
 

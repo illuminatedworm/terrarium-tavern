@@ -75,6 +75,7 @@ def compile_window(
     trace=(),
     continuation=(),
     input_id="pending",
+    source_history: list[dict] | None = None,
     instruction="",
     force_rollover=False,
     require_state_patch=False,
@@ -535,7 +536,7 @@ def compile_window(
                 + "\n</tavern_memory>",
                 value=chapters,
             )
-        current = render_current(handoff, history, current_input_id=input_id)
+        current = render_current(handoff, source_history if source_history is not None else history)
         if current or "handoff" in ledger.seen:
             update(
                 "handoff",

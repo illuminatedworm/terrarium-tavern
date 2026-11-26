@@ -149,7 +149,7 @@ class NewContext(Arguments):
         default=2,
         ge=0,
         le=12,
-        description="Recent dialogue messages to keep (0-12, default 2). Rounded up to whole user/assistant exchanges; the current input is always kept.",
+        description="Committed dialogue messages to keep (0-12 inclusive, default 2). Count backward from the end of the original history range, then round up to whole exchanges. This turn's input and accepted story stay separately.",
     )
 
 
@@ -344,25 +344,26 @@ SPECS = {
         "nearing the total limit.\n"
         "- current fully replaces the current handoff: the scene, relationships, constraints, unresolved issues and tone. "
         "Do not retell chapter events.\n"
-        "- refs are optional. Cite a known H reference only when precise lookup will help later; never invent one.\n"
+        "- refs are optional. Chapter refs stay inside their chapter. For precise lookup, current may cite any H "
+        "readable with read_history, including this turn's input and accepted story.\n"
         "- Do not copy whole notes or the plot outline into the handoff.",
     ),
     "new_context": (
         NewContext,
-        "Switch to a fresh context window. Older messages and earlier tool calls leave the window; afterwards you "
-        "continue the same turn, and the call budget does not reset.\n"
-        "- When to switch: the runtime measures context usage for you, so do not estimate it yourself. Without a "
-        "context notice, do not switch. A budget reminder means plan the switch, ideally at a natural break; a "
-        "forced-rollover notice means switch now.\n"
-        "- keep_recent sets how many recent messages stay. It is rounded up to whole user/assistant exchanges, and the "
-        "current input always stays.\n"
-        "- Every message that leaves must already be covered by a chapter. If it is, call with just keep_recent. "
-        "Otherwise pass handoff with add operations for the missing part, leaving through empty. If all history stays, "
-        "an empty handoff is fine.\n"
-        "- Omitting handoff keeps the current one unchanged. When you pass it, chapters keep lasting events, relationship "
-        "changes, promises, secrets and recurring people, items and places; current holds the scene, relationships, "
-        "constraints, unresolved issues and tone. Do not copy whole notes or the plot outline.\n"
-        "Call alone: a batch containing new_context is rejected and none of its tools run.",
+        "Call alone to switch windows. A mixed batch is rejected in full. Earlier tool calls leave the window, "
+        "and the turn continues with its remaining call budget.\n"
+        "- Switch only on a runtime context notice. On a budget reminder, plan to switch at a natural break. "
+        "On a forced-rollover notice, switch now.\n"
+        "- Count keep_recent backward from the LAST committed H in the original history range (原始历史), rounding "
+        "up to whole exchanges. This turn's user input and accepted story stay separately and use none of that count. "
+        "With history H1-H9, input H10 and accepted story H11, keep_recent=2 keeps H8-H9 plus H10-H11. "
+        "The last departing message is H7.\n"
+        "- If chapters cover everything leaving, use just keep_recent. Otherwise add a chapter for the uncovered "
+        "lasting events and changes. Give its title and points and omit through so the runtime sets the endpoint. "
+        "Chapter refs must stay inside that chapter.\n"
+        "- When supplying handoff, include current in full, covering the scene, relationships, constraints, open "
+        "issues and tone. Refs are optional. Current may cite any H readable with read_history, including this "
+        "turn's accepted story. Keep full notes and the plot outline separate.",
     ),
     "read_state": (
         StateRead,
@@ -705,8 +706,6 @@ class AgentTools:
                         item["images"] = images[source["id"]]
             return {"messages": selected} if span[0] < span[1] else selected[0]
         if name in ("write_handoff", "new_context"):
-            # Chapters and rollover use committed history; current may also
-            # cite this turn's user input, but not the assistant draft.
             history = owner.history
             archive_through = (
                 rollover_start(state, history, args.keep_recent) if name == "new_context" else len(history)
@@ -720,15 +719,9 @@ class AgentTools:
                         write,
                         history,
                         archive_through=archive_through,
-                        current_input_id=owner.user_message["id"],
+                        source_history=owner.source_history,
                     )
-                    check_limits(
-                        handoff,
-                        history,
-                        owner.settings.story_config,
-                        owner.settings,
-                        current_input_id=owner.user_message["id"],
-                    )
+                    check_limits(handoff, owner.source_history, owner.settings.story_config, owner.settings)
                 if name == "new_context":
                     require_coverage(handoff, history, archive_through)
             except HandoffError as error:
