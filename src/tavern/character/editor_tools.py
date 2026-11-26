@@ -490,7 +490,13 @@ SPECS = {
     ),
     "patch_draft": (
         Patch,
-        "Apply an atomic batch to the current draft. Read existing values before changing them. Add missing keys or append at /- without reading the whole parent. Use replace to change an existing key. With document_ref, paths are relative to that document. Otherwise paths start at the card root (/data/... for wrapped cards). entries/- appends to array or keyed worldbooks. Write display regex to extensions.regex_scripts, with findRegex, replaceString, placement:[2], markdownOnly:true, promptOnly:false; read references/regex-display.md for the full contract. For worldbook entry purpose, extensions.terrarium.purpose accepts narrative or mvu_rules. New lore entries omit IDs; hidden fields are preserved by Runtime.",
+        "Apply JSON Patch atomically to the draft. Read existing targets before changing them and use replace for "
+        "existing keys. Adding a missing key or appending with /- needs no parent read.\n"
+        "With document_ref, path and from are relative to that document. Otherwise use the card root (/data/... "
+        "for wrapped cards). Use entries/- for array or keyed worldbooks. Omit new entry IDs. Runtime preserves "
+        "hidden fields.\n"
+        "Entry extensions.terrarium.purpose accepts narrative or mvu_rules. For display-only rules in "
+        "extensions.regex_scripts, follow references/regex-display.md.",
     ),
     "revert_draft": (
         Revert,
