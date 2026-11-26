@@ -1492,7 +1492,12 @@ function createCard() {
 async function refreshCardConversations() {
   cardConversations.value = await api('/card-author/conversations');
 }
-function openCardAgent(id: string) {
+async function refreshAuthorLibrary(kind: 'card' | 'worldbook') {
+  if (kind === 'worldbook') worldbooks.value = await api('/worldbooks');
+  else
+    [cards.value, orphanDrafts.value] = await Promise.all([api('/cards?summary=true'), api('/card-edits')]);
+}
+function openCardAgent(id: string, listLoaded = false) {
   abandonStoryLoad();
   editorConversationId.value = id;
   sidebarSection.value = 'editor';
@@ -1500,7 +1505,7 @@ function openCardAgent(id: string) {
   panel.value = '';
   localStorage.setItem('tavern-active-card-conversation', id);
   if (window.innerWidth < 760) layout.value.leftCollapsed = true;
-  void refreshCardConversations();
+  if (!listLoaded) void refreshCardConversations();
 }
 async function newCardConversation() {
   await guarded(async () => {
@@ -1513,7 +1518,7 @@ async function manageCardAgent() {
     await refreshCardConversations();
     const remembered = localStorage.getItem('tavern-active-card-conversation');
     const chosen = cardConversations.value.find((c) => c.id === remembered) || cardConversations.value[0];
-    if (chosen) openCardAgent(chosen.id);
+    if (chosen) openCardAgent(chosen.id, true);
     else {
       abandonStoryLoad();
       editorConversationId.value = '';
@@ -1535,7 +1540,7 @@ async function cardConversationDeleted(id: string) {
   await refreshCardConversations();
   // A completed deletion must not navigate away from a view opened meanwhile.
   if (wasCurrent && !editorConversationId.value && pageMode.value === 'editor') {
-    if (cardConversations.value.length) openCardAgent(cardConversations.value[0].id);
+    if (cardConversations.value.length) openCardAgent(cardConversations.value[0].id, true);
     else {
       sidebarSection.value = 'editor';
     }
@@ -2499,7 +2504,7 @@ useTimedError(error);
         :providers="loadedSettings().shared.providers"
         :send-shortcut="loadedSettings().shared.send_shortcut"
         @changed="refreshCardConversations"
-        @saved="load"
+        @saved="refreshAuthorLibrary"
         @deleted="cardConversationDeleted"
       />
       <section v-else-if="pageMode === 'editor'" class="library home solo" aria-label="制卡对话入口">

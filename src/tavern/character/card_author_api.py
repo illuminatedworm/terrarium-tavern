@@ -83,12 +83,12 @@ def register_editor_routes(app, editor):
         return await editor.cancel(rid)
 
     @app.get("/api/card-edit-runs/{rid}/activity")
-    async def activity(rid: str, after: int = Query(0, ge=0)):
-        editor.edits.run(rid)
-        return editor.edits.activity(rid, after)
+    def activity(rid: str, after: int = Query(0, ge=0), reader: bool = False):
+        editor.edits.stream_state(rid)
+        return editor.edits.activity(rid, after, reader=reader)
 
     @app.get("/api/card-edit-runs/{rid}/events")
-    async def events(rid: str, request: Request, after: int = Query(0, ge=0)):
+    async def events(rid: str, request: Request, after: int = Query(0, ge=0), reader: bool = False):
         run = editor.edits.stream_state(rid)
 
         async def stream():
@@ -97,15 +97,15 @@ def register_editor_routes(app, editor):
                 # Do not end on a status that changed while yielding this batch;
                 # its newly committed terminal event still needs to be read.
                 active = editor.edits.stream_state(rid)["status"] in ("queued", "running")
-                batch = editor.edits.events(rid, cursor)
+                batch = editor.edits.events(rid, cursor, reader=reader)
                 cache_usage = (
                     editor.edits.conversation_cache_usage(run["workspace"])
-                    if any(e["kind"] == "context_stats" for e in batch)
+                    if not reader and any(e["kind"] == "context_stats" for e in batch)
                     else None
                 )
                 for event in batch:
                     cursor = event["seq"]
-                    if event["kind"] == "context_stats":
+                    if not reader and event["kind"] == "context_stats":
                         event["payload"]["cache_usage"] = cache_usage
                     yield f"id: {cursor}\ndata: {dump(event)}\n\n"
                 if len(batch) == 200:

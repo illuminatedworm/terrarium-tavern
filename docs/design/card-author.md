@@ -128,6 +128,8 @@
 
 主入口 `/api/card-author/conversations` 提供列表、创建、读取、改名与删除；其下的 references、worldbook-references、drafts、runs、progress、tools、preview 分别处理引用（角色卡与世界书库中的书）、逐卡操作、执行、续接进度、工具目录与预览。运行观察继续使用 `/api/card-edit-runs/{id}` 的 activity/events/cancel 接口。
 
+工作区读取和修改可传 `reader=true`。此视图传当前草稿原文，审阅基线与草稿有差异时同时传 `base_document`。来源保留资源元数据，问答正文由 `messages` 提供。保存到书架时，此模式直接返回保存后的工作区。勾选“查看本轮未完成版本”后，界面从 `pending-drafts` 更新进行中的草稿。实时事件和历史过程的阅读模式传输公开活动，详细请求仍留在诊断记录中；浏览历史时，接近可视区的回合才读取过程，已完整观察的回合复用实时记录。
+
 旧的 `/api/cards/{cid}/edits` 和 `/api/card-edits/{id}` 作为单卡适配层保留；多卡操作必须明确目标。旧 new-context 只复制已完成的单卡草稿，不复制旧聊天或未提交的修改。
 
 打开 schema 1/2 的数据库时先只读验证并创建升级前备份。编辑迁移在事务内保留旧会话 ID、卡片基准、聊天、撤销与资源；schema 6 原地把 `card_editor_*` 表改名为 `card_author_*`，见[设置存储](../reference/settings-api.md#数据库与设置迁移)。回退旧程序须使用升级前备份。备份包含进度；清理保护未保存和待续的数据，资源回收会考虑引用、草稿、撤销快照和正式故事。

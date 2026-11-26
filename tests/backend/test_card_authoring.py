@@ -484,6 +484,13 @@ async def test_api_empty_preview_reference_snapshot_and_revision(tmp_path):
             current = (await client.get(base)).json()
             assert current["cards"][0]["source_changed"]
             assert current["cards"][0]["document"] == card["document"]
+            compact = (await client.get(base, params={"reader": True})).json()["cards"][0]
+            assert compact["document"] == current["cards"][0]["base_document"]
+            assert (
+                compact["source_changed"]
+                and "base_document" not in compact
+                and "document" not in compact["source"]
+            )
             library = worldbooks.save(
                 app.state.store,
                 None,
@@ -502,6 +509,16 @@ async def test_api_empty_preview_reference_snapshot_and_revision(tmp_path):
                     base + "/drafts/C2/test", json={"expected_revision": attached.json()["revision"]}
                 )
             ).status_code == 400
+            edited = await client.put(
+                base + "/drafts/C1?reader=true",
+                json={
+                    "expected_revision": attached.json()["revision"],
+                    "document": doc,
+                },
+            )
+            edited.raise_for_status()
+            review = edited.json()["cards"][0]
+            assert review["document"] == doc and review["base_document"] == card["document"]
     finally:
         await editor.close()
         await app.state.service.close()

@@ -137,7 +137,9 @@ export type EditorActivityBlock =
  * was written beside the closing tool batch.
  */
 export function editorActivityBlocks(events: EditorEvent[], runStatus: string): EditorActivityBlock[] {
-  const ordered = mergeEditorEvents([], events);
+  const ordered = events.every((event, i) => !i || event.seq > events[i - 1].seq)
+    ? events
+    : mergeEditorEvents([], events);
   type TextStep = { id: string; seq: number; text: string; hasTools: boolean };
   const texts: TextStep[] = [];
   let current: TextStep | undefined;

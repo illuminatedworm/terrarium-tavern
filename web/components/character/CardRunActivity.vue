@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { api } from '../../lib/api';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { rawApi } from '../../lib/api';
 import {
   actionStatus,
   editorActivityBlocks,
@@ -17,32 +17,39 @@ import WebSources from '../common/WebSources.vue';
 import { webSources } from '../../lib/webSearch';
 import { failedUsageText } from '../../lib/contextUsage';
 
-const props = defineProps<{ run: EditorRun; events?: EditorEvent[] }>();
+const props = defineProps<{ run: EditorRun; events?: EditorEvent[]; observed: boolean }>();
 const emit = defineEmits<{ contentChange: [] }>();
 const saved = ref<EditorEvent[]>([]);
 const loaded = ref(false);
 const loading = ref(false);
 const error = ref('');
 const opened = ref<Record<string, boolean>>({});
-let alive = true;
+let alive = true,
+  cursor = 0;
+const container = ref<HTMLElement>();
+let observer: IntersectionObserver | undefined,
+  visible = false;
 const live = computed(() => ['queued', 'running'].includes(props.run.status));
+const events = computed(() =>
+  saved.value.length && props.events?.length
+    ? mergeEditorEvents(saved.value, props.events)
+    : props.events?.length
+      ? props.events
+      : saved.value,
+);
 const sources = computed(() =>
   webSources(
-    mergeEditorEvents(saved.value, props.events || [])
-      .filter((e) => e.kind === 'web_sources')
-      .map((e) => ({ web_sources: e.payload.sources })),
+    events.value.filter((e) => e.kind === 'web_sources').map((e) => ({ web_sources: e.payload.sources })),
   ),
 );
 const blocks = computed(() => {
-  const result = editorActivityBlocks(mergeEditorEvents(saved.value, props.events || []), props.run.status);
+  const result = editorActivityBlocks(events.value, props.run.status);
   return result.length || !live.value
     ? result
     : [{ kind: 'tools' as const, id: 'pending', actions: [] as EditorAction[] }];
 });
 const failedUsage = computed(() =>
-  mergeEditorEvents(saved.value, props.events || []).filter(
-    (event) => event.kind === 'usage' && event.payload.status === 'failed',
-  ),
+  events.value.filter((event) => event.kind === 'usage' && event.payload.status === 'failed'),
 );
 // The run outcome belongs to its latest step; earlier blocks already finished.
 const blockStatus = (id: string) => (id === blocks.value.at(-1)?.id ? props.run.status : 'completed');
@@ -53,18 +60,17 @@ function toggleBlock(id: string, event: Event) {
 }
 
 async function load() {
-  if (loading.value || loaded.value) return;
+  if (!alive || loading.value || loaded.value || props.observed) return;
   loading.value = true;
   error.value = '';
-  let cursor = 0;
   const status = props.run.status;
   try {
     do {
-      const page = await api(`/card-edit-runs/${props.run.id}/activity?after=${cursor}`);
+      const page = await rawApi(`/card-edit-runs/${props.run.id}/activity?reader=true&after=${cursor}`);
       if (!alive) return;
-      saved.value = mergeEditorEvents(saved.value, page.events);
-      if (!page.has_more) break;
+      saved.value.push(...page.events);
       cursor = page.next_cursor;
+      if (!page.has_more) break;
     } while (alive);
     loaded.value = status === props.run.status;
   } catch (e: any) {
@@ -98,17 +104,30 @@ watch(
   () => props.run.status,
   () => {
     loaded.value = false;
-    void load();
+    if (visible && !live.value) void load();
   },
 );
-void load();
+onMounted(() => {
+  const element = container.value!;
+  // Live SSE already replays this run from the start. For older runs, load
+  // complete activity as the user approaches it in the chat scroll area.
+  observer = new IntersectionObserver(
+    ([entry]) => {
+      visible = entry.isIntersecting;
+      if (visible && !live.value) void load();
+    },
+    { root: element.closest('.cw-chat'), rootMargin: '320px 0px' },
+  );
+  observer.observe(element);
+});
 onBeforeUnmount(() => {
   alive = false;
+  observer?.disconnect();
 });
 </script>
 
 <template>
-  <div class="cw-run-sequence" :data-run-id="run.id" aria-label="本回合工具与过程">
+  <div ref="container" class="cw-run-sequence" :data-run-id="run.id" aria-label="本回合工具与过程">
     <p v-for="event in failedUsage" :key="event.seq" class="run-note">
       {{ failedUsageText(event.payload.usage) }}
     </p>
@@ -130,7 +149,7 @@ onBeforeUnmount(() => {
       >
         <summary>
           <CardWorkspaceIcon name="chevron" /><span class="cw-run-title">工具与过程</span>
-          <span v-if="loaded || block.actions.length" class="cw-run-count">
+          <span v-if="observed || loaded || block.actions.length" class="cw-run-count">
             {{ block.actions.length }} 项工具与联网活动
           </span>
           <span class="cw-run-status" :aria-live="live ? 'polite' : undefined">{{

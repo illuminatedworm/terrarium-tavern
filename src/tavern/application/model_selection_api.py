@@ -4,6 +4,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tavern.character.editor_view import workspace_view
 from tavern.core.channels import Channel
 from tavern.core.errors import NotFound
 from tavern.core.model_selection import ModelSelection, select_runtime
@@ -55,10 +56,10 @@ def register_model_selection_routes(app, store, editor):
         return store.session(sid)
 
     @app.put("/api/card-author/conversations/{wid}/model")
-    def select_editor(wid: str, edit: SelectionEdit):
+    def select_editor(wid: str, edit: SelectionEdit, reader: bool = False):
         with store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            workspace = editor.edits.check(db, wid, edit.expected_revision, idle=False)
+            workspace = editor.edits.check(db, wid, edit.expected_revision, idle=False, metadata_only=True)
             if db.execute(
                 "SELECT 1 FROM card_edit_runs WHERE workspace=? AND status IN ('queued','running')", (wid,)
             ).fetchone():
@@ -70,13 +71,13 @@ def register_model_selection_routes(app, store, editor):
                 "UPDATE card_author_conversations SET model_selection=? WHERE id=?",
                 (selection.model_dump_json(exclude_defaults=True), wid),
             )
-        return editor.edits.conversation(wid)
+        return workspace_view(editor.edits.conversation(wid), reader)
 
     @app.put("/api/card-author/conversations/{wid}/channel-origin")
-    def classify_editor(wid: str, edit: ChannelEdit):
+    def classify_editor(wid: str, edit: ChannelEdit, reader: bool = False):
         with store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            workspace = editor.edits.check(db, wid, edit.expected_revision, idle=False)
+            workspace = editor.edits.check(db, wid, edit.expected_revision, idle=False, metadata_only=True)
             if workspace["channel_origin"] is not None:
                 raise Conflict("渠道归属已经确定，不能跨渠道修改")
             if db.execute(
@@ -87,4 +88,4 @@ def register_model_selection_routes(app, store, editor):
                 "UPDATE card_author_conversations SET channel_origin=?,model_selection=? WHERE id=?",
                 (edit.channel_origin, dump({}), wid),
             )
-        return editor.edits.conversation(wid)
+        return workspace_view(editor.edits.conversation(wid), reader)

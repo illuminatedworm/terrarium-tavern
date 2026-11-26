@@ -44,6 +44,7 @@ class CardAuthorService:
             pending = db.execute(
                 "SELECT run,payload FROM card_author_progress WHERE workspace=?", (wid,)
             ).fetchone()
+            progress = None
             if request.resume_run_id:
                 if not pending or pending[0] != request.resume_run_id:
                     raise Conflict("只能继续当前对话最新的未完成进度")
@@ -75,9 +76,9 @@ class CardAuthorService:
             if not self.provider_factory:
                 require_model_connection(cfg)
             now = time.time()
-            if not workspace.get("environment"):
+            new_environment = not workspace.get("environment")
+            if new_environment:
                 workspace["environment"] = self.edits.environment_snapshot(db, workspace, now)
-                self.edits.write(db, workspace, increment=False)
             if payload["text"].strip():
                 payload["_input_ref"] = self.edits.message(db, wid, "user", payload["text"], rid)
                 payload["_file_refs"] = []
@@ -85,8 +86,8 @@ class CardAuthorService:
                     if not file.get("message_ref"):
                         file["message_ref"] = payload["_input_ref"]
                         payload["_file_refs"].append(file["ref"])
-                if payload["_file_refs"]:
-                    self.edits.write(db, workspace, increment=False)
+            if new_environment or payload.get("_file_refs"):
+                self.edits.write(db, workspace, increment=False)
             db.execute(
                 "INSERT INTO card_edit_runs(id,workspace,operation,request,status,created) VALUES (?,?,?,?,'queued',?)",
                 (rid, wid, request.operation_id, dump(payload), now),
@@ -95,7 +96,7 @@ class CardAuthorService:
         # A queued task can be stopped before its coroutine runs. Persist its
         # baseline now so shutdown/immediate cancellation remains resumable.
         try:
-            owner = EditorRun(self, rid)
+            owner = EditorRun(self, rid, workspace, cfg, payload, progress)
             owner.save()
         except Exception as error:
             with self.store.connection() as db:
@@ -107,7 +108,7 @@ class CardAuthorService:
         return self.edits.run(rid)
 
     async def cancel(self, rid):
-        self.edits.run(rid)
+        self.edits.stream_state(rid)
         task = self.tasks.get(rid)
         if task:
             task.cancel()
@@ -121,13 +122,11 @@ class CardAuthorService:
             self.edits.event(rid, "cancelled", {})
         return self.edits.run(rid)
 
-    async def run(self, rid, owner=None):
+    async def run(self, rid, owner):
         provider = None
         try:
             with self.store.connection() as db:
                 db.execute("UPDATE card_edit_runs SET status='running' WHERE id=?", (rid,))
-            owner = owner or EditorRun(self, rid)
-            owner.save()
 
             def capture_request(payload):
                 stats = owner.context.image_stats()

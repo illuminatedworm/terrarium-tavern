@@ -9,6 +9,8 @@ from tavern.core.errors import NotFound
 from tavern.core.usage import aggregate_cache_usage
 from tavern.storage.store import dump
 
+READER_EVENT_COLUMNS = "seq,run,kind,created,CASE WHEN kind='completed' THEN '{}' ELSE payload END AS payload"
+
 
 def initialize_editor_tables(store):
     with store.connection() as db:
@@ -71,9 +73,11 @@ class EditorStore(Conversations):
             raise NotFound("编辑任务不存在")
         return {**dict(row), "request": json.loads(row["request"])}
 
-    def context(self, wid):
-        with self.store.connection() as db:
-            row = db.execute("SELECT payload FROM card_edit_contexts WHERE workspace=?", (wid,)).fetchone()
+    def context(self, wid, db=None):
+        if db is None:
+            with self.store.connection() as connection:
+                return self.context(wid, connection)
+        row = db.execute("SELECT payload FROM card_edit_contexts WHERE workspace=?", (wid,)).fetchone()
         return json.loads(row[0]) if row else None
 
     def event(self, rid, kind, payload):
@@ -83,20 +87,24 @@ class EditorStore(Conversations):
                 (rid, kind, dump(payload), time.time()),
             )
 
-    def events(self, rid, after=0):
+    def events(self, rid, after=0, *, reader=False):
+        kinds = (*PUBLIC_KINDS, "context_stats", "context_warning") if reader else ()
+        where = f"AND kind IN ({','.join('?' for _ in kinds)})" if kinds else ""
+        columns = READER_EVENT_COLUMNS if reader else "*"
         with self.store.connection() as db:
             return [
                 {**dict(r), "payload": json.loads(r["payload"])}
                 for r in db.execute(
-                    "SELECT * FROM card_edit_events WHERE run=? AND seq>? ORDER BY seq LIMIT 200",
-                    (rid, after),
+                    f"SELECT {columns} FROM card_edit_events WHERE run=? AND seq>? {where} ORDER BY seq LIMIT 200",
+                    (rid, after, *kinds),
                 )
             ]
 
     def conversation_cache_usage(self, wid):
         with self.store.connection() as db:
             rows = db.execute(
-                """SELECT r.id,e.kind,e.payload FROM card_edit_runs r
+                """SELECT r.id,e.kind,json_extract(e.payload,'$.usage') AS usage,
+                json_extract(e.payload,'$.calls') AS calls FROM card_edit_runs r
                 LEFT JOIN card_edit_events e ON e.run=r.id AND
                     (e.kind='completed' OR (e.kind IN ('context_stats','usage') AND json_type(e.payload,'$.usage')='object'))
                 WHERE r.workspace=? ORDER BY r.created,r.id,e.seq""",
@@ -105,13 +113,12 @@ class EditorStore(Conversations):
         runs = {}
         for row in rows:
             run = runs.setdefault(row["id"], {"usages": [], "calls": 0})
-            payload = json.loads(row["payload"]) if row["payload"] else {}
             if row["kind"] in ("context_stats", "usage"):
-                run["usages"].append(payload["usage"])
+                run["usages"].append(json.loads(row["usage"]))
             elif row["kind"] == "completed":
                 # completed repeats the last response, not a new request. Old
                 # pruned per-call records cannot be reconstructed from it.
-                run["calls"] = payload.get("calls", 1)
+                run["calls"] = row["calls"] if row["calls"] is not None else 1
         usages = []
         for run in runs.values():
             usages.extend(run["usages"])
@@ -119,11 +126,11 @@ class EditorStore(Conversations):
                 usages.append(None)
         return aggregate_cache_usage(usages)
 
-    def activity(self, rid, after=0):
+    def activity(self, rid, after=0, *, reader=False):
         with self.store.connection() as db:
             placeholders = ",".join("?" for _ in PUBLIC_KINDS)
             rows = db.execute(
-                f"""SELECT * FROM card_edit_events WHERE run=? AND seq>?
+                f"""SELECT {READER_EVENT_COLUMNS if reader else "*"} FROM card_edit_events WHERE run=? AND seq>?
                 AND kind IN ({placeholders}) ORDER BY seq LIMIT 201""",
                 (rid, after, *PUBLIC_KINDS),
             ).fetchall()

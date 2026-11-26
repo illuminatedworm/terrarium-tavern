@@ -116,13 +116,16 @@ def initialize(store):
 
 
 class Conversations:
-    def load(self, db, wid):
-        row = db.execute("SELECT * FROM card_author_conversations WHERE id=?", (wid,)).fetchone()
+    def load(self, db, wid, *, metadata_only=False):
+        columns = "id,revision,channel_origin,model_selection,cache_follow" if metadata_only else "*"
+        row = db.execute(f"SELECT {columns} FROM card_author_conversations WHERE id=?", (wid,)).fetchone()
         if not row:
             raise NotFound("制卡对话不存在")
+        metadata = dict(row)
+        payload = {} if metadata_only else json.loads(metadata.pop("payload"))
         return {
-            **dict(row),
-            **json.loads(row["payload"]),
+            **metadata,
+            **payload,
             "model_selection": json.loads(row["model_selection"]),
             # Rows predating the strategy keep the fixed-prefix behavior.
             "cache_follow": {**DEFAULT_FOLLOW, "mode": "fixed", **json.loads(row["cache_follow"])},
@@ -158,8 +161,8 @@ class Conversations:
                 snapshot["utc_offset"] = "未记录"
         return snapshot
 
-    def check(self, db, wid, revision, idle=True):
-        workspace = self.load(db, wid)
+    def check(self, db, wid, revision, idle=True, *, metadata_only=False):
+        workspace = self.load(db, wid, metadata_only=metadata_only)
         if workspace["revision"] != revision:
             raise Conflict("制卡对话已改变，请重新载入")
         if (
@@ -176,7 +179,7 @@ class Conversations:
     def set_cache_follow(self, wid, revision, mode, interval, offset, reply_ref):
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            self.check(db, wid, revision)
+            self.check(db, wid, revision, metadata_only=True)
             if mode == "manual" and (
                 not reply_ref
                 or not db.execute(
@@ -204,8 +207,9 @@ class Conversations:
     def initialize_channel(self, db, wid):
         from tavern.core.channels import provider_channel
 
-        profile = self.store.settings_document().shared.card_author
-        cfg = self.store.settings().for_role("card_author")
+        document = self.store.settings_document(db=db)
+        profile = document.shared.card_author
+        cfg = self.store.settings(document=document).for_role("card_author")
         selection = {key: getattr(profile, key) for key in ("provider_id", "model")}
         db.execute(
             "UPDATE card_author_conversations SET channel_origin=?,model_selection=?,cache_follow=? WHERE id=?",
@@ -224,61 +228,64 @@ class Conversations:
         return self.conversation(wid)
 
     def conversations(self, cid=None):
+        # The shelf only needs counts and labels. Card bodies and attachment
+        # contents can dominate the stored JSON and never leave SQLite here.
+        filter_card = (
+            """WHERE EXISTS (SELECT 1 FROM json_each(c.payload,'$.cards') item
+            WHERE json_extract(item.value,'$.card')=?)"""
+            if cid is not None
+            else ""
+        )
         with self.store.connection() as db:
-            rows = db.execute("""SELECT c.*,
-                (SELECT substr(content,1,64) FROM card_author_messages WHERE workspace=c.id AND role='user' ORDER BY seq LIMIT 1) AS first_input,
+            rows = db.execute(
+                f"""SELECT c.id,c.revision,c.created,c.updated,c.channel_origin,
+                coalesce(nullif(c.title,''),nullif((SELECT substr(content,1,64) FROM card_author_messages
+                    WHERE workspace=c.id AND role='user' ORDER BY seq LIMIT 1),''),'新制卡对话') AS title,
+                json_array_length(c.payload,'$.cards') AS card_count,
+                (SELECT count(*) FROM json_each(c.payload,'$.state.persona_attachments'))
+                    + coalesce(json_array_length(c.payload,'$.files'),0) AS other_count,
                 coalesce((SELECT status FROM card_edit_runs WHERE workspace=c.id ORDER BY created DESC,rowid DESC LIMIT 1),'empty') AS status,
                 (SELECT count(*) FROM card_edit_runs WHERE workspace=c.id) AS turn_count,
                 EXISTS(SELECT 1 FROM card_author_progress WHERE workspace=c.id) AS resumable
-                FROM card_author_conversations c ORDER BY updated DESC,rowid DESC""").fetchall()
-        result = []
-        for row in rows:
-            payload = json.loads(row["payload"])
-            items = payload["cards"]
-            if cid is None or any(c["card"] == cid for c in items):
-                result.append(
-                    {
-                        key: row[key]
-                        for key in (
-                            "id",
-                            "revision",
-                            "created",
-                            "updated",
-                            "status",
-                            "turn_count",
-                            "resumable",
-                            "channel_origin",
-                        )
-                    }
-                    | {
-                        "title": row["title"] or row["first_input"] or "新制卡对话",
-                        "card_count": len(items),
-                        "reference_count": len(items)
-                        + len(payload["state"].get("persona_attachments", {}))
-                        + len(payload.get("files", [])),
-                        "card": cid,
-                    }
-                )
-        return result
+                FROM card_author_conversations c {filter_card} ORDER BY c.updated DESC,c.rowid DESC""",
+                (cid,) if cid is not None else (),
+            )
+            result = []
+            for row in rows:
+                item = dict(row)
+                item.update(card=cid, reference_count=item.pop("other_count") + item["card_count"])
+                result.append(item)
+            return result
 
-    def messages(self, wid, db=None):
+    def messages(self, wid, db=None, *, files=None, ref=None):
         if db is None:
             with self.store.connection() as connection:
-                return self.messages(wid, connection)
-        files = self.load(db, wid).get("files", [])
+                return self.messages(wid, connection, files=files, ref=ref)
+        if files is None:
+            row = db.execute(
+                "SELECT json_extract(payload,'$.files') FROM card_author_conversations WHERE id=?", (wid,)
+            ).fetchone()
+            if row is None:
+                raise NotFound("制卡对话不存在")
+            files = json.loads(row[0]) if row[0] else []
+        attachments = {}
+        for file in files:
+            if ref := file.get("message_ref"):
+                attachments.setdefault(ref, []).append(file)
+        where = "AND m.seq=substr(?,2) AND 'H'||m.seq=?" if ref is not None else ""
         return [
             {
                 **dict(r),
                 "ref": f"H{r['seq']}",
                 "target_labels": json.loads(r["target_labels"] or "[]"),
-                "attachments": [f for f in files if f.get("message_ref") == f"H{r['seq']}"],
+                "attachments": attachments.get(f"H{r['seq']}", []),
             }
             for r in db.execute(
-                """SELECT m.*, CASE WHEN m.role='user' THEN json_extract(r.request,'$.skill') END AS skill,
+                f"""SELECT m.*, CASE WHEN m.role='user' THEN json_extract(r.request,'$.skill') END AS skill,
                    CASE WHEN m.role='user' THEN json_extract(r.request,'$._target_labels') END AS target_labels
                    FROM card_author_messages m LEFT JOIN card_edit_runs r ON r.id=m.run
-                   WHERE m.workspace=? ORDER BY m.seq""",
-                (wid,),
+                   WHERE m.workspace=? {where} ORDER BY m.seq""",
+                (wid, ref, ref) if ref is not None else (wid,),
             )
         ]
 
@@ -289,55 +296,76 @@ class Conversations:
         db.execute("INSERT INTO card_author_messages VALUES (?,?,?,?,?)", (wid, seq, role, text, rid))
         return f"H{seq}"
 
-    def conversation(self, wid):
+    @staticmethod
+    def pending_drafts(db, wid):
+        row = db.execute(
+            """SELECT run,json_extract(payload,'$.working') AS working,
+            coalesce(json_extract(payload,'$.calls'),0) AS calls FROM card_author_progress WHERE workspace=?""",
+            (wid,),
+        ).fetchone()
+        if not row:
+            return None
+        working = json.loads(row["working"])
+        return {
+            "run": row["run"],
+            "cards": working["cards"],
+            "state": working["state"],
+            "calls": row["calls"],
+        }
+
+    @staticmethod
+    def source_status(db, cards):
         from tavern.character.editor_images import portrait_digest
 
+        # Committed and pending drafts can refer to the same shelf item. Read
+        # metadata once, without selecting either document or portrait blobs.
+        card_ids = {item["card"] for item in cards if item.get("card")}
+        book_ids = {item["worldbook"] for item in cards if item.get("worldbook")}
+        originals = (
+            {
+                row["id"]: dict(row)
+                for row in db.execute(
+                    "SELECT id,revision,container,original FROM cards WHERE id IN (SELECT value FROM json_each(?))",
+                    (dump(list(card_ids)),),
+                )
+            }
+            if card_ids
+            else {}
+        )
+        books = (
+            {
+                row["id"]: row
+                for row in db.execute(
+                    "SELECT id,revision FROM worldbooks WHERE id IN (SELECT value FROM json_each(?))",
+                    (dump(list(book_ids)),),
+                )
+            }
+            if book_ids
+            else {}
+        )
+        for item in cards:
+            book = is_worldbook(item)
+            source = books.get(item["worldbook"]) if book else originals.get(item["card"])
+            item.update(
+                source_exists=bool(source),
+                source_changed=bool(source and source["revision"] != item["base_revision"]),
+                portrait_changed=not book
+                and portrait_digest(item["source"]) != portrait_digest(source or {}),
+            )
+
+    def conversation(self, wid):
         with self.store.connection() as db:
+            db.execute("BEGIN")
             result = self.load(db, wid)
-            result.pop("payload", None)
-            result["messages"] = self.messages(wid, db)
+            result["messages"] = self.messages(wid, db, files=result.get("files", []))
             result["runs"] = [
                 {**dict(r), "request": json.loads(r["request"])}
                 for r in db.execute(
                     "SELECT * FROM card_edit_runs WHERE workspace=? ORDER BY created,rowid", (wid,)
                 )
             ]
-            pending = db.execute(
-                "SELECT run,payload FROM card_author_progress WHERE workspace=?", (wid,)
-            ).fetchone()
-            value = json.loads(pending[1]) if pending else None
-            result["pending"] = (
-                {
-                    "run": pending[0],
-                    "cards": value["working"]["cards"],
-                    "state": value["working"]["state"],
-                    "calls": value.get("calls", 0),
-                }
-                if pending
-                else None
-            )
-            # Compare against the library on read, including pending drafts. This
-            # UI metadata never becomes a second persisted portrait source.
-            for item in result["cards"] + (result["pending"]["cards"] if pending else []):
-                if is_worldbook(item):
-                    row = db.execute(
-                        "SELECT revision FROM worldbooks WHERE id=?", (item["worldbook"],)
-                    ).fetchone()
-                    item.update(
-                        source_exists=bool(row),
-                        source_changed=bool(row and row[0] != item["base_revision"]),
-                        portrait_changed=False,
-                    )
-                    continue
-                source = db.execute(
-                    "SELECT revision,container,original FROM cards WHERE id=?", (item["card"],)
-                ).fetchone()
-                item.update(
-                    source_exists=bool(source),
-                    source_changed=bool(source and source["revision"] != item["base_revision"]),
-                    portrait_changed=portrait_digest(item["source"])
-                    != portrait_digest(dict(source) if source else {}),
-                )
+            pending = result["pending"] = self.pending_drafts(db, wid)
+            self.source_status(db, result["cards"] + (pending["cards"] if pending else []))
             for item in result["cards"]:
                 item.update(
                     validation=validation_report(item["document"]),
@@ -352,9 +380,11 @@ class Conversations:
     def title(self, wid, title, revision):
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            workspace = self.check(db, wid, revision)
-            db.execute("UPDATE card_author_conversations SET title=? WHERE id=?", (title, wid))
-            self.write(db, workspace)
+            self.check(db, wid, revision, metadata_only=True)
+            db.execute(
+                "UPDATE card_author_conversations SET title=?,revision=revision+1,updated=? WHERE id=?",
+                (title, time.time(), wid),
+            )
         return self.conversation(wid)
 
     @staticmethod
@@ -743,13 +773,16 @@ class Conversations:
     def discard(self, wid, revision):
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            workspace = self.check(db, wid, revision, idle=False)
+            self.check(db, wid, revision, idle=False, metadata_only=True)
             if db.execute(
                 "SELECT 1 FROM card_edit_runs WHERE workspace=? AND status IN ('queued','running')", (wid,)
             ).fetchone():
                 raise Conflict("请先停止任务")
             db.execute("DELETE FROM card_author_progress WHERE workspace=?", (wid,))
-            self.write(db, workspace)
+            db.execute(
+                "UPDATE card_author_conversations SET revision=revision+1,updated=? WHERE id=?",
+                (time.time(), wid),
+            )
         return self.conversation(wid)
 
     def reserve_ref(self, wid, prefix="C"):

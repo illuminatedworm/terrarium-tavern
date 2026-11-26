@@ -8,7 +8,7 @@ export interface EditorCard {
   worldbook?: string;
   kind: 'reference' | 'draft';
   document: Record<string, any>;
-  base_document: Record<string, any>;
+  base_document?: Record<string, any>;
   source: Record<string, any>;
   base_revision: number | null;
   brief: string;
@@ -21,8 +21,8 @@ export interface EditorCard {
 export interface EditorRun {
   id: string;
   status: string;
-  request: { text: string; resume_run_id?: string; target_refs?: string[]; skill?: EditorSkillId | null };
-  response: string;
+  request?: { text?: string; resume_run_id?: string; target_refs?: string[]; skill?: EditorSkillId | null };
+  response?: string;
   error: string | null;
 }
 export interface EditorMessage {
@@ -96,18 +96,22 @@ export function editorTimeline(messages: EditorMessage[], runs: EditorRun[]): Ed
     positions.set(message.run, indexes);
   });
   const insertions = new Map<number, EditorRun[]>();
-  runs.forEach((run, index) => {
+  let nextMessage = messages.length;
+  // Reverse iteration also locates message-less retries without searching the
+  // remaining runs for every item. Reverse each shared gap back for display.
+  for (let index = runs.length - 1; index >= 0; index--) {
+    const run = runs[index];
     const indexes = positions.get(run.id) || [];
     const answer = indexes.find((i) => messages[i].role === 'assistant');
-    const nextRun = runs.slice(index + 1).find((next) => positions.has(next.id));
-    const position =
-      answer ??
-      (indexes.length ? indexes.at(-1)! + 1 : nextRun ? positions.get(nextRun.id)![0] : messages.length);
-    insertions.set(position, [...(insertions.get(position) || []), run]);
-  });
+    const position = answer ?? (indexes.length ? indexes.at(-1)! + 1 : nextMessage);
+    const group = insertions.get(position);
+    if (group) group.push(run);
+    else insertions.set(position, [run]);
+    if (indexes.length) nextMessage = indexes[0];
+  }
   const timeline: EditorTimelineItem[] = [];
   for (let index = 0; index <= messages.length; index++) {
-    for (const run of insertions.get(index) || [])
+    for (const run of insertions.get(index)?.reverse() || [])
       timeline.push({ kind: 'activity', key: `run:${run.id}`, run });
     if (index < messages.length)
       timeline.push({ kind: 'message', key: `message:${messages[index].ref}`, message: messages[index] });
@@ -125,7 +129,7 @@ export function cardName(card: EditorCard) {
 }
 
 export function draftReview(card: EditorCard | undefined, pending = false) {
-  const changes = card ? compare(card.base_document, card.document) : [];
+  const changes = card?.base_document ? compare(card.base_document, card.document) : [];
   const count = changes.length + Number(!!card?.portrait_changed);
   const status = pending
     ? '本轮未完成版本'

@@ -659,7 +659,8 @@ class EditorTools(DocumentTools, PersonaTools):
         return self.view.expose({"cards": result})
 
     def source_message(self, ref, role=None):
-        message = next((m for m in self.owner.edits.messages(self.owner.wid) if m["ref"] == ref), None)
+        matches = self.owner.edits.messages(self.owner.wid, files=self.owner.files, ref=ref)
+        message = matches[0] if matches else None
         if message is None or role and message["role"] != role:
             raise ValueError("需要本对话中正确角色的有效 H 引用")
         return message

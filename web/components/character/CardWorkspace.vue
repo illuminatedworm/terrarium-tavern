@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { api } from '../../lib/api';
+import { api, rawApi } from '../../lib/api';
 import {
   cardName,
   draftReview,
@@ -17,7 +17,8 @@ import { conversationModelProfile } from '../../lib/modelConnections';
 import { type ConversationCacheUsage, type EditorContextStats } from '../../lib/editorContextStats';
 import { contextTokens, contextUsageDetails, contextUsageLabel } from '../../lib/contextUsage';
 import { useCardReferencePicker } from '../../composables/useCardReferencePicker';
-import { mergeEditorEvents, type EditorEvent } from '../../lib/cardAgentActivity';
+import type { EditorEvent } from '../../lib/cardAgentActivity';
+import { equal } from '../../lib/settingsDocument';
 import { editorSkillPresets, type EditorSkillId, type EditorSkillPreset } from '../../lib/cardAuthorSkills';
 import { eventCursor } from '../../lib/turnStream';
 import StoryProse from '../story/StoryProse.vue';
@@ -50,7 +51,7 @@ const props = defineProps<{
   providers: Provider[];
   sendShortcut?: SendShortcut;
 }>();
-const emit = defineEmits<{ changed: []; saved: []; deleted: [id: string] }>();
+const emit = defineEmits<{ changed: []; saved: [kind: 'card' | 'worldbook']; deleted: [id: string] }>();
 const workspace = ref<EditorConversation | null>(null);
 const personaLibrary = ref<EditorPersona[]>([]);
 const personaAttachments = computed(() => workspace.value?.state.persona_attachments || {});
@@ -83,7 +84,7 @@ const selectedProvider = computed(() =>
 async function selectModel(selection: ConversationModelSelection) {
   if (busy.value || active.value) return;
   await guard(async () => {
-    workspace.value = await api(
+    workspace.value = await workspaceRequest(
       base + '/model',
       { expected_revision: workspace.value!.revision, selection },
       'PUT',
@@ -94,7 +95,7 @@ async function selectModel(selection: ConversationModelSelection) {
 }
 async function classifyChannel(channel_origin: Channel) {
   await guard(async () => {
-    workspace.value = await api(
+    workspace.value = await workspaceRequest(
       base + '/channel-origin',
       { expected_revision: workspace.value!.revision, channel_origin },
       'PUT',
@@ -145,6 +146,7 @@ watch(inspectorOpen, async (open) => {
   (open ? closeInspector.value : inspectorToggle.value)?.focus();
 });
 const activities = ref<Record<string, EditorEvent[]>>({});
+const observedRuns = ref(new Set<string>());
 let alive = true;
 let refreshVersion = 0;
 let stream: EventSource | undefined;
@@ -235,10 +237,7 @@ watch(items, (value) => {
 function pendingChanged(card: EditorCard) {
   const committed = workspace.value?.cards.find((c) => c.ref === card.ref);
   const portrait = (item?: EditorCard) => (item?.source.container === 'png' ? item.source.original : null);
-  return (
-    JSON.stringify(card.document) !== JSON.stringify(committed?.document) ||
-    portrait(card) !== portrait(committed)
-  );
+  return !equal(card.document, committed?.document) || portrait(card) !== portrait(committed);
 }
 watch([pendingView, () => workspace.value?.pending?.cards], () => {
   const pending = pendingView.value ? workspace.value?.pending?.cards : undefined;
@@ -263,13 +262,17 @@ async function guard(action: () => Promise<void>) {
     if (alive) busy.value = false;
   }
 }
-async function refresh() {
+function workspaceRequest(path: string, data?: unknown, method?: string): Promise<EditorConversation> {
+  return rawApi(path + '?reader=true', data, method);
+}
+async function refresh(response: Promise<EditorConversation> = workspaceRequest(base), notifyList = true) {
   const version = ++refreshVersion;
-  const value = (await api(base)) as EditorConversation;
-  if (!alive || version !== refreshVersion) return;
+  const value = await response;
+  if (!alive || version !== refreshVersion || (workspace.value && value.revision < workspace.value.revision))
+    return;
   workspace.value = value;
   if (!value.pending) pendingView.value = false;
-  emit('changed');
+  if (notifyList) emit('changed');
   scheduleStats();
 }
 function modelOptions() {
@@ -307,10 +310,31 @@ function trackScroll() {
   const element = chat.value;
   if (element) followingLatest.value = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
 }
+let pendingRead = 0;
+async function refreshPending(id: string, connection: EventSource) {
+  const version = ++pendingRead;
+  try {
+    const pending: EditorConversation['pending'] = await rawApi(base + '/pending-drafts');
+    if (
+      alive &&
+      connection === stream &&
+      version === pendingRead &&
+      pendingView.value &&
+      active.value?.id === id &&
+      pending?.run === id
+    )
+      workspace.value!.pending = pending;
+  } catch (e) {
+    if (alive && connection === stream && version === pendingRead) error.value = `草稿预览更新失败：${e}`;
+  }
+}
+watch(pendingView, (open) => {
+  if (open && active.value && stream) void refreshPending(active.value.id, stream);
+});
 function observe(id: string) {
   stream?.close();
   const accept = eventCursor();
-  const connection = new EventSource(`/api/card-edit-runs/${id}/events`);
+  const connection = new EventSource(`/api/card-edit-runs/${id}/events?reader=true`);
   stream = connection;
   connection.onmessage = (message) => {
     if (!alive || connection !== stream) return;
@@ -326,6 +350,7 @@ function observe(id: string) {
     if (
       [
         'model_call',
+        'usage',
         'text',
         'tool_started',
         'tool_finished',
@@ -334,10 +359,11 @@ function observe(id: string) {
         'response_restarted',
       ].includes(event.kind)
     )
-      activities.value[id] = mergeEditorEvents(activities.value[id] || [], [event]);
+      (activities.value[id] ??= []).push(event);
     // tool_finished follows persistence of the working draft. Refresh the
     // opt-in unfinished preview; keep the completed draft selected by default.
     if (
+      pendingView.value &&
       event.kind === 'tool_finished' &&
       event.payload.status === 'completed' &&
       [
@@ -351,15 +377,14 @@ function observe(id: string) {
         'revert_draft',
       ].includes(event.payload.tool)
     ) {
-      void refresh().catch((e: Error) => {
-        if (alive && connection === stream) error.value = `草稿预览更新失败：${e.message}`;
-      });
+      void refreshPending(id, connection);
     }
     scroll();
   };
   connection.addEventListener('end', () => {
     connection.close();
     if (!alive || connection !== stream) return;
+    observedRuns.value.add(id);
     void guard(async () => {
       await refresh();
       scroll();
@@ -406,11 +431,15 @@ async function stop() {
 }
 async function discard() {
   await guard(async () => {
-    await api(base + '/progress', { expected_revision: workspace.value!.revision }, 'DELETE');
+    const response = workspaceRequest(
+      base + '/progress',
+      { expected_revision: workspace.value!.revision },
+      'DELETE',
+    );
+    await refresh(response);
     if (!alive) return;
     modal.value = '';
     pendingView.value = false;
-    await refresh();
   });
 }
 async function openModal(name: string) {
@@ -440,7 +469,7 @@ async function addFileReferences(files: File[]) {
         data.append('file', file);
         data.append('expected_revision', String(workspace.value!.revision));
         try {
-          const value = await api(base + '/files', data);
+          const value = await workspaceRequest(base + '/files', data);
           if (!alive) return;
           workspace.value = value;
           emit('changed');
@@ -458,7 +487,7 @@ async function addFileReferences(files: File[]) {
 async function removeFileReference(ref: string) {
   if (locked.value) return;
   await guard(async () => {
-    const value = await api(
+    const value = await workspaceRequest(
       base + `/files/${ref}`,
       { expected_revision: workspace.value!.revision },
       'DELETE',
@@ -483,7 +512,7 @@ async function chooseReference(option: CardReferenceOption) {
   await guard(async () => {
     if (option.persona) {
       if (!option.personaRef) {
-        const value = await api(base + '/persona-references', {
+        const value = await workspaceRequest(base + '/persona-references', {
           persona_id: option.persona.id,
           expected_revision: workspace.value!.revision,
           expected_persona_version: option.persona.version,
@@ -502,7 +531,7 @@ async function chooseReference(option: CardReferenceOption) {
     }
     let item = option.attached;
     if (!item && option.worldbookSource) {
-      const value = await api(base + '/worldbook-references', {
+      const value = await workspaceRequest(base + '/worldbook-references', {
         worldbook_id: option.worldbookSource.id,
         expected_revision: workspace.value!.revision,
         expected_worldbook_revision: option.worldbookSource.revision,
@@ -512,7 +541,7 @@ async function chooseReference(option: CardReferenceOption) {
       item = value.cards.find((card: EditorCard) => card.worldbook === option.worldbookSource!.id);
       emit('changed');
     } else if (!item && option.source) {
-      const value = await api(base + '/references', {
+      const value = await workspaceRequest(base + '/references', {
         card_id: option.source.id,
         expected_revision: workspace.value!.revision,
         expected_card_revision: option.source.revision,
@@ -544,7 +573,7 @@ function inspectReference(item: EditorCard) {
 async function saveCacheFollow(policy: EditorCacheFollow) {
   if (!workspace.value || locked.value) return;
   await guard(async () => {
-    const value = await api(
+    const value = await workspaceRequest(
       base + '/cache-follow',
       { ...policy, expected_revision: workspace.value!.revision },
       'PUT',
@@ -557,7 +586,7 @@ async function saveCacheFollow(policy: EditorCacheFollow) {
 async function removeReference(kind: 'card' | 'persona', ref: string) {
   if (locked.value) return;
   await guard(async () => {
-    const value = await api(
+    const value = await workspaceRequest(
       base + `/${kind === 'persona' ? 'persona-references' : 'references'}/${ref}`,
       {
         expected_revision: workspace.value!.revision,
@@ -597,16 +626,23 @@ async function action(kind: string) {
   const ref = current.value.ref;
   await guard(async () => {
     const revision = { expected_revision: workspace.value!.revision };
-    if (kind === 'remove') await api(base + `/references/${ref}`, revision, 'DELETE');
-    else if (['undo', 'reload'].includes(kind)) await api(base + `/drafts/${ref}/${kind}`, revision);
+    if (kind === 'remove') await refresh(workspaceRequest(base + `/references/${ref}`, revision, 'DELETE'));
+    else if (['undo', 'reload'].includes(kind))
+      await refresh(workspaceRequest(base + `/drafts/${ref}/${kind}`, revision));
     else {
-      await api(base + `/drafts/${ref}/save`, { ...revision, mode: kind, operation_id: crypto.randomUUID() });
+      const resource = worldbook.value ? 'worldbook' : 'card';
+      await refresh(
+        workspaceRequest(base + `/drafts/${ref}/save`, {
+          ...revision,
+          mode: kind,
+          operation_id: crypto.randomUUID(),
+        }),
+      );
       if (alive) {
-        notice.value = worldbook.value ? '世界书已保存。' : '角色卡已保存。';
-        emit('saved');
+        notice.value = resource === 'worldbook' ? '世界书已保存。' : '角色卡已保存。';
+        emit('saved', resource);
       }
     }
-    await refresh();
   });
 }
 async function setPortrait(select: HTMLSelectElement | null) {
@@ -616,12 +652,13 @@ async function setPortrait(select: HTMLSelectElement | null) {
   if (select && !fileRef) return;
   const ref = current.value.ref;
   await guard(async () => {
-    await api(
-      base + `/drafts/${ref}/portrait`,
-      { expected_revision: workspace.value!.revision, file_ref: fileRef },
-      'PUT',
+    await refresh(
+      workspaceRequest(
+        base + `/drafts/${ref}/portrait`,
+        { expected_revision: workspace.value!.revision, file_ref: fileRef },
+        'PUT',
+      ),
     );
-    await refresh();
   });
 }
 async function saveForm(document: any) {
@@ -629,11 +666,16 @@ async function saveForm(document: any) {
   // Shared with the form components, which keep unsaved form edits under this key.
   const draftKey = `tavern-card-draft-${formCard.value!.id}`;
   await guard(async () => {
-    await api(base + `/drafts/${ref}`, { document, expected_revision: workspace.value!.revision }, 'PUT');
+    await refresh(
+      workspaceRequest(
+        base + `/drafts/${ref}`,
+        { document, expected_revision: workspace.value!.revision },
+        'PUT',
+      ),
+    );
     if (!alive) return;
     sessionStorage.removeItem(draftKey);
     closeModal();
-    await refresh();
   });
 }
 async function testCard() {
@@ -650,9 +692,14 @@ async function testCard() {
 }
 async function rename() {
   await guard(async () => {
-    await api(base, { title: title.value.trim(), expected_revision: workspace.value!.revision }, 'PUT');
+    await refresh(
+      workspaceRequest(
+        base,
+        { title: title.value.trim(), expected_revision: workspace.value!.revision },
+        'PUT',
+      ),
+    );
     if (alive) closeModal();
-    await refresh();
   });
 }
 async function deleteConversation() {
@@ -669,7 +716,7 @@ async function deleteConversation() {
 onMounted(() => {
   window.addEventListener('resize', onResize);
   void guard(async () => {
-    await refresh();
+    await refresh(workspaceRequest(base), false);
     if (!alive) return;
     if (active.value) observe(active.value.id);
     scroll(true);
@@ -739,6 +786,7 @@ onBeforeUnmount(() => {
                   v-if="entry.kind === 'activity'"
                   :run="entry.run"
                   :events="activities[entry.run.id]"
+                  :observed="observedRuns.has(entry.run.id)"
                   @content-change="entry.run.id === active?.id && scroll()"
                 />
                 <CardMessage

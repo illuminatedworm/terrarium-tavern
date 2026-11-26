@@ -8,7 +8,6 @@ import time
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.editor_context import EditorContext
 from tavern.character.editor_images import materialize_images, portrait_digest
-from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.character.editor_tools import EditorTools, tool_definitions
 from tavern.character.editor_worldbook import is_worldbook, validate_worldbook_document
 from tavern.core.message_adapter import provider_messages
@@ -38,31 +37,28 @@ WRITE_TOOLS = {
 
 
 class EditorRun:
-    def __init__(self, service, rid):
+    def __init__(self, service, rid, workspace, cfg, request, progress):
         self.service, self.store, self.edits, self.rid = service, service.store, service.edits, rid
-        run = self.edits.run(rid)
-        self.wid, self.request = run["workspace"], run["request"]
-        self.cfg = editor_runtime_config(self.store, self.wid, self.request)
-        with self.store.connection() as db:
-            workspace = self.edits.load(db, self.wid)
+        self.wid, self.request, self.cfg = workspace["id"], request, cfg
         self.environment = workspace.get("environment")
         self.cache_follow = workspace["cache_follow"]
-        self.files = copy.deepcopy([f for f in workspace.get("files", []) if f.get("message_ref")])
-        progress = self.edits.progress(self.wid) if self.request.get("resume_run_id") else None
-        self.working = copy.deepcopy(
+        self.files = [f for f in workspace.get("files", []) if f.get("message_ref")]
+        self.working = (
             progress["working"] if progress else {"cards": workspace["cards"], "state": workspace["state"]}
         )
-        self.base = copy.deepcopy(progress["base"] if progress else self.working)
+        # New rounds need an independent undo baseline. Decoded resume data
+        # already owns separate working and baseline documents.
+        self.base = progress["base"] if progress else copy.deepcopy(self.working)
         self.current_refs = list(progress["current_refs"] if progress else [])
         if self.request.get("_input_ref") and self.request["_input_ref"] not in self.current_refs:
             self.current_refs.append(self.request["_input_ref"])
         self.legacy = self.request.get("_legacy", False)
         self.reads = {}  # Restored with the visible context, not the run boundary.
-        self.persona_reads = copy.deepcopy(progress.get("persona_reads", {}) if progress else {})
-        self.persona_changes = copy.deepcopy(progress.get("persona_changes", {}) if progress else {})
-        self.trace = copy.deepcopy(progress.get("trace", []) if progress else [])
-        self.pending_calls = copy.deepcopy(progress.get("pending_calls") if progress else None)
-        saved = copy.deepcopy(progress["context"] if progress else self.edits.context(self.wid))
+        self.persona_reads = progress.get("persona_reads", {}) if progress else {}
+        self.persona_changes = progress.get("persona_changes", {}) if progress else {}
+        self.trace = progress.get("trace", []) if progress else []
+        self.pending_calls = progress.get("pending_calls") if progress else None
+        saved = progress["context"] if progress else self.edits.context(self.wid)
         self.rolled = bool(progress and progress.get("rolled"))
         self.web_session = WebSession(
             self.cfg.card_author_config.web.mode,
@@ -301,7 +297,7 @@ class EditorRun:
             workspace.update(self.working)
             self.edits.write(db, workspace, increment=changed)
             history_ref = self.edits.message(db, self.wid, "assistant", response, self.rid)
-            self.context.seen.append(history_ref)
+            self.context.seen[history_ref] = None
             self.context.final_reply(history_ref)
             db.execute(
                 "INSERT OR REPLACE INTO card_edit_contexts VALUES (?,?)",
@@ -330,7 +326,6 @@ class EditorRun:
         self.event("started", {})
         if self.context.reason:
             self.event("context_baseline", self.request_context.audit())
-        self.save()
         await self.execute_pending()
         maximum = 12 if self.legacy else self.cfg.card_author_config.max_steps
         # The final answer is this run's last prose, possibly written beside the

@@ -60,18 +60,20 @@ class EditorContext:
             )
         return messages
 
-    def __init__(self, saved, owner):
+    def __init__(self, saved, owner, *, history=None):
         self.owner = owner
         self.directory = DocumentDirectory(owner, saved.get("directory") if saved else None)
         self.version_cache = {}
         self.origin = response_origin(owner.cfg)
         self.refresh_tool_policy()
-        history = owner.edits.messages(owner.wid)
+        if history is None:
+            history = owner.edits.messages(owner.wid)
         self.reply_refs = [message["ref"] for message in history if message["role"] == "assistant"]
         seed = {
             "documents": [c["document"] for c in owner.working["cards"]],
             "history": [m["content"] for m in history],
         }
+        seen = dict.fromkeys(saved.get("seen", ())) if saved else {}
         self.reason = None
         if not saved or saved.get("version") != 5:
             self.reason = "initial_context" if not saved else "context_version_changed"
@@ -80,21 +82,25 @@ class EditorContext:
         elif saved["policy"] != self.policy:
             self.reason = "context_sources_changed"
         elif any(
-            set(HANDLE.findall(m["content"])) & set(saved["view"]["reverse"])
+            any(handle in saved["view"]["reverse"] for handle in HANDLE.findall(m["content"]))
             for m in history
-            if m["ref"] not in saved["seen"]
+            if m["ref"] not in seen
         ):
             self.reason = "literal_handle_collision"
         self.view = ModelView(seed if self.reason else None)
-        if saved and saved.get("version") in (2, 3, 4, 5) and self.reason != "literal_handle_collision":
+        if (
+            self.reason
+            and saved
+            and saved.get("version") in (2, 3, 4, 5)
+            and self.reason != "literal_handle_collision"
+        ):
             self.view.forward = copy.deepcopy(saved["view"]["forward"])
             self.view.forward.pop("post_history_instructions", None)
             self.view.reverse = copy.deepcopy(saved["view"]["reverse"])
             self.view.reserved = set(saved["view"]["reserved"])
             self.view.seed(seed)
         self.frames = {}
-        self.seen = []
-        self.epoch = fingerprint([owner.wid, self.origin, self.policy, signature(owner.working), owner.rid])
+        self.seen = {}
         if not self.reason:
             owner.reads = copy.deepcopy(saved.get("read_versions", {}))
             self.view.forward = copy.deepcopy(saved["view"]["forward"])
@@ -102,7 +108,7 @@ class EditorContext:
             self.view.reserved = set(saved["view"]["reserved"])
             self.view.seed(seed)
             self.messages = copy.deepcopy(saved["messages"])
-            self.frames, self.seen = copy.deepcopy(saved["frames"]), list(saved["seen"])
+            self.frames, self.seen = copy.deepcopy(saved["frames"]), seen
             # Upgrade a still-current old comparison ledger without changing any
             # already-sent message or forcing a new model/cache window.
             overview = self.frames.get("overview")
@@ -117,6 +123,9 @@ class EditorContext:
                 }
             self.epoch = saved["epoch"]
         else:
+            self.epoch = fingerprint(
+                [owner.wid, self.origin, self.policy, signature(owner.working), owner.rid]
+            )
             self.messages = self.header()
             floor = owner.working["state"].get("history_floor", 0)
             for message in history:
@@ -124,7 +133,7 @@ class EditorContext:
                     self.add_history(message)
             # Already-archived messages must not be mistaken for new input by
             # the append pass below, especially when they carry large images.
-            self.seen = [message["ref"] for message in history]
+            self.seen = dict.fromkeys(message["ref"] for message in history)
             # Keep this unfinished round's tool exchanges (since its last
             # successful rollover) portable on model/policy rebuild, so a
             # continue with another provider does not redo completed work.
@@ -172,8 +181,7 @@ class EditorContext:
     def add_history(self, message):
         content = scoped_text(message["content"], message.get("target_labels", []), message.get("skill"))
         self.add_message(message["role"], f"[{message['ref']}]\n{content}", message.get("attachments", []))
-        if message["ref"] not in self.seen:
-            self.seen.append(message["ref"])
+        self.seen[message["ref"]] = None
         if (
             message["role"] == "assistant"
             and follows_replies(self.owner.cfg)
@@ -204,10 +212,10 @@ class EditorContext:
     def recall_images(self, ref):
         # Append only after every tool result in the batch. Inserting a user
         # message between tool calls/results breaks native protocol pairing.
-        message = next(m for m in self.owner.edits.messages(self.owner.wid) if m["ref"] == ref)
+        attached = [f for f in self.owner.files if f.get("message_ref") == ref]
         visible = {ref for item in self.messages for ref in item.get(IMAGE_REFS, [])}
-        refs = set(image_refs(message.get("attachments", []))) - visible
-        files = [f for f in message.get("attachments", []) if f["ref"] in refs]
+        refs = set(image_refs(attached)) - visible
+        files = [f for f in attached if f["ref"] in refs]
         if files:
             self.add_message(
                 "user", f"历史消息 {ref} 的图片（由 read_history 恢复的参考资料，不是新的用户要求）：", files
@@ -369,7 +377,7 @@ class EditorContext:
         self.owner.working["state"]["window"] = self.owner.working["state"].get("window", 0) + 1
         self.messages = self.header()
         self.frames = {}
-        self.seen = [m["ref"] for m in history]
+        self.seen = dict.fromkeys(m["ref"] for m in history)
         for message in kept:
             self.add_history(message)
         self.epoch = fingerprint([self.epoch, self.owner.working["state"]["window"]])
