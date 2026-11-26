@@ -28,22 +28,15 @@ LABELS = {
 }
 
 
-def work_records(events):
-    for event in events:
-        if event["kind"] in ("text", "text_reset"):
-            continue
-        payload = event["payload"]
-        purpose = payload.get("purpose", "runtime") if isinstance(payload, dict) else "runtime"
-        yield {**event, "purpose": purpose}
-
-
 def compact_record(event):
     payload = event["payload"] if isinstance(event["payload"], dict) else {"message": str(event["payload"])}
     kind = event["kind"]
     label = LABELS.get(kind, kind)
     description = payload.get("message") or payload.get("reason") or ""
     if kind == "provider_request":
-        description = f"{payload.get('model', '')} · {len(payload.get('messages', []))} 条输入 · {len(payload.get('tools', []))} 个工具"
+        messages = payload.get("message_count", len(payload.get("messages", []))) or 0
+        tools = payload.get("tool_count", len(payload.get("tools", []))) or 0
+        description = f"{payload.get('model') or ''} · {messages} 条输入 · {tools} 个工具"
     if kind == "usage" and payload.get("status") == "failed":
         label = "失败请求用量"
         description = "接口返回的计费用量；正文未提交，不作为有效窗口实测"
@@ -67,5 +60,7 @@ def compact_record(event):
         "purpose": event["purpose"],
         "created": event["created"],
         "description": str(description) if kind == "error" else str(description)[:180],
-        "bytes": len(json.dumps(payload, ensure_ascii=False).encode()),
+        "bytes": event["bytes"]
+        if "bytes" in event
+        else len(json.dumps(payload, ensure_ascii=False).encode()),
     }

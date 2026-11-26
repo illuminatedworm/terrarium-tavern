@@ -40,7 +40,7 @@ export function observeTurn(
   receive: (event: TurnEvent) => void,
   end: () => Promise<void>,
 ) {
-  const stream = new EventSource(`/api/turns/${id}/events`);
+  const stream = new EventSource(`/api/turns/${id}/events?reader=true`);
   const accept = eventCursor();
   stream.onmessage = (message) => {
     if (!owns()) return;

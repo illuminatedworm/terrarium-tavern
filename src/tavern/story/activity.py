@@ -18,7 +18,7 @@ def pretty(value):
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
-def tool_item(key, order, name, arguments):
+def tool_item(key, order, name, arguments, *, with_details=True):
     try:
         args = json.loads(arguments) if isinstance(arguments, str) else arguments
     except (ValueError, TypeError):
@@ -66,21 +66,24 @@ def tool_item(key, order, name, arguments):
         summary = "章节：" + "、".join(titles) if titles else "更新当前交接"
     elif name == "new_context" and write is None:
         summary = "沿用现有交接并换窗"
-    return {
+    item = {
         "id": key,
         "order": order,
         "kind": "tool",
         "name": name,
         "summary": " ".join(summary.split())[:140],
         "status": "running",
-        "details": {"arguments": pretty(arguments), "result": ""},
     }
+    if with_details:
+        item["details"] = {"arguments": pretty(arguments), "result": ""}
+    return item
 
 
 def finish_tool(item, result, *, arguments=None):
-    if arguments is not None:
-        item["details"]["arguments"] = pretty(arguments)
-    item["details"]["result"] = pretty(result)
+    if "details" in item:
+        if arguments is not None:
+            item["details"]["arguments"] = pretty(arguments)
+        item["details"]["result"] = pretty(result)
     try:
         result = json.loads(result) if isinstance(result, str) else result
     except (ValueError, TypeError):
@@ -132,7 +135,7 @@ def observe_report_dispatch(request, reports, emit):
     request.extensions["trace"] = trace
 
 
-def from_trace(rows):
+def from_trace(rows, *, with_details=True):
     items, pending, reports = [], {}, []
     for row in rows:
         seq, message = row["seq"], json.loads(row["payload"])
@@ -169,6 +172,7 @@ def from_trace(rows):
                     seq * 10 + index + 1,
                     function.get("name", "tool"),
                     arguments,
+                    with_details=with_details,
                 )
                 items.append(item)
                 pending[call.get("id")] = item
@@ -183,7 +187,7 @@ def from_trace(rows):
     return items
 
 
-def message_items(store, sid: str, message_ids: Sequence[str]) -> dict[str, list[dict]]:
+def message_items(store, sid: str, message_ids: Sequence[str], *, with_details=True) -> dict[str, list[dict]]:
     groups = {mid: [] for mid in message_ids}
     with store.connection() as db:
         # Keep branch membership and the matching trace in the same read snapshot.
@@ -201,44 +205,60 @@ def message_items(store, sid: str, message_ids: Sequence[str]) -> dict[str, list
         ).fetchall()
     for row in rows:
         groups[row["message_id"]].append(row)
-    return {mid: from_trace(records) for mid, records in groups.items()}
+    return {mid: from_trace(records, with_details=with_details) for mid, records in groups.items()}
+
+
+def event_activity(event: dict, previous=None, *, with_details=True):
+    payload, kind, seq = event["payload"], event["kind"], event["seq"]
+    if kind == "story_runtime":
+        return {
+            **{k: payload[k] for k in ("id", "order", "kind", "name", "summary", "status")},
+            "details": {},
+            "event_seq": seq,
+        }
+    if kind not in ("story_assistant", "story_tool_started", "story_tool"):
+        return None
+    key = payload.get("activity_id", f"event-{seq}")
+    order = payload.get("order", seq * 10)
+    if kind == "story_assistant":
+        item = text_item(key, order, payload["content"], is_story=payload.get("is_story", False))
+    else:
+        item = (previous or {}).get(key) or tool_item(
+            key, order, payload["name"], payload.get("arguments", ""), with_details=with_details
+        )
+        if kind == "story_tool":
+            finish_tool(item, payload.get("result"), arguments=payload.get("decoded_arguments"))
+    item["event_seq"] = seq
+    return item
 
 
 def turn_items(store, sid: str, tid: str, *, summary: bool = False) -> list[dict]:
     with store.connection() as db:
+        db.execute("BEGIN")
         turn = db.execute(
             "SELECT s.kemini,t.session,t.status FROM sessions s LEFT JOIN turns t ON t.id=? WHERE s.id=?",
             (tid, sid),
         ).fetchone()
-    if turn is None:
-        raise NotFound("会话不存在")
-    if turn["session"] is None:
-        raise NotFound("回合不存在")
-    if turn["session"] != sid:
-        raise NotFound("回合不属于当前会话")
+        if turn is None:
+            raise NotFound("会话不存在")
+        if turn["session"] is None:
+            raise NotFound("回合不存在")
+        if turn["session"] != sid:
+            raise NotFound("回合不属于当前会话")
+        rows = db.execute(
+            "SELECT seq,kind,payload FROM events WHERE turn=? "
+            "AND kind IN ('story_assistant','story_tool_started','story_tool','story_runtime') ORDER BY seq",
+            (tid,),
+        ).fetchall()
     items = {}
-    for event in store.events(tid):
-        payload, kind = event["payload"], event["kind"]
-        if kind == "story_runtime":
-            key = payload["id"]
-            items[key] = {
-                **{k: payload[k] for k in ("id", "order", "kind", "name", "summary", "status")},
-                "details": {},
-                "event_seq": event["seq"],
-            }
-            continue
-        if kind not in ("story_assistant", "story_tool_started", "story_tool"):
-            continue
-        key = payload.get("activity_id", f"event-{event['seq']}")
-        order = payload.get("order", event["seq"] * 10)
-        if kind == "story_assistant":
-            items[key] = text_item(key, order, payload["content"], is_story=payload.get("is_story", False))
-        else:
-            if key not in items:
-                items[key] = tool_item(key, order, payload["name"], payload.get("arguments", ""))
-            if kind == "story_tool":
-                finish_tool(items[key], payload.get("result"), arguments=payload.get("decoded_arguments"))
-        items[key]["event_seq"] = event["seq"]
+    for row in rows:
+        event = {**dict(row), "payload": json.loads(row["payload"])}
+        item = event_activity(
+            event,
+            items,
+            with_details=not summary or (not turn["kemini"] and event["payload"].get("name") == "present_ui"),
+        )
+        items[item["id"]] = item
     if turn["status"] not in ("running", "queued"):
         for item in items.values():
             if item["status"] == "running":

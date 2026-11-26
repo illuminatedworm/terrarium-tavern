@@ -954,8 +954,8 @@ def create_app(data_dir=None):
         return service.story.submit(sid, req)
 
     @app.get("/api/turns/{tid}")
-    def turn(tid: str, include_input: bool = False):
-        result = store.turn(tid)
+    def turn(tid: str, include_input: bool = False, reader: bool = False):
+        result = store.turn(tid, reader=reader)
         if include_input:
             from tavern.story.lore_records import saved_input_ready
 
@@ -977,33 +977,35 @@ def create_app(data_dir=None):
         return store.work_event_payload(sid, tid, seq)
 
     @app.post("/api/turns/{tid}/cancel")
-    async def cancel(tid: str):
+    async def cancel(tid: str, reader: bool = False):
         await service.story.cancel(tid)
-        return store.turn(tid)
+        return await run_in_threadpool(store.turn, tid, reader=reader)
 
     @app.post("/api/turns/{tid}/review")
-    async def review(tid: str, payload: dict):
-        return store.review_turn(tid, bool(payload.get("accept")))
+    def review(tid: str, payload: dict, reader: bool = False):
+        return store.review_turn(tid, bool(payload.get("accept")), reader=reader)
 
     @app.get("/api/turns/{tid}/events")
-    async def event_stream(tid: str, request: Request, after: int = 0):
-        store.turn(tid)
+    async def event_stream(tid: str, request: Request, after: int = 0, reader: bool = False):
+        await run_in_threadpool(store.turn_status, tid)
 
         async def stream():
             cursor = max(after, int(request.headers.get("last-event-id", "0")))
             while True:
                 # Read terminal state before the batch: yielding its frames can
                 # let the producer commit a final event that needs another read.
-                active = store.turn(tid)["status"] in ("queued", "running")
-                for event in store.events(tid, cursor):
+                active = await run_in_threadpool(store.turn_status, tid) in ("queued", "running")
+                batch = await run_in_threadpool(store.events, tid, cursor, reader=reader, limit=200)
+                for event in batch:
                     cursor = event["seq"]
                     yield f"id: {cursor}\ndata: {dump(event)}\n\n"
-                if not active:
+                if len(batch) < 200 and not active:
                     yield "event: end\ndata: {}\n\n"
                     return
                 if await request.is_disconnected():
                     return  # Disconnecting the observer never cancels the producer.
-                await asyncio.sleep(0.15)
+                if len(batch) < 200:
+                    await asyncio.sleep(0.15)
 
         return StreamingResponse(
             stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}

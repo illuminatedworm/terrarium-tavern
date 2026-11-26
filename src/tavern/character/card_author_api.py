@@ -89,14 +89,14 @@ def register_editor_routes(app, editor):
 
     @app.get("/api/card-edit-runs/{rid}/events")
     async def events(rid: str, request: Request, after: int = Query(0, ge=0)):
-        run = editor.edits.run(rid)
+        run = editor.edits.stream_state(rid)
 
         async def stream():
             cursor = max(after, int(request.headers.get("last-event-id", "0")))
             while True:
                 # Do not end on a status that changed while yielding this batch;
                 # its newly committed terminal event still needs to be read.
-                active = editor.edits.run(rid)["status"] in ("queued", "running")
+                active = editor.edits.stream_state(rid)["status"] in ("queued", "running")
                 batch = editor.edits.events(rid, cursor)
                 cache_usage = (
                     editor.edits.conversation_cache_usage(run["workspace"])

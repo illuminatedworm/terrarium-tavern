@@ -309,6 +309,8 @@ handoff 由模型通过结构化工具维护，Runtime 校验并保存。模型�
 
 输入框使用 `POST /api/sessions/{sid}/preview?stats_only=true`，返回当前输入对应的接口实测、上下文上限、适用的计划断点与缓存统计。完整预览及导出仍使用详细接口。卡库和会话侧栏使用 `GET /api/cards?summary=true` 与 `GET /api/sessions?summary=true` 获取名称、版本、头像等列表字段，卡库另含角色描述开头。改标题和会话选项可使用 `changes_only=true` 获取已保存的字段和新版本。脚本权限接口采用相同参数时返回生效的权限和新版本。
 
+阅读页订阅 `GET /api/turns/{tid}/events?reader=true`。正文、分段边界、输入、注入目录、已通过校验的图形和工具活动按原事件序号传递。诊断事件保留通知序号，模型请求传递缓存状态。完整事件保存在工作记录详情，工具参数和结果可按活动展开。回合详情、取消和审核接口的 `reader=true` 只返回恢复和展示所需的字段，待审核变更仍从真实提交草稿计算。诊断读取与旧客户端可继续使用完整接口。
+
 `story_progress`（version 7）保存未提交草稿、工具进度、稳定的 `output_id`、`story`（正文、辅助展示内容及分段边界 breaks）、`model_completed` 与本轮 `story_format`。正文接收与模型结束分开记录。续接沿用保存的交付格式。version 1–5 使用明文，version 6 按 `unicode_story` 使用全文码点或明文。
 
 - 完整响应先保存，再逐项保存工具结果。恢复时先执行未配对的调用，成功的工具不重跑。

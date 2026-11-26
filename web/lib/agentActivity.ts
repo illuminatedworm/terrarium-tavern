@@ -44,7 +44,9 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
     const p = event.payload || {};
     const id = p.activity_id || `event-${event.seq}`;
     const order = p.order ?? event.seq * 10;
-    if (event.kind === 'story_runtime') {
+    if (event.kind === 'story_activity') {
+      items.set(p.id, p);
+    } else if (event.kind === 'story_runtime') {
       items.set(p.id, {
         id: p.id,
         event_seq: event.seq,

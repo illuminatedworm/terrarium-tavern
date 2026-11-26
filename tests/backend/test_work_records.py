@@ -96,10 +96,12 @@ async def test_event_stream_delivers_commit_that_arrives_while_sending_a_batch(t
     tid, _ = store.create_turn(session["id"], TurnRequest(operation_id="stream", expected_revision=0))
     store.set_turn(tid, status="running")
     store.write_turn_draft(tid, "reply")
+    diagnostic = {"purpose": "story", "cache": {"status": "sent"}, "wire": {"input": "raw diagnostic"}}
+    recorded = store.event(tid, "provider_request", diagnostic)
     endpoint = next(route.endpoint for route in app.routes if route.path == "/api/turns/{tid}/events")
     request = SimpleNamespace(headers={}, is_disconnected=AsyncMock(return_value=False))
     monkeypatch.setattr("tavern.application.api.asyncio.sleep", AsyncMock())
-    response = await endpoint(tid, request, after=0)
+    response = await endpoint(tid, request, after=0, reader=True)
     first = await anext(response.body_iterator)
     assert '"kind": "text"' in first
 
@@ -120,5 +122,8 @@ async def test_event_stream_delivers_commit_that_arrives_while_sending_a_batch(t
         parent = message["id"]
     store.commit_turn(tid, {"before": session["snapshot"], "messages": messages})
     tail = [frame async for frame in response.body_iterator]
+    observed = json.loads(next(frame.split("data: ", 1)[1] for frame in tail if f"id: {recorded}\n" in frame))
+    assert observed["payload"] == {"purpose": "story", "cache": {"status": "sent"}}
+    assert store.work_event_payload(session["id"], tid, recorded) == diagnostic
     assert any('"kind": "committed"' in frame for frame in tail)
     assert tail[-1].startswith("event: end")

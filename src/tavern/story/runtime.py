@@ -7,6 +7,7 @@ from tavern.character.cards import regex_scripts
 from tavern.conversation.regeneration import turn_start
 from tavern.conversation.update_review import finish_turn
 from tavern.core.cache_policy import fingerprint
+from tavern.core.errors import NotFound
 from tavern.core.models import TurnRequest
 from tavern.core.provider import require_model_connection
 from tavern.core.story_segments import split_segments
@@ -34,7 +35,9 @@ class StoryRuntime:
         self.novel = NovelService(store)
 
     def submit(self, sid, request):
-        session = self.store.session(sid)
+        # The worker freezes the branch after admission. Model preflight only
+        # needs the conversation's routing, tool permissions and delivery format.
+        session = self.store.model_session(sid)
         if request.update_variables and "patch_state" in session["disabled_tools"]:
             raise ValueError("本轮要求更新 MVU 变量，请先在工具页启用 patch_state")
         settings = self.store.session_settings(session).for_role("story")
@@ -68,7 +71,7 @@ class StoryRuntime:
         if task and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        elif self.store.turn(tid)["status"] == "awaiting_review":
+        elif self.store.turn_status(tid) == "awaiting_review":
             self.store.reject_review(tid)
 
     async def initialize_session(self, sid):
@@ -92,12 +95,15 @@ class StoryRuntime:
 
     async def _run(self, tid, story_format: StoryFormat):
         script = None
-        await self.novel.cancel_invalidated(self.store.turn(tid)["session"])
+        with self.store.connection() as db:
+            turn = db.execute("SELECT session,request FROM turns WHERE id=?", (tid,)).fetchone()
+        if turn is None:
+            raise NotFound("回合不存在")
+        await self.novel.cancel_invalidated(turn["session"])
         deadline = asyncio.timeout(None)
         try:
             async with deadline:
-                turn = self.store.turn(tid)
-                request = TurnRequest.model_validate(turn["request"])
+                request = TurnRequest.model_validate_json(turn["request"])
                 # Resolve inherited media parameters and their provider connections
                 # from the same revision, even if another window edits global settings.
                 settings_document = self.store.settings_document()
@@ -122,7 +128,7 @@ class StoryRuntime:
                 request.text, request.ooc = start.text, start.ooc
                 progress = self.store.story_progress(tid)
                 snapshot = copy.deepcopy(progress["snapshot"] if progress else before)
-                card = self.store.session_card(session["id"])
+                card = session["card_data"]
                 document = copy.deepcopy(
                     progress["document"]
                     if progress

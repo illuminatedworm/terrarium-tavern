@@ -57,6 +57,13 @@ class EditorStore(Conversations):
     def __init__(self, store):
         self.store = store
 
+    def stream_state(self, rid):
+        with self.store.connection() as db:
+            row = db.execute("SELECT status,workspace FROM card_edit_runs WHERE id=?", (rid,)).fetchone()
+        if row is None:
+            raise NotFound("编辑任务不存在")
+        return row
+
     def run(self, rid):
         with self.store.connection() as db:
             row = db.execute("SELECT * FROM card_edit_runs WHERE id=?", (rid,)).fetchone()

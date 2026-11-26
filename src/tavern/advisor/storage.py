@@ -119,6 +119,13 @@ class AdvisorStore:
             )
         return self.get(sid)
 
+    def run_status(self, rid):
+        with self.store.connection() as db:
+            row = db.execute("SELECT status FROM advisor_runs WHERE id=?", (rid,)).fetchone()
+        if row is None:
+            raise NotFound("参谋 agent 任务不存在")
+        return row[0]
+
     def run(self, rid, *, private=False):
         with self.store.connection() as db:
             row = db.execute("SELECT * FROM advisor_runs WHERE id=?", (rid,)).fetchone()

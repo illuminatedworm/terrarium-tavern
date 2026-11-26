@@ -1138,7 +1138,7 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
       last &&
       ['running', 'queued', 'awaiting_review', 'error', 'cancelled', 'interrupted'].includes(last.status)
     ) {
-      const turn: TurnRecord = await api(`/turns/${last.id}?include_input=true`);
+      const turn: TurnRecord = await api(`/turns/${last.id}?include_input=true&reader=true`);
       if (!viewScope.owns(token)) return;
       if (active || canRetryTurn(turn, opened)) {
         restored = turn;
@@ -1564,7 +1564,7 @@ function sessionLoreSaved(value: any) {
   if (activeTurn.value) {
     const id = currentTurn().id;
     void guarded(async () => {
-      activeTurn.value = await viewApi(`/turns/${id}`);
+      activeTurn.value = await viewApi(`/turns/${id}?reader=true`);
     });
   }
 }
@@ -1816,7 +1816,7 @@ function observe(id: string) {
     async () => {
       try {
         const [turn, updated]: [TurnRecord, Session] = await Promise.all([
-          api(`/turns/${id}`),
+          api(`/turns/${id}?reader=true`),
           api(`/sessions/${sid}?reader=true`),
         ]);
         if (!ownsTurn()) return;
@@ -1876,13 +1876,13 @@ function observe(id: string) {
 
 async function stop() {
   turnContinuation.cancel();
-  if (activeTurn.value) await guarded(() => api(`/turns/${currentTurn().id}/cancel`, {}));
+  if (activeTurn.value) await guarded(() => api(`/turns/${currentTurn().id}/cancel?reader=true`, {}));
 }
 async function review(accept: boolean) {
   const sid = openStory().id,
     token = viewScope.current();
   await guarded(async () => {
-    const turn: TurnRecord = await api(`/turns/${currentTurn().id}/review`, { accept });
+    const turn: TurnRecord = await api(`/turns/${currentTurn().id}/review?reader=true`, { accept });
     if (!viewScope.owns(token)) return;
     const sendNext = turnContinuation.finish(turn, token);
     const opening = openSession(sid),

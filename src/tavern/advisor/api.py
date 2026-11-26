@@ -52,7 +52,7 @@ def register_routes(app, advisor):
 
     @app.get("/api/advisor-runs/{rid}/events")
     async def events(rid: str, request: Request, after: int = Query(0, ge=0)):
-        advisor.data.run(rid)
+        advisor.data.run_status(rid)
 
         async def stream():
             cursor = max(after, int(request.headers.get("last-event-id", "0")))
@@ -60,7 +60,7 @@ def register_routes(app, advisor):
                 # A terminal state read before the batch includes its final
                 # event even when the producer finishes during a previous yield.
                 try:
-                    active = advisor.data.run(rid)["status"] in ("queued", "running")
+                    active = advisor.data.run_status(rid) in ("queued", "running")
                 except NotFound:
                     active = False  # Another tab may have cleared the consultation.
                 batch = advisor.data.events(rid, cursor)

@@ -182,7 +182,7 @@ def register_story_routes(app, store, context_operations=None):
 
     @app.post("/api/sessions/{sid}/story/activity")
     def dialogue_activity(sid: str, query: ActivityQuery):
-        groups = message_items(store, sid, query.message_ids)
+        groups = message_items(store, sid, query.message_ids, with_details=False)
         return {"messages": {mid: compact(items) for mid, items in groups.items()}}
 
     @app.post("/api/sessions/{sid}/story/visuals")

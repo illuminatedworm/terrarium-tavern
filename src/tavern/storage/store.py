@@ -450,18 +450,21 @@ class Store(MessageAdapters):
             settings._auth_generation = generations.get(settings.chatgpt_account_id, "")
         return settings
 
+    def model_session(self, sid: str) -> dict:
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT id,channel_origin,context_strategy,compact_auto,model_selection,kemini,unicode_story,disabled_tools "
+                "FROM sessions WHERE id=?",
+                (sid,),
+            ).fetchone()
+        if row is None:
+            raise NotFound("对话不存在")
+        return {**dict(row), "disabled_tools": json.loads(row["disabled_tools"])}
+
     def session_settings(self, session, *, require_origin=True, document=None):
-        sid = session if isinstance(session, str) else session["id"]
         if isinstance(session, str):
-            with self.connection() as db:
-                row = db.execute(
-                    "SELECT channel_origin,context_strategy,compact_auto,model_selection,kemini "
-                    "FROM sessions WHERE id=?",
-                    (session,),
-                ).fetchone()
-            if row is None:
-                raise NotFound("对话不存在")
-            session = dict(row)
+            session = self.model_session(session)
+        sid = session["id"]
         channel = session.get("channel_origin")
         if not channel and require_origin:
             raise ValueError("请先确认此旧对话的渠道归属")
@@ -1326,17 +1329,22 @@ class Store(MessageAdapters):
             row = db.execute("SELECT payload FROM story_progress WHERE turn=?", (tid,)).fetchone()
         return load_progress(json.loads(row["payload"])) if row else None
 
-    def review_turn(self, tid, accept):
-        turn = self.turn(tid)
+    def review_turn(self, tid, accept, *, reader=False):
+        # Acceptance needs the pending transaction, rejection only its status.
+        with self.connection() as db:
+            turn = db.execute(
+                "SELECT status,CASE WHEN ? THEN pending END AS pending FROM turns WHERE id=?", (accept, tid)
+            ).fetchone()
+        if turn is None:
+            raise NotFound("回合不存在")
         if turn["status"] != "awaiting_review":
             raise Conflict("此回合没有待审核变更")
-        if accept:
-            self.commit_turn(tid, turn["pending"])
-        else:
-            self.reject_review(tid)
-        return self.turn(tid)
+        if not accept:
+            return self.reject_review(tid, reader=reader)
+        self.commit_turn(tid, json.loads(turn["pending"]))
+        return self.turn(tid, reader=reader)
 
-    def reject_review(self, tid):
+    def reject_review(self, tid, *, reader=False):
         """Explicit rejection retires executable work but preserves its audit trail."""
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -1357,7 +1365,7 @@ class Store(MessageAdapters):
                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
                 (tid, "cancelled", dump({"reason": "review_rejected", "resumable": False}), time.time()),
             )
-        return self.turn(tid)
+        return self.turn(tid, reader=reader)
 
     def save_story_progress(self, tid, progress):
         destroyed = set()
@@ -1403,9 +1411,24 @@ class Store(MessageAdapters):
                     novel_event(db, sid, "destroyed", job_id)
         return destroyed
 
-    def turn(self, tid):
+    def turn_status(self, tid: str) -> str:
         with self.connection() as db:
-            r = db.execute("SELECT * FROM turns WHERE id=?", (tid,)).fetchone()
+            row = db.execute("SELECT status FROM turns WHERE id=?", (tid,)).fetchone()
+        if row is None:
+            raise NotFound("回合不存在")
+        return row[0]
+
+    def turn(self, tid, *, reader=False):
+        # Old pending records need their full before/after snapshots to derive a review.
+        columns = (
+            """id,session,operation,request,status,draft,error,created,draft_breaks,
+            CASE WHEN json_type(pending,'$.review_changes') IS NOT NULL
+            THEN json_object('review_changes',json_extract(pending,'$.review_changes')) ELSE pending END AS pending"""
+            if reader
+            else "*"
+        )
+        with self.connection() as db:
+            r = db.execute(f"SELECT {columns} FROM turns WHERE id=?", (tid,)).fetchone()
             if r is None:
                 raise NotFound("回合不存在")
             resumable = r["status"] in ("error", "cancelled", "interrupted") and bool(
@@ -1425,16 +1448,20 @@ class Store(MessageAdapters):
         result["resumable"] = resumable
         result["resume_failures"] = resume_failures
         result["retry_head"] = anchor
-        for key in ("request", "preview", "pending"):
+        for key in ("request", "pending") if reader else ("request", "preview", "pending"):
             result[key] = json.loads(result[key]) if result[key] else None
         if result["pending"] and "review_changes" not in result["pending"]:
             from tavern.conversation.update_review import review_changes
 
             pending = result["pending"]
             after = pending["messages"][-1]["snapshot"]
-            pending["review_changes"] = review_changes(
+            changes = review_changes(
                 pending.get("before", {}), after, self.session_card(result["session"])["document"]
             )
+            if reader:
+                result["pending"] = {"review_changes": changes}
+            else:
+                pending["review_changes"] = changes
         return result
 
     def set_turn(self, tid, *, cache_snapshot=None, **fields):
@@ -1487,11 +1514,17 @@ class Store(MessageAdapters):
                 ),
             )
 
-    def events(self, tid, after=0):
+    def events(self, tid, after=0, *, limit=-1, reader=False):
+        from tavern.storage.turn_events import reader_events
+
         with self.connection() as db:
+            if reader:
+                return reader_events(db, tid, after, limit)
             return [
                 {**dict(r), "payload": json.loads(r["payload"])}
-                for r in db.execute("SELECT * FROM events WHERE turn=? AND seq>? ORDER BY seq", (tid, after))
+                for r in db.execute(
+                    "SELECT * FROM events WHERE turn=? AND seq>? ORDER BY seq LIMIT ?", (tid, after, limit)
+                )
             ]
 
     def work_turns(self, sid, before=None, limit=20):
@@ -1532,21 +1565,21 @@ class Store(MessageAdapters):
         return {"items": items, "total": total, "next": items[-1]["id"] if len(rows) > limit else None}
 
     def work_events(self, sid, tid, after=0, limit=50):
-        from tavern.conversation.work_records import compact_record, work_records
+        from tavern.storage.turn_events import work_page
 
-        turn = self.turn(tid)
-        if turn["session"] != sid:
-            raise NotFound("回合不属于当前会话")
-        records = [event for event in work_records(self.events(tid)) if event["seq"] > after]
-        items = [compact_record(event) for event in records[:limit]]
-        return {"items": items, "next": items[-1]["seq"] if len(records) > limit else None}
+        with self.connection() as db:
+            db.execute("BEGIN")
+            if not db.execute("SELECT 1 FROM turns WHERE id=? AND session=?", (tid, sid)).fetchone():
+                raise NotFound("回合不属于当前会话")
+            return work_page(db, tid, after, limit)
 
     def work_event_payload(self, sid, tid, seq):
-        turn = self.turn(tid)
-        if turn["session"] != sid:
-            raise NotFound("回合不属于当前会话")
         with self.connection() as db:
-            row = db.execute("SELECT payload FROM events WHERE turn=? AND seq=?", (tid, seq)).fetchone()
+            row = db.execute(
+                "SELECT e.payload FROM events e JOIN turns t ON t.id=e.turn "
+                "WHERE e.turn=? AND e.seq=? AND t.session=?",
+                (tid, seq, sid),
+            ).fetchone()
         if row is None:
             raise NotFound("工作记录不存在")
         return json.loads(row["payload"])
