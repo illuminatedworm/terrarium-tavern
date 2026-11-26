@@ -1,6 +1,7 @@
 """Public dialogue activity, separated from provider/debug records and reasoning."""
 
 import json
+from collections.abc import Sequence
 
 from tavern.core.errors import NotFound
 from tavern.story.protocol import failed
@@ -182,27 +183,37 @@ def from_trace(rows):
     return items
 
 
-def message_items(store, session, message_ids):
-    allowed = {m["id"] for m in session["messages"] if m["role"] == "assistant"}
-    if not set(message_ids) <= allowed:
-        raise NotFound("工具记录不属于当前可见的回复版本")
+def message_items(store, sid: str, message_ids: Sequence[str]) -> dict[str, list[dict]]:
     groups = {mid: [] for mid in message_ids}
-    if not groups:
-        return groups
     with store.connection() as db:
+        # Keep branch membership and the matching trace in the same read snapshot.
+        db.execute("BEGIN")
+        session = db.execute("SELECT head FROM sessions WHERE id=?", (sid,)).fetchone()
+        if session is None:
+            raise NotFound("会话不存在")
+        if set(groups) != store.visible_reply_ids(db, sid, session["head"], groups):
+            raise NotFound("工具记录不属于当前可见的回复版本")
         rows = db.execute(
             "SELECT message_id,seq,payload FROM story_trace WHERE session=? AND message_id IN ("
             + ",".join("?" for _ in groups)
             + ") ORDER BY seq",
-            (session["id"], *groups),
+            (sid, *groups),
         ).fetchall()
     for row in rows:
         groups[row["message_id"]].append(row)
     return {mid: from_trace(records) for mid, records in groups.items()}
 
 
-def turn_items(store, sid, tid):
-    turn = store.turn(tid)
+def turn_items(store, sid: str, tid: str, *, summary: bool = False) -> list[dict]:
+    with store.connection() as db:
+        turn = db.execute(
+            "SELECT s.kemini,t.session,t.status FROM sessions s LEFT JOIN turns t ON t.id=? WHERE s.id=?",
+            (tid, sid),
+        ).fetchone()
+    if turn is None:
+        raise NotFound("会话不存在")
+    if turn["session"] is None:
+        raise NotFound("回合不存在")
     if turn["session"] != sid:
         raise NotFound("回合不属于当前会话")
     items = {}
@@ -232,7 +243,8 @@ def turn_items(store, sid, tid):
         for item in items.values():
             if item["status"] == "running":
                 item["status"] = "interrupted"
-    return sorted(items.values(), key=lambda item: item["order"])
+    ordered = sorted(items.values(), key=lambda item: item["order"])
+    return compact(ordered, visuals=not turn["kemini"]) if summary else ordered
 
 
 def compact(items, *, visuals=False):

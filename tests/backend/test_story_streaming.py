@@ -367,7 +367,7 @@ async def test_unicode_story_publishes_accepted_segments_and_replays_plaintext(t
             assert raw_submissions == [encoded_first, broken, last]
             for items in (
                 turn_items(store, session["id"], tid),
-                message_items(store, current, [reply["id"]])[reply["id"]],
+                message_items(store, current["id"], [reply["id"]])[reply["id"]],
             ):
                 deliveries = [item for item in items if item.get("name") == "submit_story"]
                 assert [item["status"] for item in deliveries] == ["returned", "error", "returned"]

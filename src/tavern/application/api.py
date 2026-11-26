@@ -11,6 +11,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from tavern.android.platform import is_android
 from tavern.application.service import StoryService
@@ -38,6 +39,19 @@ from tavern.storage.store import Conflict, Store, dump
 
 # Application version; bump together with the locations listed in .agents/VERSIONING.md.
 VERSION = "0.9.0"
+
+
+def reader_snapshot(snapshot: dict) -> dict:
+    """Keep the parts an individual message needs for macros and lore records."""
+    view = {key: snapshot[key] for key in ("state", "scopes", "lore_injections") if key in snapshot}
+    document = (snapshot.get("content") or {}).get("document")
+    if document is not None:
+        card = document.get("data")
+        if not isinstance(card, dict):
+            card = document
+        # A frozen card revision may use a different name from the current card.
+        view["content"] = {"document": {key: card[key] for key in ("name", "nickname") if key in card}}
+    return view
 
 
 class AndroidFiles(StaticFiles):
@@ -616,9 +630,9 @@ def create_app(data_dir=None):
         return await service.edit_opening(sid, edit)
 
     @app.get("/api/sessions/{sid}")
-    async def session(sid: str):
-        result = store.session(sid)
-        card = store.session_card(sid)
+    async def session(sid: str, reader: bool = False):
+        result = await run_in_threadpool(store.session, sid)
+        card = result["card_data"]
         if card["permission"] and any("<" in message.get("display", "") for message in result["messages"]):
             await service.dependencies.resolve(card)
             for message in result["messages"]:
@@ -636,7 +650,11 @@ def create_app(data_dir=None):
                         [service.dependencies.markup(source, part) for part in parts]
                     )
         service.prepare_indexes(sid)
-        return result
+        if reader:
+            for message in result["messages"]:
+                message["snapshot"] = reader_snapshot(message["snapshot"])
+        # The store already provides JSON data. Avoid a second recursive conversion.
+        return await run_in_threadpool(JSONResponse, result)
 
     @app.put("/api/sessions/{sid}/title")
     async def session_title(sid: str, payload: SessionTitle):

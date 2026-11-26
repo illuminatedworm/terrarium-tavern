@@ -105,7 +105,7 @@ async def test_dice_receipt_is_durable_before_publication_and_only_regeneration_
         assert re.fullmatch(r"@D\d+", ref)
         assert current["snapshot"]["story"]["model_references"][ref] == value["checksum"] == session["card"]
         assert actual[-1] == {"ok": True, "data": {**draws[0], "value": {**value, "checksum": ref}}}
-        activity = message_items(store, current, [current["head"]])[current["head"]]
+        activity = message_items(store, current["id"], [current["head"]])[current["head"]]
         assert next(item for item in activity if item.get("name") == "calculate")["summary"] == commentary
         # The program edited its own copy. The original faces must survive
         # both that edit and the interruption.

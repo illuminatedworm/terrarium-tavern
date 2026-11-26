@@ -271,17 +271,7 @@ def message_visuals(store, sid, message_ids):
             raise NotFound("会话不存在")
         if session["kemini"]:
             raise ValueError("交互图形仅适用于普通对话")
-        allowed = {
-            row[0]
-            for row in db.execute(
-                "WITH RECURSIVE branch(id,parent,role) AS ("
-                "SELECT id,parent,role FROM messages WHERE session=? AND id=? UNION "
-                "SELECT m.id,m.parent,m.role FROM messages m JOIN branch b ON m.id=b.parent WHERE m.session=?"
-                ") SELECT id FROM branch WHERE role='assistant' AND id IN (" + placeholders + ")",
-                (sid, session["head"], sid, *groups),
-            )
-        }
-        if set(groups) != allowed:
+        if set(groups) != store.visible_reply_ids(db, sid, session["head"], groups):
             raise NotFound("图形不属于当前可见的回复版本")
         # Only present_ui arguments cross the SQLite/Python boundary. Other calls
         # contribute their small identities solely to delimit reused call IDs;

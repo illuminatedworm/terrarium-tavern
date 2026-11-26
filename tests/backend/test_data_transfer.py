@@ -265,7 +265,7 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         history = json.dumps(next_model.requests[0]["messages"], ensure_ascii=False)
         assert "她点头。" in history and delivery not in history
         reply_id = restored["messages"][-1]["id"]
-        activities = message_items(target, restored, [reply_id])[reply_id]
+        activities = message_items(target, restored["id"], [reply_id])[reply_id]
         story = next(item for item in activities if item.get("name") == "submit_story")
         assert json.loads(story["details"]["arguments"])["content"] == "她点头。"
     finally:

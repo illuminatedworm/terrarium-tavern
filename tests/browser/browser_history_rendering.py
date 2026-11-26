@@ -141,10 +141,11 @@ async def main(all_viewports=False):
                         await expect(last.get_by_role("button", name="编辑", exact=True)).to_have_count(0)
                         latest_input = page.locator('[data-message-id="fixture-298"]')
                         await latest_input.get_by_role("button", name="编辑", exact=True).press("Enter")
-                        await latest_input.locator("textarea").fill("Changed paragraph\n" * 20)
+                        latest_editor = latest_input.get_by_role("textbox", name="修改用户输入")
+                        await latest_editor.fill("Changed paragraph\n" * 20)
                         await rail.focus()
                         await rail.press("Home")
-                        await expect(latest_input.locator("textarea")).to_have_count(1)
+                        await expect(latest_editor).to_have_count(1)
                         await rail.press("End")
                         await latest_input.get_by_role("button", name="取消", exact=True).click()
                         assert await page.evaluate(
@@ -168,8 +169,9 @@ async def main(all_viewports=False):
                                 ),
                             )
                             await old_input.get_by_role("button", name="编辑", exact=True).click()
-                            await old_input.locator("textarea").fill("First replacement")
-                            await old_input.locator("textarea").press("Control+Enter")
+                            old_editor = old_input.get_by_role("textbox", name="修改用户输入")
+                            await old_editor.fill("First replacement")
+                            await old_editor.press("Control+Enter")
                             pending = page.locator('[data-message-id="__pending__"]')
                             await expect(pending).to_contain_text("待提交输入")
                             await expect(pending).to_contain_text("First replacement")
@@ -182,7 +184,9 @@ async def main(all_viewports=False):
                             pending = page.locator('[data-message-id="__pending__"]')
                             await expect(pending).to_contain_text("First replacement")
                             await pending.get_by_role("button", name="编辑", exact=True).click()
-                            await pending.locator("textarea").fill("Second replacement")
+                            await pending.get_by_role("textbox", name="修改用户输入").fill(
+                                "Second replacement"
+                            )
                             model.fail = False
                             await pending.get_by_role("button", name="修改并重试", exact=True).click()
                             await expect(page.locator(".message.assistant .prose").last).to_contain_text(

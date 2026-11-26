@@ -2,6 +2,8 @@
 
 import copy
 
+from starlette.concurrency import run_in_threadpool
+
 from tavern.application.context_operations import ContextOperations
 from tavern.scripting.dependencies import Dependencies
 from tavern.search.local_models import create_local_model_manager
@@ -66,12 +68,19 @@ class StoryService:
 
     def prepare_indexes(self, sid):
         async def prepare(record):
-            s = self.store.session(sid)
-            document = (s["snapshot"].get("content") or {}).get(
-                "document", self.store.session_card(sid)["document"]
+            source, document, snapshot, turn_number = await run_in_threadpool(
+                self.store.session_index_source, sid
             )
             await self.story.retrieval.prepare(
-                document, [], "", s["snapshot"], self.store.session_settings(s), s, "prepare", index_only=True
+                document,
+                [],
+                "",
+                snapshot,
+                self.store.session_settings(source),
+                source,
+                "prepare",
+                turn_number=turn_number,
+                index_only=True,
             )
 
         try:

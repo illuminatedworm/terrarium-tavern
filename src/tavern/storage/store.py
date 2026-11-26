@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import time
 import uuid
+from collections.abc import Collection
 from contextlib import closing, contextmanager
 from pathlib import Path
 
@@ -25,6 +26,13 @@ from tavern.storage.session_deletion import delete_session_rows
 from tavern.storage.story_cache import StoryCache
 from tavern.storage.turn_retry import retry_head
 from tavern.story.recovery import load_progress, resume_progress
+
+BRANCH_MESSAGES = (
+    "WITH RECURSIVE branch(id,parent,role) AS ("
+    "SELECT id,parent,role FROM messages WHERE session=? AND id=? UNION "
+    "SELECT m.id,m.parent,m.role FROM messages m JOIN branch b ON m.id=b.parent WHERE m.session=?"
+    ") "
+)
 
 
 def uid():
@@ -283,6 +291,20 @@ class Store(MessageAdapters):
             if row is None:
                 raise NotFound("会话不存在")
         return json.loads(row["card_data"])
+
+    @staticmethod
+    def visible_reply_ids(
+        db: sqlite3.Connection, sid: str, head: str | None, message_ids: Collection[str]
+    ) -> set[str]:
+        """Resolve requested replies against a single read transaction's branch head."""
+        placeholders = ",".join("?" for _ in message_ids)
+        return {
+            row[0]
+            for row in db.execute(
+                BRANCH_MESSAGES + f"SELECT id FROM branch WHERE role='assistant' AND id IN ({placeholders})",
+                (sid, head, sid, *message_ids),
+            )
+        }
 
     def branch_message_revision(self, sid, mid):
         """One message's card revision for image bridges, without loading every snapshot.
@@ -761,6 +783,41 @@ class Store(MessageAdapters):
         result["cache_breakpoint_effective_id"] = effective_message_id(result)
         result["cache_breakpoint_reason"] = breakpoint_reason(result, result["cache_breakpoint_effective_id"])
         return result
+
+    def session_index_source(self, sid: str) -> tuple[dict, dict, dict, int]:
+        """Snapshot the current inputs for background retrieval index preparation."""
+        with self.connection() as db:
+            db.execute("BEGIN")
+            row = db.execute(
+                "SELECT s.id,s.persona,s.channel_origin,s.context_strategy,s.compact_auto,s.model_selection,"
+                "s.kemini,s.head,s.empty_window_id,s.card_data,m.snapshot FROM sessions s "
+                "LEFT JOIN messages m ON m.id=s.head AND m.session=s.id WHERE s.id=?",
+                (sid,),
+            ).fetchone()
+            if row is None:
+                raise NotFound("会话不存在")
+            turn_number = db.execute(
+                BRANCH_MESSAGES + "SELECT count(*)+1 FROM branch WHERE role='user'",
+                (sid, row["head"], sid),
+            ).fetchone()[0]
+        source = dict(row)
+        stored = source.pop("snapshot")
+        head = source.pop("head")
+        empty_window = source.pop("empty_window_id")
+        card_data = source.pop("card_data")
+        if head:
+            if stored is None:
+                raise ValueError("剧情分支无效")
+            snapshot = json.loads(stored)
+            from tavern.story.state import read_story_state
+
+            read_story_state(snapshot)
+        else:
+            snapshot = new_snapshot()
+            snapshot["story"]["window"]["id"] = empty_window or sid
+        content = snapshot.get("content") or {}
+        document = content["document"] if "document" in content else json.loads(card_data)["document"]
+        return source, document, snapshot, turn_number
 
     def sessions(self):
         with self.connection() as db:

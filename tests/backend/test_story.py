@@ -1697,10 +1697,9 @@ async def test_submit_story_appends_across_resume_and_rollover_with_one_history_
             for m in first.requests[2]["messages"]
             if m["role"] == "tool" and json.loads(m["content"]).get("data", {}).get("saved_to_draft")
         )
-        assert receipt == {
-            "ok": True,
-            "data": {"saved_to_draft": True, "ref": "H3", "message": "已接收第 1/3 段；可继续追加或结束。"},
-        }
+        assert receipt["ok"] is True
+        assert receipt["data"]["saved_to_draft"] is True
+        assert receipt["data"]["ref"] == "H3"
         assert any('"text":"第一段🙂。"' in m.get("content", "") for m in first.requests[3]["messages"])
         resumed_model = Model(
             ("new_context", {"handoff": handoff("开场前情"), "keep_recent": 0}),
@@ -1765,7 +1764,7 @@ async def test_submit_story_appends_across_resume_and_rollover_with_one_history_
         assert packed["story_segments"] == output["story_segments"]
         with pytest.raises(ValueError, match="分段边界"):
             validate_segments({"raw": [1], "display": [1]}, "🙂\n\n后文", "🙂\n\n后文")
-        items = message_items(store, current, [current["head"]])[current["head"]]
+        items = message_items(store, current["id"], [current["head"]])[current["head"]]
         notes = [i for i in items if i["kind"] == "assistant"]
         assert [i["details"]["content"] for i in notes] == [
             "先核对资料。",

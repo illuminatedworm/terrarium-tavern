@@ -140,6 +140,39 @@ async def test_fork_endpoint_returns_independent_conversation(story):
         assert response.json()["id"] != original["id"]
 
 
+async def test_session_reader_preserves_historical_rendering_data(story):
+    store, original = story
+    sid = original["id"]
+    message = original["messages"][2]
+    snapshot = message["snapshot"]
+    document = snapshot["content"]["document"]
+    card = document.get("data", document)
+    card["nickname"] = "旧称"
+    record = {"id": "legacy", "anchor_id": message["parent"], "title": "旧版注入"}
+    snapshot["lore_injections"] = [record]
+    with store.connection() as db:
+        db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), message["id"]))
+
+    app = create_app(store.root)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            full_response = await client.get(f"/api/sessions/{sid}")
+            reader_response = await client.get(f"/api/sessions/{sid}", params={"reader": "true"})
+            assert full_response.status_code == reader_response.status_code == 200
+            full, reader = full_response.json(), reader_response.json()
+            assert full["messages"][2]["snapshot"] == snapshot
+            assert {**reader, "messages": full["messages"]} == full
+            assert [item["id"] for item in reader["messages"]] == [item["id"] for item in full["messages"]]
+            assert reader["messages"][2]["snapshot"] == {
+                "content": {"document": {"name": card["name"], "nickname": "旧称"}},
+                "state": snapshot["state"],
+                "scopes": snapshot["scopes"],
+                "lore_injections": [record],
+            }
+    finally:
+        await app.state.service.close()
+
+
 async def test_title_endpoint_updates_session_and_list(story):
     store, original = story
     app = create_app(store.root)

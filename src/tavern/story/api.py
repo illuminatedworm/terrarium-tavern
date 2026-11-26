@@ -182,7 +182,7 @@ def register_story_routes(app, store, context_operations=None):
 
     @app.post("/api/sessions/{sid}/story/activity")
     def dialogue_activity(sid: str, query: ActivityQuery):
-        groups = message_items(store, store.session(sid), query.message_ids)
+        groups = message_items(store, sid, query.message_ids)
         return {"messages": {mid: compact(items) for mid, items in groups.items()}}
 
     @app.post("/api/sessions/{sid}/story/visuals")
@@ -197,13 +197,12 @@ def register_story_routes(app, store, context_operations=None):
         part: Literal["arguments", "result", "content"],
         offset: int = Query(0, ge=0),
     ):
-        items = message_items(store, store.session(sid), [mid])[mid]
+        items = message_items(store, sid, [mid])[mid]
         return part_page(items, activity_id, part, offset)
 
     @app.get("/api/sessions/{sid}/story/turns/{tid}/activity")
     def pending_activity(sid: str, tid: str):
-        session = store.session(sid)
-        return {"items": compact(turn_items(store, sid, tid), visuals=not session["kemini"])}
+        return {"items": turn_items(store, sid, tid, summary=True)}
 
     @app.get("/api/sessions/{sid}/story/turns/{tid}/activity/{activity_id}")
     def pending_activity_part(
@@ -213,7 +212,6 @@ def register_story_routes(app, store, context_operations=None):
         part: Literal["arguments", "result", "content"],
         offset: int = Query(0, ge=0),
     ):
-        store.session(sid)
         return part_page(turn_items(store, sid, tid), activity_id, part, offset)
 
     @app.get("/api/sessions/{sid}/story")

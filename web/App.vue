@@ -879,7 +879,7 @@ async function setSessionScriptPermission(enabled: boolean) {
     openStory().revision = result.session.revision;
     // Reload resolved display assets without reinitializing variables.
     if (enabled) {
-      const updated = await viewApi(`/sessions/${sid}`);
+      const updated = await viewApi(`/sessions/${sid}?reader=true`);
       if (!viewScope.owns(token)) return;
       openStory().messages = updated.messages;
       openStory().snapshot = updated.snapshot;
@@ -1130,7 +1130,7 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
   if (window.innerWidth < 760) layout.value.leftCollapsed = true;
   try {
     const [opened, card]: [Session, CardRecord] = await Promise.all([
-      createdSession || api(`/sessions/${id}`),
+      createdSession || api(`/sessions/${id}?reader=true`),
       api(`/sessions/${id}/card`),
     ]);
     if (!viewScope.owns(token)) return;
@@ -1816,7 +1816,7 @@ function observe(id: string) {
       try {
         const [turn, updated]: [TurnRecord, Session] = await Promise.all([
           api(`/turns/${id}`),
-          api(`/sessions/${sid}`),
+          api(`/sessions/${sid}?reader=true`),
         ]);
         if (!ownsTurn()) return;
         const following = followLatest.value,
