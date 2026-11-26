@@ -365,10 +365,7 @@ def create_app(data_dir=None):
 
     @app.post("/api/sessions/{sid}/retrieval/rebuild")
     async def rebuild_retrieval(sid: str):
-        session = store.session(sid)
-        document = (session["snapshot"].get("content") or {}).get(
-            "document", store.session_card(sid)["document"]
-        )
+        session, document, snapshot = await run_in_threadpool(store.session_index_source, sid)
 
         async def rebuild(record):
             config = store.session_settings(session)
@@ -381,9 +378,9 @@ def create_app(data_dir=None):
             service.retrieval.cache.clear()
             await service.story.retrieval.prepare(
                 document,
-                session["messages"],
+                [],
                 "",
-                session["snapshot"],
+                snapshot,
                 config,
                 session,
                 "rebuild",

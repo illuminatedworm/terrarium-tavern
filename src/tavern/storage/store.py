@@ -794,40 +794,24 @@ class Store(MessageAdapters):
         result["cache_breakpoint_reason"] = breakpoint_reason(result, result["cache_breakpoint_effective_id"])
         return result
 
-    def session_index_source(self, sid: str) -> tuple[dict, dict, dict, int]:
-        """Snapshot the current inputs for background retrieval index preparation."""
+    def session_index_source(self, sid: str) -> tuple[dict, dict, dict]:
+        """Only the current document, macro variables and session settings affect index entries."""
         with self.connection() as db:
-            db.execute("BEGIN")
             row = db.execute(
                 "SELECT s.id,s.persona,s.channel_origin,s.context_strategy,s.compact_auto,s.model_selection,"
-                "s.kemini,s.head,s.empty_window_id,s.card_data,m.snapshot FROM sessions s "
-                "LEFT JOIN messages m ON m.id=s.head AND m.session=s.id WHERE s.id=?",
+                "s.kemini,s.head,m.id AS message, json_extract(m.snapshot,'$.state') AS state,"
+                "coalesce(json_extract(m.snapshot,'$.content.document'),json_extract(s.card_data,'$.document')) AS document "
+                "FROM sessions s LEFT JOIN messages m ON m.id=s.head AND m.session=s.id WHERE s.id=?",
                 (sid,),
             ).fetchone()
-            if row is None:
-                raise NotFound("会话不存在")
-            turn_number = db.execute(
-                BRANCH_MESSAGES + "SELECT count(*)+1 FROM branch WHERE role='user'",
-                (sid, row["head"], sid),
-            ).fetchone()[0]
+        if row is None:
+            raise NotFound("会话不存在")
+        if row["head"] and not row["message"]:
+            raise ValueError("剧情分支无效")
         source = dict(row)
-        stored = source.pop("snapshot")
-        head = source.pop("head")
-        empty_window = source.pop("empty_window_id")
-        card_data = source.pop("card_data")
-        if head:
-            if stored is None:
-                raise ValueError("剧情分支无效")
-            snapshot = json.loads(stored)
-            from tavern.story.state import read_story_state
-
-            read_story_state(snapshot)
-        else:
-            snapshot = new_snapshot()
-            snapshot["story"]["window"]["id"] = empty_window or sid
-        content = snapshot.get("content") or {}
-        document = content["document"] if "document" in content else json.loads(card_data)["document"]
-        return source, document, snapshot, turn_number
+        document = json.loads(source.pop("document"))
+        state = json.loads(source.pop("state") or "{}")
+        return source, document, {"state": state}
 
     def sessions(self):
         with self.connection() as db:

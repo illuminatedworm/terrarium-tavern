@@ -199,6 +199,26 @@ def fusion_scores(rankings, config):
     return dict(scores)
 
 
+def index_entries(document, state, persona):
+    from tavern.character.cards import card_view, is_initvar, lore_entries
+    from tavern.conversation.context import get_path, macros
+
+    timeline = get_path(state, "世界.当前时间线", "")
+    card = card_view(document)
+    return [
+        dict(e, content=macros(e.get("content", ""), card, persona, state))
+        for e in lore_entries(document, "narrative")
+        if e["enabled"]
+        and not e.get("constant")
+        and not is_initvar(e)
+        and (
+            not timeline
+            or not e.get("timelines")
+            or timeline in ([e["timelines"]] if isinstance(e["timelines"], str) else e["timelines"])
+        )
+    ]
+
+
 def lexical_recall(
     document,
     history,
@@ -212,25 +232,11 @@ def lexical_recall(
     turn_number=None,
     story=None,
 ):
-    from tavern.character.cards import is_initvar, lore_entries, normalize
-    from tavern.conversation.context import activate_lore, get_path, macros, matches
+    from tavern.conversation.context import activate_lore, get_path, matches
 
     config = settings.retrieval
-    state = snapshot.get("state", {})
-    timeline = get_path(state, "世界.当前时间线", "")
-    card = normalize(document)
-    entries = [
-        dict(e, content=macros(e.get("content", ""), card, session.get("persona", ""), state))
-        for e in lore_entries(document, "narrative")
-        if e["enabled"]
-        and not e.get("constant")
-        and not is_initvar(e)
-        and (
-            not timeline
-            or not e.get("timelines")
-            or timeline in ([e["timelines"]] if isinstance(e["timelines"], str) else e["timelines"])
-        )
-    ]
+    timeline = get_path(snapshot.get("state", {}), "世界.当前时间线", "")
+    entries = index_entries(document, snapshot.get("state", {}), session.get("persona", ""))
     clues = [{**m, "model": m.get("retrieval_query", ""), "raw": ""} for m in history]
     visible_ids = {m["id"] for m in history}
     injections = snapshot.get("lore_injections", [])
@@ -413,81 +419,96 @@ class RetrievalEngine:
         part decides whether an empty or "continue" input falls back to history.
         """
         started = time.perf_counter()
-        story, user_input = user_input, query_input(user_input, ooc)
-        turn_number = turn_number or sum(m["role"] == "user" for m in session.get("messages", history)) + 1
-        key = digest(
-            [
-                document,
-                [(m["id"], m.get("retrieval_query", "")) for m in history],
-                user_input,
-                story,
-                snapshot,
-                settings.retrieval.model_dump(),
-                settings.local_models.model_dump(),
-                session.get("id"),
-                session.get("persona"),
-                seed,
-                turn_number,
-                record_collection,
-            ]
-        )
-        if not index_only and key in self.cache:
-            return self.cache[key]
+        if index_only:
+            # A warm-up has no query: only macro/timeline-dependent index entries
+            # and the configured sparse/dense indexes are needed.
+            entries = await self.dictionary.run(
+                index_entries, document, snapshot.get("state", {}), session.get("persona", "")
+            )
+            result = {"diagnostics": [], "channel_ms": {}}
+            ranks = {}
+        else:
+            story, user_input = user_input, query_input(user_input, ooc)
+            turn_number = (
+                turn_number or sum(m["role"] == "user" for m in session.get("messages", history)) + 1
+            )
+            key = digest(
+                [
+                    document,
+                    [(m["id"], m.get("retrieval_query", "")) for m in history],
+                    user_input,
+                    story,
+                    snapshot,
+                    settings.retrieval.model_dump(),
+                    settings.local_models.model_dump(),
+                    session.get("id"),
+                    session.get("persona"),
+                    seed,
+                    turn_number,
+                    record_collection,
+                ]
+            )
+            if key in self.cache:
+                return self.cache[key]
 
-        async def embedding_query():
-            started_query = time.perf_counter()
-            if index_only or "embedding" not in settings.retrieval.channels:
-                return None, None, 0
-            try:
-                query = await self.dictionary.run(query_text, history, user_input, settings.retrieval, story)
-                value = await self.models.infer(
-                    "embedding",
-                    "embed",
-                    [query],
+            async def embedding_query():
+                started_query = time.perf_counter()
+                if "embedding" not in settings.retrieval.channels:
+                    return None, None, 0
+                try:
+                    query = await self.dictionary.run(
+                        query_text, history, user_input, settings.retrieval, story
+                    )
+                    value = await self.models.infer(
+                        "embedding",
+                        "embed",
+                        [query],
+                        settings,
+                        timeout=settings.retrieval.embedding_timeout,
+                        query=True,
+                    )
+                    return value, None, (time.perf_counter() - started_query) * 1000
+                except Exception as error:
+                    return None, error, (time.perf_counter() - started_query) * 1000
+
+            result, (query_vectors, query_error, query_ms) = await asyncio.gather(
+                self.dictionary.run(
+                    lexical_recall,
+                    document,
+                    history,
+                    user_input,
+                    snapshot,
                     settings,
-                    timeout=settings.retrieval.embedding_timeout,
-                    query=True,
-                )
-                return value, None, (time.perf_counter() - started_query) * 1000
-            except Exception as error:
-                return None, error, (time.perf_counter() - started_query) * 1000
-
-        result, (query_vectors, query_error, query_ms) = await asyncio.gather(
-            self.dictionary.run(
-                lexical_recall,
-                document,
-                history,
-                user_input,
-                snapshot,
-                settings,
-                session,
-                seed,
-                turn_number=turn_number,
-                story=story,
-            ),
-            embedding_query(),
-        )
-        ranks, entries = result["rankings"], result["entries"]
-        entry_by_id = {e["id"]: e for e in entries}
+                    session,
+                    seed,
+                    turn_number=turn_number,
+                    story=story,
+                ),
+                embedding_query(),
+            )
+            ranks, entries = result["rankings"], result["entries"]
+            entry_by_id = {e["id"]: e for e in entries}
         config = settings.retrieval
         index_key = digest([entries, config.model_dump(), "jieba-sudachi-v1"])
         with self.store.connection() as db:
             exists = db.execute("SELECT 1 FROM retrieval_indexes WHERE key=?", (index_key,)).fetchone()
-        if not exists and "bm25" in ranks:
+        if (index_only and "bm25" in config.channels) or (not exists and "bm25" in ranks):
             _, sparse = await self.dictionary.run(sparse_index, entries, config)
-            with self.store.connection() as db:
-                db.execute(
-                    "INSERT OR IGNORE INTO retrieval_indexes VALUES (?,?)",
-                    (
-                        index_key,
-                        json.dumps(
-                            {"entries": [e["id"] for e in entries], "fragments": sparse.fragments},
-                            ensure_ascii=False,
+            if not exists:
+                with self.store.connection() as db:
+                    db.execute(
+                        "INSERT OR IGNORE INTO retrieval_indexes VALUES (?,?)",
+                        (
+                            index_key,
+                            json.dumps(
+                                {"entries": [e["id"] for e in entries], "fragments": sparse.fragments},
+                                ensure_ascii=False,
+                            ),
                         ),
-                    ),
-                )
+                    )
         if "embedding" in config.channels:
-            result["channel_ms"]["embedding_query"] = round(query_ms, 2)
+            if not index_only:
+                result["channel_ms"]["embedding_query"] = round(query_ms, 2)
             try:
                 config_key = digest(
                     [
