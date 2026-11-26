@@ -237,10 +237,16 @@ async def test_preference_commits_and_respects_latest_revision(tmp_path):
     assert result["status"] == "completed", result
     assert store.session(session["id"])["turn_preference"] == "多写对话"
     assert store.session(session["id"])["messages"] == session["messages"]
+    completed = advisor.data.events(result["id"], reader=True)[-1]
+    assert completed["payload"]["story_update"] == {
+        "id": session["id"],
+        "revision": session["revision"] + 1,
+        "turn_preference": "多写对话",
+    }
 
 
 async def test_offers_are_visible_calls_without_story_writes(tmp_path):
-    _, store, session, advisor = setup(tmp_path)
+    app, store, session, advisor = setup(tmp_path)
     provider = ToolLLM(
         [
             ("read_story_context", {"field": "title"}),
@@ -267,6 +273,30 @@ async def test_offers_are_visible_calls_without_story_writes(tmp_path):
     result = await ask(advisor, session["id"], provider, "下一步？")
     assert (result["status"], provider.call_count) == ("completed", 2), result
     assert advisor.public(session["id"])["exchanges"][1]["response"] == "可以先推门。"
+    base = f"/api/sessions/{session['id']}/advisor"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        reader = (await client.get(base, params={"reader": True})).json()
+        first, second = reader["exchanges"]
+        assert first["tool_count"] == 3 and not first["stale"]
+        assert first["offer_trace"] == [
+            {
+                key: m[key]
+                for key in (
+                    ("role", "tool_calls")
+                    if m["role"] == "assistant"
+                    else ("role", "tool_call_id", "content")
+                )
+            }
+            for m in trace[2:6]
+        ]
+        assert (await client.get(f"{base}/exchanges/{first['seq']}/trace")).json() == trace
+        with store.connection() as db:
+            db.execute("UPDATE messages SET model=model || ' changed' WHERE id=?", (session["head"],))
+        delta = (await client.get(base, params={"reader": True, "after": first["seq"]})).json()
+        assert delta["stale"] == [first["seq"]] and delta["exchanges"] == [{**second, "stale": True}]
+        advisor.data.clear(session["id"], reader["revision"])
+        cleared = (await client.get(base, params={"reader": True, "after": second["seq"]})).json()
+        assert cleared["after"] == 0 and cleared["exchanges"] == []
 
 
 class Failure(ToolLLM):

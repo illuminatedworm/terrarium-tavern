@@ -4,7 +4,7 @@ import copy
 import hashlib
 import json
 
-from tavern.character.cards import card_view, is_initvar, lore_entries, normalize
+from tavern.character.cards import card_view, is_initvar, lore_entries
 from tavern.conversation.context import macros
 from tavern.core.cache_policy import fingerprint
 from tavern.core.channels import require_channel
@@ -17,8 +17,9 @@ from tavern.scripting.request_context import response_origin
 from tavern.story.state import read_story_state
 
 
-def runtime_config(store, session, options):
-    config = store.settings_document().shared.advisor.runtime()
+def runtime_config(store, session, options, *, document=None):
+    document = document or store.settings_document()
+    config = document.shared.advisor.runtime()
     channel = session.get("channel_origin")
     if not channel:
         raise ValueError("请先确认故事的渠道归属")
@@ -27,7 +28,7 @@ def runtime_config(store, session, options):
         raise ValueError("请在设置 → 参谋 agent 中配置此渠道的模型")
     if options.get("model_selection"):
         profile = ModelSelection.model_validate(options["model_selection"]).profile(profile)
-    cfg = store.settings(channel)
+    cfg = store.settings(channel, document=document)
     cfg.advisor = profile.model_copy(deep=True)
     cfg = cfg.for_role("advisor")
     require_channel(cfg, channel)
@@ -44,29 +45,6 @@ def runtime_config(store, session, options):
     bind_meter(cfg, store, "advisor", session["id"])
     cfg.compact_auto = config.auto_compact
     return cfg, config
-
-
-def freeze_story(store, session):
-    document = (session["snapshot"].get("content") or {}).get("document") or store.session_card(
-        session["id"]
-    )["document"]
-    return {
-        key: copy.deepcopy(session.get(key))
-        for key in (
-            "id",
-            "revision",
-            "head",
-            "channel_origin",
-            "persona",
-            "persona_data",
-            "turn_preference",
-            "plot_enabled",
-            "context_strategy",
-            "snapshot",
-            "messages",
-            "title",
-        )
-    } | {"document": copy.deepcopy(document)}
 
 
 def source_hash(message):
@@ -111,7 +89,7 @@ def expanded(story, text, message=None):
 
 
 def background(story, config):
-    card = normalize(story["document"])
+    card = card_view(story["document"])
     header = [{"role": "system", "message_type": "root_system", "content": config.system_prompt}]
     for field in (
         "name",
@@ -157,12 +135,13 @@ def background(story, config):
         dynamic.append({"role": "system", "content": "<handoff>\n" + handoff + "\n</handoff>"})
     recent = recent_history(story["messages"], config.recent_exchanges)
     refs = {mid: message_ref(position) for mid, position in message_positions(story["messages"]).items()}
+    anchored = {}
+    for entry in story["snapshot"].get("lore_injections", []):
+        if not entry.get("manually_removed"):
+            anchored.setdefault(entry.get("anchor_id"), []).append(entry)
     for message in recent:
-        for entry in story["snapshot"].get("lore_injections", []):
-            if entry.get("anchor_id") == message["id"] and not entry.get("manually_removed"):
-                dynamic.append(
-                    {"role": "system", "content": "<lorebook>\n" + entry["content"] + "\n</lorebook>"}
-                )
+        for entry in anchored.get(message["id"], ()):
+            dynamic.append({"role": "system", "content": "<lorebook>\n" + entry["content"] + "\n</lorebook>"})
         dynamic.append(
             {
                 "role": "system",
@@ -191,8 +170,7 @@ def context_identity(cfg, config):
     )
 
 
-def consultation_body(exchanges, story):
-    current = sources(story)
+def consultation_body(exchanges, current):
     body = []
     for exchange in exchanges:
         outdated = any(current.get(mid) != value for mid, value in exchange["story_sources"].items())
@@ -209,7 +187,19 @@ def consultation_body(exchanges, story):
     return body
 
 
-def compile_context(story, config, cfg, exchanges, context, pending, definitions, view=None):
+def compile_context(
+    story,
+    config,
+    cfg,
+    exchanges,
+    context,
+    pending,
+    definitions,
+    view=None,
+    *,
+    current_sources=None,
+    stats_only=False,
+):
     cfg._context_generation = fingerprint(
         [context.get("through", 0), context.get("checkpoint", []), context.get("created")]
     )
@@ -224,7 +214,8 @@ def compile_context(story, config, cfg, exchanges, context, pending, definitions
             view.bind(raw)
     header, dynamic, refs = background(story, config)
     identity = context_identity(cfg, config)
-    current_sources = sources(story)
+    if current_sources is None:
+        current_sources = sources(story)
     usable = context.get("identity") == identity and all(
         current_sources.get(mid) == value for mid, value in context.get("sources", {}).items()
     )
@@ -233,7 +224,7 @@ def compile_context(story, config, cfg, exchanges, context, pending, definitions
     selected = exchanges
     if usable and context.get("through"):
         selected = [e for e in exchanges if e["seq"] > context["through"]]
-    body = consultation_body(selected, story)
+    body = consultation_body(selected, current_sources)
     if usable and context.get("summary"):
         header.append(
             {
@@ -242,7 +233,6 @@ def compile_context(story, config, cfg, exchanges, context, pending, definitions
                 "content": "<consultation_summary>\n" + context["summary"] + "\n</consultation_summary>",
             }
         )
-    portable_messages = view.messages(header + dynamic + body + pending)
     if usable and context.get("checkpoint"):
         from tavern.conversation.compaction import opaque_message
 
@@ -251,6 +241,8 @@ def compile_context(story, config, cfg, exchanges, context, pending, definitions
             + [opaque_message(context["checkpoint"], cfg)]
             + view.messages(body + pending)
         )
+    else:
+        portable_messages = view.messages(header + dynamic + body + pending)
     result = {
         "messages": portable_messages,
         "trace": portable_messages,
@@ -262,4 +254,4 @@ def compile_context(story, config, cfg, exchanges, context, pending, definitions
         "opaque": bool(usable and context.get("checkpoint")),
         "tools": definitions,
     }
-    return project_context(result, cfg, tools=definitions)
+    return project_context(result, cfg, tools=definitions, stats_only=stats_only)

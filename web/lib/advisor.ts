@@ -3,24 +3,36 @@ import type { ConversationModelSelection } from './settingsDocument';
 
 export interface AdvisorRun {
   id: string;
+  story_revision?: number | null;
   status: string;
-  response: string;
+  response?: string;
   error: string | null;
   resumable: boolean;
   request: { text: string; compact: boolean };
 }
+export interface AdvisorPreference {
+  id: string;
+  revision: number;
+  turn_preference: string;
+}
+export type AdvisorTrace = Array<{
+  role: string;
+  content: string;
+  web_sources?: Array<{ url: string; title: string }>;
+  web_activity?: Array<Record<string, any>>;
+  tool_call_id?: string;
+  tool_calls?: Array<{ id?: string; function: { name: string; arguments: string } }>;
+}>;
 export interface AdvisorExchange {
   seq: number;
   user_text: string;
   response: string;
   stale: boolean;
-  trace: Array<{
-    role: string;
-    content: string;
+  tool_count: number;
+  offer_trace: AdvisorTrace;
+  web: Array<{
     web_sources?: Array<{ url: string; title: string }>;
     web_activity?: Array<Record<string, any>>;
-    tool_call_id?: string;
-    tool_calls?: Array<{ id?: string; function: { name: string; arguments: string } }>;
   }>;
 }
 export interface AdvisorState {
@@ -71,7 +83,7 @@ export const toolLabels: Record<string, string> = {
 };
 
 /** Clickable offers are the persisted arguments of calls whose result was not an error. */
-export function advisorOffers(trace: AdvisorExchange['trace']) {
+export function advisorOffers(trace: AdvisorTrace) {
   const failed = new Set(
     trace.filter((m) => m.role === 'tool' && JSON.parse(m.content).error).map((m) => m.tool_call_id),
   );

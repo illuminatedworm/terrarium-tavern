@@ -5,11 +5,16 @@ import {
   advisorRunning,
   eventCursor,
   type AdvisorEvent,
+  type AdvisorPreference,
   type AdvisorRun,
   type AdvisorState,
 } from '../lib/advisor';
 
-export function useAdvisor(sid: string, preferenceSaved: () => void, started: () => void = () => {}) {
+export function useAdvisor(
+  sid: string,
+  preferenceSaved: (before?: number | null, update?: AdvisorPreference) => void,
+  started: () => void = () => {},
+) {
   const state = ref<AdvisorState | null>(null),
     error = ref(''),
     loading = ref(false),
@@ -26,6 +31,36 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
     statsVersion = 0;
   const running = computed(() => sending.value || clearing.value || advisorRunning(state.value?.run));
   const pending = computed(() => !!state.value?.run?.resumable);
+  let requestOrder = 0,
+    lastApplied = 0;
+  async function readState(path = '', data?: Record<string, unknown>, method?: string) {
+    const token = generation,
+      order = ++requestOrder;
+    const previous = state.value?.exchanges ?? [];
+    const after = previous.at(-1)?.seq ?? 0;
+    const value: AdvisorState & { after: number; stale: number[] } = await rawApi(
+      `/sessions/${sid}/advisor${path}?reader=true&after=${after}`,
+      data,
+      method,
+    );
+    if (
+      disposed ||
+      token !== generation ||
+      (state.value &&
+        (value.revision < state.value.revision ||
+          (value.revision === state.value.revision && order < lastApplied)))
+    )
+      return false;
+    if (value.after) {
+      const stale = new Set(value.stale);
+      value.exchanges = previous
+        .map((row) => (row.stale === stale.has(row.seq) ? row : { ...row, stale: stale.has(row.seq) }))
+        .concat(value.exchanges);
+    }
+    state.value = value;
+    lastApplied = Math.max(lastApplied, order);
+    return true;
+  }
   function stopObserving() {
     generation++;
     source?.close();
@@ -45,11 +80,8 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
     }
   }
   async function load(observe = true) {
-    const token = generation;
-    const value = (await rawApi(`/sessions/${sid}/advisor`)) as AdvisorState;
-    if (disposed || token !== generation || clearing.value) return;
-    state.value = value;
-    if (observe && advisorRunning(value.run)) watchRun(value.run!);
+    if (clearing.value || !(await readState())) return;
+    if (observe && advisorRunning(state.value?.run)) watchRun(state.value!.run!);
     else await refreshStats();
   }
   function watchRun(run: AdvisorRun) {
@@ -61,7 +93,7 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
     streaming.value = '';
     events.value = [];
     notice.value = '';
-    const observer = new EventSource(`/api/advisor-runs/${run.id}/events`);
+    const observer = new EventSource(`/api/advisor-runs/${run.id}/events?reader=true`);
     source = observer;
     observer.onmessage = (message) => {
       if (disposed || token !== generation) return;
@@ -77,7 +109,7 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
       else if (event.kind === 'context_warning' || event.kind === 'compacting')
         notice.value = event.payload.message;
       else if (event.kind === 'completed') {
-        if (event.payload.preference_updated) preferenceSaved();
+        if (event.payload.preference_updated) preferenceSaved(run.story_revision, event.payload.story_update);
         notice.value = event.payload.preference_updated ? '本轮偏好已保存' : '';
       } else if (event.kind === 'error' || event.kind === 'cancelled') error.value = event.payload.message;
       streaming.value = current.trim() && reply ? `${reply}\n\n${current}` : reply || current;
@@ -125,13 +157,12 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
     const token = generation;
     error.value = '';
     try {
-      const value = await rawApi(
-        `/sessions/${sid}/advisor/options`,
+      const accepted = await readState(
+        '/options',
         { expected_revision: state.value.revision, ...changes },
         'PATCH',
       );
-      if (!disposed && token === generation) {
-        state.value = value;
+      if (accepted && !disposed && token === generation) {
         await refreshStats();
       }
     } catch (e) {
@@ -145,11 +176,10 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
     if (!state.value || running.value) return;
     const token = generation;
     try {
-      const value = await rawApi(`/sessions/${sid}/advisor/discard`, {
+      const accepted = await readState('/discard', {
         expected_revision: state.value.revision,
       });
-      if (disposed || token !== generation) return;
-      state.value = value;
+      if (!accepted || disposed || token !== generation) return;
       error.value = '';
       streaming.value = '';
       events.value = [];
@@ -173,7 +203,7 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
     clearing.value = true;
     stopObserving();
     try {
-      const value = await rawApi(`/sessions/${sid}/advisor/clear`, {
+      const value = await rawApi(`/sessions/${sid}/advisor/clear?reader=true`, {
         expected_revision: state.value.revision,
       });
       if (disposed) return false;

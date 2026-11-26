@@ -5,6 +5,7 @@ import asyncio
 from fastapi import Query, Request
 from fastapi.responses import StreamingResponse
 
+from tavern.advisor.presentation import exchange_trace, preview_view
 from tavern.advisor.runtime import AdvisorRevisionRequest, ConsultationRequest, OptionsRequest
 from tavern.core.errors import NotFound
 from tavern.storage.store import dump
@@ -12,20 +13,26 @@ from tavern.storage.store import dump
 
 def register_routes(app, advisor):
     @app.get("/api/sessions/{sid}/advisor")
-    async def read(sid: str):
-        return advisor.public(sid)
+    def read(sid: str, reader: bool = False, after: int = Query(0, ge=0)):
+        return advisor.public(sid, reader=reader, after=after)
+
+    @app.get("/api/sessions/{sid}/advisor/exchanges/{seq}/trace")
+    def trace(sid: str, seq: int):
+        with advisor.store.connection() as db:
+            return exchange_trace(db, sid, seq)
 
     @app.patch("/api/sessions/{sid}/advisor/options")
-    async def options(sid: str, payload: OptionsRequest):
-        return advisor.options(sid, payload)
+    def options(sid: str, payload: OptionsRequest, reader: bool = False, after: int = Query(0, ge=0)):
+        return advisor.options(sid, payload, reader=reader, after=after)
 
     @app.get("/api/sessions/{sid}/advisor/preview")
-    async def preview(sid: str):
-        return advisor.preview(sid, local_estimate=True)
+    def preview(sid: str, reader: bool = False):
+        value = advisor.preview(sid, local_estimate=True)
+        return preview_view(value) if reader else value
 
     @app.get("/api/sessions/{sid}/advisor/stats")
-    async def stats(sid: str):
-        preview = advisor.preview(sid)
+    def stats(sid: str):
+        preview = advisor.preview(sid, stats_only=True)
         return {key: preview[key] for key in ("context_usage", "context_limit")}
 
     @app.post("/api/sessions/{sid}/advisor/runs")
@@ -33,14 +40,14 @@ def register_routes(app, advisor):
         return advisor.submit(sid, payload)
 
     @app.post("/api/sessions/{sid}/advisor/discard")
-    async def discard(sid: str, payload: AdvisorRevisionRequest):
+    def discard(sid: str, payload: AdvisorRevisionRequest, reader: bool = False, after: int = Query(0, ge=0)):
         advisor.data.discard(sid, payload.expected_revision)
-        return advisor.public(sid)
+        return advisor.public(sid, reader=reader, after=after)
 
     @app.post("/api/sessions/{sid}/advisor/clear")
-    async def clear(sid: str, payload: AdvisorRevisionRequest):
+    def clear(sid: str, payload: AdvisorRevisionRequest, reader: bool = False):
         advisor.data.clear(sid, payload.expected_revision)
-        return advisor.public(sid)
+        return advisor.public(sid, reader=reader)
 
     @app.get("/api/advisor-runs/{rid}")
     async def run(rid: str):
@@ -51,7 +58,7 @@ def register_routes(app, advisor):
         return await advisor.cancel(rid)
 
     @app.get("/api/advisor-runs/{rid}/events")
-    async def events(rid: str, request: Request, after: int = Query(0, ge=0)):
+    async def events(rid: str, request: Request, after: int = Query(0, ge=0), reader: bool = False):
         advisor.data.run_status(rid)
 
         async def stream():
@@ -63,7 +70,7 @@ def register_routes(app, advisor):
                     active = advisor.data.run_status(rid) in ("queued", "running")
                 except NotFound:
                     active = False  # Another tab may have cleared the consultation.
-                batch = advisor.data.events(rid, cursor)
+                batch = advisor.data.events(rid, cursor, reader=reader)
                 for event in batch:
                     cursor = event["seq"]
                     yield f"id: {cursor}\ndata: {dump(event)}\n\n"
@@ -72,7 +79,8 @@ def register_routes(app, advisor):
                     return
                 if await request.is_disconnected():
                     return
-                await asyncio.sleep(0.15)
+                if len(batch) < 200:
+                    await asyncio.sleep(0.15)
 
         return StreamingResponse(
             stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}

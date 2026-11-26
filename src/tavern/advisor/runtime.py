@@ -13,10 +13,10 @@ from tavern.advisor.context import (
     compile_context,
     consultation_body,
     context_identity,
-    freeze_story,
     runtime_config,
     sources,
 )
+from tavern.advisor.presentation import exchange_activity, public_trace
 from tavern.advisor.storage import AdvisorStore
 from tavern.advisor.tools import AdvisorTools, definitions
 from tavern.core.context_usage import context_overflow, exceeds
@@ -59,12 +59,39 @@ class AdvisorService:
         self.tasks, self.provider_factory = {}, None
         self.web_transport = None
 
-    def public(self, sid):
-        state = self.data.get(sid)
-        session = self.store.session(sid)
-        config = self.store.settings_document().shared.advisor
+    def public(self, sid, *, reader=False, after=0):
+        with self.store.connection() as db:
+            db.execute("BEGIN")
+            session = self.data.story_head(db, sid)
+            config = self.store.settings_document(db=db).shared.advisor
+            state = self.data.state(db, sid, public=True)
+            state["run"] = self.data.latest_run(db, sid, reader=reader)
+            # Clear deletes all exchanges. A cursor from a cleared conversation
+            # must rebuild the browser's list, even if new exchanges now exist.
+            if not reader or (
+                after
+                and not db.execute(
+                    "SELECT 1 FROM advisor_exchanges WHERE session=? AND seq=?", (sid, after)
+                ).fetchone()
+            ):
+                after = 0
+            older = (
+                {
+                    r["seq"]: json.loads(r["story_sources"])
+                    for r in db.execute(
+                        "SELECT seq,story_sources FROM advisor_exchanges WHERE session=? AND seq<=?",
+                        (sid, after),
+                    )
+                }
+                if after
+                else {}
+            )
+            state["exchanges"] = self.data.exchanges(db, sid, after)
+            references = {mid for group in older.values() for mid in group}
+            for exchange in state["exchanges"]:
+                references.update(exchange["story_sources"])
+            current_sources = self.data.branch_sources(db, sid, session["head"], references)
         profile = config.official_model if session["channel_origin"] == "chatgpt" else config.model
-        current_sources = sources(freeze_story(self.store, session))
         state["effective"] = {
             "recent_exchanges": state["options"].get("recent_exchanges")
             if state["options"].get("recent_exchanges") is not None
@@ -77,38 +104,43 @@ class AdvisorService:
             else "local",
             "channel": session["channel_origin"],
         }
+
+        def stale(record):
+            return any(current_sources.get(mid) != value for mid, value in record.items())
+
+        if reader:
+            state.update(after=after, stale=[seq for seq, record in older.items() if stale(record)])
         for exchange in state["exchanges"]:
-            exchange["stale"] = any(
-                current_sources.get(mid) != value for mid, value in exchange["story_sources"].items()
-            )
-            exchange.pop("story_sources")
-            exchange["trace"] = [
-                {
-                    k: v
-                    for k, v in row.items()
-                    if k in {"role", "content", "tool_calls", "tool_call_id", "web_sources", "web_activity"}
-                }
-                for row in exchange["trace"]
-            ]
+            exchange["stale"] = stale(exchange.pop("story_sources"))
+            trace = exchange.pop("trace")
+            if reader:
+                exchange.update(exchange_activity(trace))
+            else:
+                exchange["trace"] = public_trace(trace)
         state["context"] = {
             key: state["context"].get(key) for key in ("summary", "through", "created", "strategy")
         }
         return state
 
-    def preview(self, sid, *, local_estimate=False):
-        state, session = self.data.get(sid), self.store.session(sid)
-        cfg, config = runtime_config(self.store, session, state["options"])
-        web = WebSession(config.web.mode, cfg, "advisor")
+    def preview(self, sid, *, local_estimate=False, stats_only=False):
         with self.store.connection() as db:
+            db.execute("BEGIN")
+            document = self.store.settings_document(db=db)
+            story = self.data.frozen_story(db, sid)
+            state = self.data.state(db, sid)
+            exchanges = self.data.exchanges(db, sid)
             novel_access = self.novel.advisor_access(db, sid)
+        cfg, config = runtime_config(self.store, story, state["options"], document=document)
+        web = WebSession(config.web.mode, cfg, "advisor")
         result = compile_context(
-            freeze_story(self.store, session),
+            story,
             config,
             cfg,
-            state["exchanges"],
+            exchanges,
             state["context"],
             [],
             web.definitions(definitions(novel=bool(novel_access))),
+            stats_only=stats_only,
         )
         if local_estimate:
             from tavern.core.local_estimate import attach_local_estimate
@@ -116,25 +148,32 @@ class AdvisorService:
             attach_local_estimate(result, cfg)
         return result
 
-    def options(self, sid, request):
-        state, session = self.data.get(sid), self.store.session(sid)
+    def options(self, sid, request, *, reader=False, after=0):
+        with self.store.connection() as db:
+            session = self.data.story_head(db, sid)
+            row = db.execute("SELECT options FROM advisor_conversations WHERE session=?", (sid,)).fetchone()
+            options = json.loads(row[0]) if row else {}
+            document = self.store.settings_document(db=db)
         update = request.model_dump(exclude_unset=True, exclude={"expected_revision"})
         if request.model_selection:
-            config = self.store.settings_document().shared.advisor
+            config = document.shared.advisor
             profile = config.official_model if session["channel_origin"] == "chatgpt" else config.model
             if profile is not None:
                 update["model_selection"] = request.model_selection.remember(
-                    state["options"].get("model_selection"), profile
+                    options.get("model_selection"), profile
                 ).model_dump(exclude_defaults=True)
         if update.get("context_strategy") == "openai_compact" and session["channel_origin"] != "chatgpt":
             raise ValueError("只有官方渠道可使用云端 compact")
-        runtime_config(self.store, session, {**state["options"], **update})
+        runtime_config(self.store, session, {**options, **update}, document=document)
         self.data.update_options(sid, request.expected_revision, update)
-        return self.public(sid)
+        return self.public(sid, reader=reader, after=after)
 
     def submit(self, sid, request):
-        state, session = self.data.get(sid), self.store.session(sid)
-        cfg, config = runtime_config(self.store, session, state["options"])
+        with self.store.connection() as db:
+            session = self.data.story_head(db, sid)
+            state = self.data.state(db, sid)
+            document = self.store.settings_document(db=db)
+        cfg, config = runtime_config(self.store, session, state["options"], document=document)
         if not self.provider_factory:
             require_model_connection(cfg)
         with self.store.connection() as db:
@@ -179,7 +218,7 @@ class AdvisorService:
             rid = uid()
             if progress is None:
                 progress = {
-                    "story": freeze_story(self.store, session),
+                    "story": self.data.frozen_story(db, sid),
                     "context": state["context"],
                     "identity": context_identity(cfg, config),
                     "trace": [],
@@ -194,14 +233,14 @@ class AdvisorService:
             # Consultation also consumes the opening; clearing its history must not unlock it.
             db.execute("UPDATE sessions SET opening_locked=1 WHERE id=?", (sid,))
         try:
-            owner = AdvisorRun(self, rid, cfg, config)
+            owner = AdvisorRun(self, sid, rid, cfg, config, payload, progress)
         except Exception as error:
             self.fail(rid, "error", str(error))
             raise
         task = asyncio.create_task(self.run(owner))
         self.tasks[rid] = task
         task.add_done_callback(lambda done: self.tasks.pop(rid, None))
-        return self.data.run(rid)
+        return {**self.data.run(rid), "story_revision": progress["story"]["revision"]}
 
     async def run(self, owner):
         provider = None
@@ -224,12 +263,12 @@ class AdvisorService:
         self.data.event(rid, status, {"message": message})
 
     async def cancel(self, rid):
-        self.data.run(rid)
+        self.data.run_status(rid)
         task = self.tasks.get(rid)
         if task:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        if self.data.run(rid)["status"] in ("queued", "running"):
+        if self.data.run_status(rid) in ("queued", "running"):
             self.fail(rid, "cancelled", "已停止，可继续或丢弃本次咨询")
         return self.data.run(rid)
 
@@ -243,13 +282,12 @@ class AdvisorService:
 
 
 class AdvisorRun:
-    def __init__(self, service, rid, cfg, config):
+    def __init__(self, service, sid, rid, cfg, config, request, progress):
         self.service, self.store, self.data, self.rid = service, service.store, service.data, rid
         self.cfg, self.config = cfg, config
-        run = self.data.run(rid, private=True)
-        self.sid, self.request = run["session"], run["request"]
-        progress = run["progress"]
+        self.sid, self.request = sid, request
         self.story, self.context = progress["story"], progress["context"]
+        self.story_sources = sources(self.story)
         self.novel_access = progress.get("novel_access")
         self.novel_chars = progress.get("novel_chars", 0)
         self.trace, self.preference, self.pending = (
@@ -259,7 +297,8 @@ class AdvisorRun:
         )
         self.web_events = progress.get("web_events", [])
         self.web_sources = progress.get("web_sources", [])
-        self.exchanges = self.data.get(self.sid)["exchanges"]
+        with self.store.connection() as db:
+            self.exchanges = self.data.exchanges(db, self.sid)
         self.view = ModelView()
         self.view.reserved = set(progress.get("reserved", self.context.get("reserved", []))) | set(
             HANDLE.findall(dump([self.story, self.exchanges, self.request["text"]]))
@@ -333,6 +372,7 @@ class AdvisorRun:
             pending,
             self.definitions,
             self.view,
+            current_sources=self.story_sources,
         )
 
     def web_fallback(self):
@@ -407,7 +447,7 @@ class AdvisorRun:
         def save_partial(summary_value, checkpoint_value, through_value):
             self.context = {
                 "identity": context_identity(self.cfg, self.config),
-                "sources": sources(self.story),
+                "sources": self.story_sources,
                 "through": through_value,
                 "summary": summary_value,
                 "checkpoint": checkpoint_value,
@@ -420,7 +460,7 @@ class AdvisorRun:
             messages = (
                 base
                 + ([{"role": "system", "content": "此前咨询摘要：\n" + previous}] if previous else [])
-                + consultation_body(rows, self.story)
+                + consultation_body(rows, self.story_sources)
             )
             self.request_slot()
             response = await provider.chat_complete(
@@ -458,7 +498,7 @@ class AdvisorRun:
                         messages = (
                             base
                             + ([opaque_message(checkpoint, self.cfg)] if checkpoint else [])
-                            + self.view.messages(consultation_body(rows, self.story))
+                            + self.view.messages(consultation_body(rows, self.story_sources))
                         )
                         self.request_slot()
                         await provider.chat_complete(
@@ -584,7 +624,7 @@ class AdvisorRun:
                         response,
                         dump(trace),
                         self.story["head"],
-                        dump(sources(self.story)),
+                        dump(self.story_sources),
                         time.time(),
                     ),
                 )

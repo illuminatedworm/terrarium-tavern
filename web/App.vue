@@ -19,6 +19,7 @@ import { japaneseDictionaryKey, useJapaneseDictionary } from './composables/useJ
 import JapaneseDictionaryNotice from './components/common/JapaneseDictionaryNotice.vue';
 import { channelLabels, storyProfileKey, type Channel } from './lib/channels';
 import { api } from './lib/api';
+import type { AdvisorPreference } from './lib/advisor';
 import { appendVisualInput, hasVisuals } from './lib/visuals';
 import { saveDownload } from './lib/download';
 import { androidHost } from './lib/hostCapabilities';
@@ -181,6 +182,23 @@ function applyFullSession(updated: Session) {
     // Context maintenance refreshes once its updated session is installed and unlocked.
     if (!contextBusy.value) void refreshContextStats();
   }
+}
+function advisorPreferenceSaved(sid: string, before?: number | null, update?: AdvisorPreference) {
+  const story = session.value;
+  if (!story || story.id !== sid) return;
+  if (update?.id === sid) {
+    if (story.revision >= update.revision) return;
+    // A replay can arrive after unrelated story edits from another window.
+    // Only the exact revision step is known to contain just this preference.
+    if (story.revision === before && update.revision === before + 1) {
+      story.turn_preference = update.turn_preference;
+      story.revision = update.revision;
+      story.opening_editable = false;
+      if (!contextBusy.value) void refreshContextStats();
+      return;
+    }
+  }
+  void guarded(async () => applyFullSession(await api(`/sessions/${sid}?reader=true`)));
 }
 const contextOps = useContextOperations(() => session.value, applyFullSession);
 const contextBusy = contextOps.busy;
@@ -3210,7 +3228,7 @@ useTimedError(error);
             panel = 'settings';
           "
           :story-title="session.title"
-          @preference-saved="api('/sessions/' + session.id + '?reader=true').then(applyFullSession)"
+          @preference-saved="advisorPreferenceSaved"
           @started="session.opening_editable = false"
           @use-input="useAdvisorInput"
           @title="applyAdvisorTitle"

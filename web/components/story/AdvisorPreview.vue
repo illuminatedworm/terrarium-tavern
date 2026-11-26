@@ -24,7 +24,7 @@ const dialog = ref<HTMLDialogElement>(),
 onMounted(async () => {
   dialog.value?.showModal();
   try {
-    preview.value = await rawApi(`/sessions/${props.sessionId}/advisor/preview`);
+    preview.value = await rawApi(`/sessions/${props.sessionId}/advisor/preview?reader=true`);
   } catch (e) {
     error.value = String(e);
   }
@@ -90,8 +90,7 @@ function classify(message: any, meta: any, tag: string, attrs: Record<string, st
     return { key: 'consult', kind: 'session', label: '咨询记录', title: '用户提问' };
   return { key: 'other', kind: 'other', label: '其他' };
 }
-// Rows follow `messages`; the preview-only local reference sits on the
-// matching `trace` row (same order), never on the request message itself.
+// Each wire message has a corresponding row of display metadata.
 const categorized = computed(() =>
   ((preview.value?.messages || []) as any[]).map((message: any, index: number) => {
     const excerpt = contextExcerpt(message);
@@ -99,8 +98,8 @@ const categorized = computed(() =>
       message,
       index,
       excerpt,
-      local: preview.value.trace?.[index],
-      category: classify(message, preview.value.runtime_trace?.[index], excerpt.tag, excerpt.attrs),
+      local: preview.value.rows[index],
+      category: classify(message, preview.value.rows[index], excerpt.tag, excerpt.attrs),
     };
   }),
 );
@@ -167,7 +166,7 @@ const footnote = computed(() => {
     contextUsageDetails(p, { rows: false }),
     localEstimateNote(p.local_estimate),
     p.opaque ? '包含参谋 agent 独立的云端压缩状态；压缩后的占用等待新实测。' : '',
-    p.summary ? '已包含旧咨询摘要。摘要不属于故事记忆。' : '',
+    p.has_summary ? '已包含旧咨询摘要。摘要不属于故事记忆。' : '',
   ].join('');
 });
 </script>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 import { useAdvisor } from '../../composables/useAdvisor';
-import { advisorOffers, advisorRunning, toolLabels } from '../../lib/advisor';
+import { advisorOffers, advisorRunning, toolLabels, type AdvisorPreference } from '../../lib/advisor';
 import { channelProviders } from '../../lib/channels';
 import type { SettingsDocument } from '../../lib/settingsDocument';
 import { useModelCatalog } from '../../lib/modelCatalog';
@@ -15,6 +15,7 @@ import ModelSelect from '../settings/ModelSelect.vue';
 import StoryProse from './AdvisorProse.vue';
 import AdvisorIcon from './AdvisorIcon.vue';
 import AdvisorPreview from './AdvisorPreview.vue';
+import AdvisorToolRecord from './AdvisorToolRecord.vue';
 import WebSources from '../common/WebSources.vue';
 import { webActivityLabel, webSources } from '../../lib/webSearch';
 import { handleComposerKeydown, sendShortcutHint } from '../../lib/composerShortcut';
@@ -35,7 +36,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   settings: [];
-  preferenceSaved: [];
+  preferenceSaved: [sid: string, before?: number | null, update?: AdvisorPreference];
   started: [];
   useInput: [text: string];
   title: [text: string];
@@ -61,7 +62,7 @@ const {
   clearing,
 } = useAdvisor(
   props.sessionId,
-  () => emit('preferenceSaved'),
+  (before, update) => emit('preferenceSaved', props.sessionId, before, update),
   () => emit('started'),
 );
 const draft = ref(''),
@@ -277,7 +278,7 @@ onBeforeUnmount(() => {
   if (rangeTimer !== undefined) void commitRange();
 });
 const offers = computed(
-  () => new Map((state.value?.exchanges || []).map((e) => [e.seq, advisorOffers(e.trace)])),
+  () => new Map((state.value?.exchanges || []).map((e) => [e.seq, advisorOffers(e.offer_trace)])),
 );
 // Starter questions double as a list of what the advisor can do.
 const starters = computed(() => [
@@ -290,8 +291,6 @@ const starters = computed(() => [
   '把“节奏放慢一点，多写对话”加入本轮偏好。',
   '给这个对话起几个标题让我选。',
 ]);
-const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
-  trace.reduce((sum, m) => sum + (m.tool_calls?.length || 0), 0);
 </script>
 
 <template>
@@ -520,29 +519,20 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
                 {{ text }}<small v-if="text === storyTitle">当前标题</small>
               </button>
             </div>
-            <WebSources :sources="webSources(exchange.trace)" />
-            <details v-if="exchange.trace.some((m) => m.web_activity?.length)" class="advisor-tool-record">
+            <WebSources :sources="webSources(exchange.web)" />
+            <details v-if="exchange.web.some((m) => m.web_activity?.length)" class="advisor-tool-record">
               <summary>联网服务记录</summary>
-              <p v-for="(item, i) in exchange.trace.flatMap((m) => m.web_activity || [])" :key="i">
+              <p v-for="(item, i) in exchange.web.flatMap((m) => m.web_activity || [])" :key="i">
                 {{ webActivityLabel(item) }}
               </p>
             </details>
             <p v-if="exchange.stale" class="advisor-stale">此讨论依据的剧情已变更</p>
-            <details v-if="callCount(exchange.trace)" class="advisor-tool-record">
-              <summary>
-                <AdvisorIcon name="document" />已查阅与处理 {{ callCount(exchange.trace) }} 项<AdvisorIcon
-                  name="chevron"
-                />
-              </summary>
-              <div v-for="(message, i) in exchange.trace" :key="i">
-                <template v-if="message.tool_calls"
-                  ><p v-for="call in message.tool_calls" :key="call.function.name">
-                    {{ toolLabels[call.function.name] || call.function.name }}
-                  </p></template
-                >
-                <pre v-if="message.role === 'tool'">{{ message.content }}</pre>
-              </div>
-            </details>
+            <AdvisorToolRecord
+              v-if="exchange.tool_count"
+              :session-id="sessionId"
+              :seq="exchange.seq"
+              :count="exchange.tool_count"
+            />
           </div>
         </article>
       </template>
