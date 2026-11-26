@@ -279,9 +279,8 @@ Archive a note that is no longer relevant. It drops out of normal searches but s
 ### `write_plot`
 
 ```text
-Create or fully replace this branch's author-level outline of where the story may go. The current outline is in <tavern_plot>; no read is needed.
-Updates are cumulative: revise the current outline instead of starting over, keeping its structure and everything that still holds. Keep each anchor (锚点) and its severity (冷酷度) unchanged unless it has been fulfilled or the user asked out of character to change it. The tool protocol describes the suggested sections.
-Apart from anchors, contents are revisable possibilities. None of it is an established fact, something characters know, or an action decided for the user.
+Create or fully replace this branch's author-level outline. Build on <tavern_plot> or your later successful write, preserving its structure and all still-valid material. Keep each anchor (锚点) and its severity (冷酷度) unchanged until fulfilled or the user asks out of character to change it.
+Other plans are revisable possibilities. Keep the outline separate from established events, character knowledge and decisions reserved for the user.
 ```
 
 请求：
@@ -299,13 +298,11 @@ Apart from anchors, contents are revisable possibilities. None of it is an estab
 ### `write_handoff`
 
 ```text
-Update the handoff without switching windows. Start from the latest <tavern_memory> or your later successful write, whichever is newer, and re-check points marked as having changed sources.
-- chapters are an append-only record of what will still matter later: irreversible events, relationship turns, promises and debts, secrets and who knows them, recurring people, items and places. Skip one-off actions, scenery and dialogue texture; the original text stays readable with read_history.
-- add: usually give only a title and points. Leave through empty and the chapter covers all committed history not yet in a chapter; set through only to split chapters deliberately.
-- Do not rewrite finished chapters. Use revise only to fix an error; merge the oldest adjacent chapters when nearing the total limit.
-- current fully replaces the current handoff: the scene, relationships, constraints, unresolved issues and tone. Do not retell chapter events.
-- refs are optional. Chapter refs stay inside their chapter. For precise lookup, current may cite any H readable with read_history, including this turn's input and accepted story.
-- Do not copy whole notes or the plot outline into the handoff.
+Update the handoff in this window. Use the latest <tavern_memory> or your later successful write. Recheck points flagged for changed sources.
+- Append chapters for lasting events, relationship changes, promises, debts, secrets and who knows them, and recurring people, items or places. One-off details remain available via read_history.
+- For add, give a title and points. Omit through to cover unarchived history through the last committed message. Set through only to split chapters deliberately. Use revise for corrections and merge the oldest adjacent chapters near the total limit.
+- Replace current in full with the scene, relationships, constraints, unresolved issues and tone. Keep events in chapters and detailed notes and the plot outline in their own records.
+- Refs are optional for precise lookup. Chapter refs stay within their chapter. Current may cite any H readable with read_history, including this turn's input and accepted story.
 ```
 
 请求：
@@ -367,8 +364,8 @@ An empty path reads the whole scope. To refresh all MVU variables before patchin
 ### `patch_state`
 
 ```text
-Update MVU variables with JSON Patch. Only for turns whose instructions authorize variable updates; authorization from earlier turns does not carry over, and calls without it are REJECTED. When variable updates are authorized, submit at least one successful patch this turn; validation failures may be corrected and retried and do not count as success. If nothing changed, submit operations=[]; this needs no read and changes nothing.
-Paths are relative to stat_data: /hp, not /stat_data/hp. Follow the latest <mvu_rules>, keep values consistent with the final story text, and cite the story evidence in comment. Use this tool instead of writing MVU blocks in the story text.
+Apply MVU JSON Patch only with this turn's authorization. When variable updates are authorized, submit at least one successful patch this turn (validation failures may be corrected and retried and do not count as success). If nothing changed, submit operations=[]. An empty patch needs no prior read.
+Paths are relative to stat_data (e.g. /hp). Follow the latest <mvu_rules>, match values to the final story and cite story evidence in comment. Keep MVU blocks out of the prose.
 ```
 
 请求：
@@ -602,7 +599,7 @@ View an authorized reference or a completed story image with your current model.
 ### `submit_story`
 
 ```text
-This tool is the ONLY way to submit this turn's story text. Append a new story segment to this turn's draft. At most 3 successful submissions per turn; 1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. Ordinary assistant text is commentary. Tools may run before, between or after segments, including after the third. If variable updates are required this turn or you wrote notes, check the relevant content against the entire story before ending. Delivery does not commit the turn.
+This tool is the ONLY way to submit this turn's story text. Append only new prose to the draft. At most 3 successful submissions per turn. Stop adding segments when the story is complete. Segments share one H reference and are joined by blank lines. Other tools may run before, between or after segments. Ordinary assistant text is commentary. Before ending, check required variable updates and any notes you wrote against the full story. The draft commits with the turn.
 ```
 
 请求：
@@ -620,12 +617,19 @@ This tool is the ONLY way to submit this turn's story text. Append a new story s
 ### `present_ui`
 
 ```text
-Show a frozen interactive graphic when it helps (map, relationship graph, structure diagram); do not repeat panels every turn. Call submit_story and present_ui in the intended reading order, including within one batch: accepted calls determine how prose segments and graphics are interleaved. At most 3 accepted specs per turn; failed calls do not count. To change an older graphic, send a new complete spec in a later turn. No HTML, SVG markup, scripts or URLs.
-Spec: {root:'root',elements:{root:{type:'Stack',props:{direction:'vertical'},children:['map','go']},map:{type:'Scene',props:{...},children:[]},go:{type:'Button',props:{label:'Go'},on:{press:{...}},children:[]}},state:{selection:'overview',detail:''}}. Every element has type, props and children; only Stack has children. Keys: a letter, then letters/digits/_/- (max 31). At most 40 elements forming one tree from root, with 1-3 Scenes. state has exactly selection (max 40 chars) and detail (max 4000).
-Stack: direction 'vertical'|'horizontal'. Text: text (string or {$state:'/detail'}). Button: label (max 60); on.press sits beside props.
-Scene: title (max 120), height (240-600 px), selection {$state:'/selection'}, items (1-100, drawn in order; put labels last). The canvas is 768 px wide: coordinates are 0-100 percent, x/width/rx of 768 and y/height/ry of height.
-Items have kind and optional showFor (1-12 selection values; omit to always show): rect x,y,width,height,fill,stroke; ellipse x,y,rx,ry,fill,stroke; line x1,y1,x2,y2,stroke,dashed?; path points [[x,y],...] (2-30, straight segments),closed,fill,stroke,dashed?; label x,y,text (max 200),anchor 'start'|'middle'|'end'. Paint: none|surface|muted|ink|accent|secondary. Mark unconfirmed relations with dashed lines and labels; keep labels apart.
-press is one action or a list of 1-3: setState {statePath:'/selection'|'/detail',value}, or composeDraft {text: string or {$state:'/detail'}}, which only appends to the user's input for them to edit and send; never imply it happened. Prose goes in submit_story; do not restate the spec.
+Show an interactive map or diagram when useful. Call present_ui and submit_story in reading order, even in one batch. Up to 3 successful specs per turn. Graphics are frozen. To revise one, send a complete spec in a later turn. Exclude HTML, SVG, scripts and URLs.
+{"root":"map","elements":{"map":{"type":"Scene","props":{"title":"Map","height":300,"selection":{"$state":"/selection"},"items":[{"kind":"label","x":50,"y":50,"text":"Gate","anchor":"middle"}]},"children":[]}},"state":{"selection":"","detail":""}}
+Build one tree of 1-40 elements with 1-3 Scenes. Keys match [A-Za-z][A-Za-z0-9_-]{0,30}. All elements need type, props and children. Only Stack may list child keys. state has exactly selection (max 40 chars) and detail (max 4000).
+Stack takes direction vertical|horizontal. Text takes text (string or {$state:'/detail'}). Button takes label (1-60 chars).
+Use the Scene selection binding shown above. Scene title is 1-120 chars, height 240-600 px, items 1-100 in draw order (labels last). Coordinates are 0-100% of width (768 px) for x/width/rx and of scene height for y/height/ry.
+Item fields by kind. Omit showFor to always show the item, or list 1-12 selection values.
+rect x,y,width,height,fill,stroke
+ellipse x,y,rx,ry,fill,stroke
+line x1,y1,x2,y2,stroke,dashed?
+path points (2-30 [x,y] pairs joined by straight segments),closed,fill,stroke,dashed?
+label x,y,text (1-200 chars),anchor start|middle|end
+Paint is none|surface|muted|ink|accent|secondary. Dash and label unconfirmed relations. Keep labels apart.
+Button.on.press sits beside props and takes one {action,params} or a list of 1-3. setState params are {statePath:'/selection'|'/detail',value}. composeDraft params are {text:string or {$state:'/detail'}}. It only appends to the user's input for editing and sending. Keep the spec out of story prose.
 ```
 
 请求：

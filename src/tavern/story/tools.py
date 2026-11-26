@@ -322,31 +322,25 @@ SPECS = {
     ),
     "write_plot": (
         Plot,
-        "Create or fully replace this branch's author-level outline of where the story may go. The current outline is "
-        "in <tavern_plot>; no read is needed.\n"
-        "Updates are cumulative: revise the current outline instead of starting over, keeping its structure and "
-        "everything that still holds. Keep each anchor (锚点) and its severity (冷酷度) unchanged unless it has been "
-        "fulfilled or the user asked out of character to change it. The tool protocol describes the suggested "
-        "sections.\n"
-        "Apart from anchors, contents are revisable possibilities. None of it is an established fact, something "
-        "characters know, or an action decided for the user.",
+        "Create or fully replace this branch's author-level outline. Build on <tavern_plot> or your later "
+        "successful write, preserving its structure and all still-valid material. Keep each anchor (锚点) and its "
+        "severity (冷酷度) unchanged until fulfilled or the user asks out of character to change it.\n"
+        "Other plans are revisable possibilities. Keep the outline separate from established events, character "
+        "knowledge and decisions reserved for the user.",
     ),
     "write_handoff": (
         HandoffWrite,
-        "Update the handoff without switching windows. Start from the latest <tavern_memory> or your later successful write, "
-        "whichever is newer, and re-check points marked as having changed sources.\n"
-        "- chapters are an append-only record of what will still matter later: irreversible events, relationship turns, "
-        "promises and debts, secrets and who knows them, recurring people, items and places. Skip one-off actions, scenery "
-        "and dialogue texture; the original text stays readable with read_history.\n"
-        "- add: usually give only a title and points. Leave through empty and the chapter covers all committed history "
-        "not yet in a chapter; set through only to split chapters deliberately.\n"
-        "- Do not rewrite finished chapters. Use revise only to fix an error; merge the oldest adjacent chapters when "
-        "nearing the total limit.\n"
-        "- current fully replaces the current handoff: the scene, relationships, constraints, unresolved issues and tone. "
-        "Do not retell chapter events.\n"
-        "- refs are optional. Chapter refs stay inside their chapter. For precise lookup, current may cite any H "
-        "readable with read_history, including this turn's input and accepted story.\n"
-        "- Do not copy whole notes or the plot outline into the handoff.",
+        "Update the handoff in this window. Use the latest <tavern_memory> or your later successful write. "
+        "Recheck points flagged for changed sources.\n"
+        "- Append chapters for lasting events, relationship changes, promises, debts, secrets and who knows them, "
+        "and recurring people, items or places. One-off details remain available via read_history.\n"
+        "- For add, give a title and points. Omit through to cover unarchived history through the last committed "
+        "message. Set through only to split chapters deliberately. Use revise for corrections and merge the oldest "
+        "adjacent chapters near the total limit.\n"
+        "- Replace current in full with the scene, relationships, constraints, unresolved issues and tone. Keep events "
+        "in chapters and detailed notes and the plot outline in their own records.\n"
+        "- Refs are optional for precise lookup. Chapter refs stay within their chapter. Current may cite any H "
+        "readable with read_history, including this turn's input and accepted story.",
     ),
     "new_context": (
         NewContext,
@@ -375,14 +369,11 @@ SPECS = {
     ),
     "patch_state": (
         StatePatch,
-        "Update MVU variables with JSON Patch. Only for turns whose instructions authorize variable updates; "
-        "authorization from earlier turns does not carry over, and calls without it are REJECTED. "
-        "When variable updates are authorized, submit at least one successful "
-        "patch this turn; validation failures may be corrected and retried and do not count as success. "
-        "If nothing changed, submit operations=[]; this needs no read and changes nothing.\n"
-        "Paths are relative to stat_data: /hp, not /stat_data/hp. Follow the latest <mvu_rules>, keep values consistent "
-        "with the final story text, and cite the story evidence in comment. Use this tool instead of writing MVU blocks "
-        "in the story text.",
+        "Apply MVU JSON Patch only with this turn's authorization. When variable updates are authorized, submit "
+        "at least one successful patch this turn (validation failures may be corrected and retried and do not count "
+        "as success). If nothing changed, submit operations=[]. An empty patch needs no prior read.\n"
+        "Paths are relative to stat_data (e.g. /hp). Follow the latest <mvu_rules>, match values to the final story "
+        "and cite story evidence in comment. Keep MVU blocks out of the prose.",
     ),
     "read_character": (
         CharacterRead,
@@ -413,13 +404,11 @@ SPECS.update(MEDIA_SPECS)
 STORY_DELIVERY_DESCRIPTION = "This tool is the ONLY way to submit this turn's story text. "
 SPECS["submit_story"] = (
     Story,
-    f"{STORY_DELIVERY_DESCRIPTION}Append a new story segment to this turn's draft. "
-    f"At most {MAX_SEGMENTS} successful submissions per turn; "
-    "1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. "
-    "Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. "
-    "Ordinary assistant text is commentary. Tools may run before, between or after segments, including after "
-    "the third. If variable updates are required this turn or you wrote notes, check the relevant content "
-    "against the entire story before ending. Delivery does not commit the turn.",
+    f"{STORY_DELIVERY_DESCRIPTION}Append only new prose to the draft. "
+    f"At most {MAX_SEGMENTS} successful submissions per turn. Stop adding segments when the story is complete. "
+    "Segments share one H reference and are joined by blank lines. Other tools may run before, between or after "
+    "segments. Ordinary assistant text is commentary. Before ending, check required variable updates and any notes "
+    "you wrote against the full story. The draft commits with the turn.",
 )
 SPECS["present_ui"] = (PresentUI, VISUAL_DESCRIPTION)
 

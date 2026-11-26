@@ -314,9 +314,16 @@ def message_visuals(store, sid, message_ids):
     return groups
 
 
-DESCRIPTION = """Show a frozen interactive graphic when it helps (map, relationship graph, structure diagram); do not repeat panels every turn. Call submit_story and present_ui in the intended reading order, including within one batch: accepted calls determine how prose segments and graphics are interleaved. At most 3 accepted specs per turn; failed calls do not count. To change an older graphic, send a new complete spec in a later turn. No HTML, SVG markup, scripts or URLs.
-Spec: {root:'root',elements:{root:{type:'Stack',props:{direction:'vertical'},children:['map','go']},map:{type:'Scene',props:{...},children:[]},go:{type:'Button',props:{label:'Go'},on:{press:{...}},children:[]}},state:{selection:'overview',detail:''}}. Every element has type, props and children; only Stack has children. Keys: a letter, then letters/digits/_/- (max 31). At most 40 elements forming one tree from root, with 1-3 Scenes. state has exactly selection (max 40 chars) and detail (max 4000).
-Stack: direction 'vertical'|'horizontal'. Text: text (string or {$state:'/detail'}). Button: label (max 60); on.press sits beside props.
-Scene: title (max 120), height (240-600 px), selection {$state:'/selection'}, items (1-100, drawn in order; put labels last). The canvas is 768 px wide: coordinates are 0-100 percent, x/width/rx of 768 and y/height/ry of height.
-Items have kind and optional showFor (1-12 selection values; omit to always show): rect x,y,width,height,fill,stroke; ellipse x,y,rx,ry,fill,stroke; line x1,y1,x2,y2,stroke,dashed?; path points [[x,y],...] (2-30, straight segments),closed,fill,stroke,dashed?; label x,y,text (max 200),anchor 'start'|'middle'|'end'. Paint: none|surface|muted|ink|accent|secondary. Mark unconfirmed relations with dashed lines and labels; keep labels apart.
-press is one action or a list of 1-3: setState {statePath:'/selection'|'/detail',value}, or composeDraft {text: string or {$state:'/detail'}}, which only appends to the user's input for them to edit and send; never imply it happened. Prose goes in submit_story; do not restate the spec."""
+DESCRIPTION = """Show an interactive map or diagram when useful. Call present_ui and submit_story in reading order, even in one batch. Up to 3 successful specs per turn. Graphics are frozen. To revise one, send a complete spec in a later turn. Exclude HTML, SVG, scripts and URLs.
+{"root":"map","elements":{"map":{"type":"Scene","props":{"title":"Map","height":300,"selection":{"$state":"/selection"},"items":[{"kind":"label","x":50,"y":50,"text":"Gate","anchor":"middle"}]},"children":[]}},"state":{"selection":"","detail":""}}
+Build one tree of 1-40 elements with 1-3 Scenes. Keys match [A-Za-z][A-Za-z0-9_-]{0,30}. All elements need type, props and children. Only Stack may list child keys. state has exactly selection (max 40 chars) and detail (max 4000).
+Stack takes direction vertical|horizontal. Text takes text (string or {$state:'/detail'}). Button takes label (1-60 chars).
+Use the Scene selection binding shown above. Scene title is 1-120 chars, height 240-600 px, items 1-100 in draw order (labels last). Coordinates are 0-100% of width (768 px) for x/width/rx and of scene height for y/height/ry.
+Item fields by kind. Omit showFor to always show the item, or list 1-12 selection values.
+rect x,y,width,height,fill,stroke
+ellipse x,y,rx,ry,fill,stroke
+line x1,y1,x2,y2,stroke,dashed?
+path points (2-30 [x,y] pairs joined by straight segments),closed,fill,stroke,dashed?
+label x,y,text (1-200 chars),anchor start|middle|end
+Paint is none|surface|muted|ink|accent|secondary. Dash and label unconfirmed relations. Keep labels apart.
+Button.on.press sits beside props and takes one {action,params} or a list of 1-3. setState params are {statePath:'/selection'|'/detail',value}. composeDraft params are {text:string or {$state:'/detail'}}. It only appends to the user's input for editing and sending. Keep the spec out of story prose."""
